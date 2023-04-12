@@ -92,8 +92,8 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     model.train()
 
     for i, (input, target) in enumerate(dataloader):
-        input = input.cuda(device, non_blocking=True)
-        target = target.cuda(device, non_blocking=True)
+        input = input.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
 
         output = model(input)
 
@@ -180,14 +180,19 @@ def do_training(train_config: TrainConfig, state: TrainEpochState, device_id):
 
 
 def main():
-    device_id = int(os.environ.get("LOCAL_RANK", 0))
-    torch.cuda.set_device(device_id)
+    if torch.cuda.is_available():
+        device_id = torch.device("cuda", int(os.environ.get("LOCAL_RANK", 0)))
+    else:
+        device_id = "cpu"
+
+    print(f"Using device {device_id}")
+
     train_config = TrainConfig(
         model_config=DenseConfig(d_hidden=100),
         data_config=DataConfig(
             torch.Size([1]), output_shape=torch.Size([1]), batch_size=2
         ),
-        epochs=10,
+        epochs=2,
     )
     checkpoint_path = Path("checkpoint.pt")
 

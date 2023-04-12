@@ -15,17 +15,31 @@
         version = "1.0";
 
         propagatedBuildInputs = with pkgs.python3Packages; [ numpy pytorch ];
+        # nativeCheckInputs = [ pkgs.cudatoolkit pkgs.linuxPackages.nvidia_x11 ];
+        # checkInputs = [ pkgs.cudatoolkit pkgs.linuxPackages.nvidia_x11 ];
 
         src = ./.;
+
+        checkPhase = ''
+          #export CUDA_PATH="${pkgs.cudatoolkit}"
+          #export LD_LIBRARY_PATH="${pkgs.linuxPackages.nvidia_x11}/lib"
+          python main.py
+        '';
       };
     in {
-      packages = { default = program; };
-
-      devShell.x86_64-linux = pkgs.mkShellNoCC {
+      packages.x86_64-linux.default = program;
+      devShell.x86_64_linux = pkgs.mkShellNoCC {
         buildInputs = with pkgs; [
           helix
           nixfmt
-          (python3.withPackages (p: [ p.python-lsp-server p.numpy p.pytorch p.ipython p.black p.flake8]))
+          (python3.withPackages (p: [
+            p.python-lsp-server
+            p.numpy
+            p.pytorch
+            p.ipython
+            p.black
+            p.flake8
+          ]))
         ];
       };
 
