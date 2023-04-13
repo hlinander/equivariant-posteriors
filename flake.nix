@@ -14,15 +14,15 @@
         pname = "equivariant-transformers";
         version = "1.0";
 
-        propagatedBuildInputs = with pkgs.python3Packages; [ numpy pytorch ];
-        # nativeCheckInputs = [ pkgs.cudatoolkit pkgs.linuxPackages.nvidia_x11 ];
-        # checkInputs = [ pkgs.cudatoolkit pkgs.linuxPackages.nvidia_x11 ];
+        propagatedBuildInputs = with pkgs.python3Packages; [
+          numpy
+          pytorch
+          torchmetrics
+        ];
 
         src = ./.;
 
         checkPhase = ''
-          #export CUDA_PATH="${pkgs.cudatoolkit}"
-          #export LD_LIBRARY_PATH="${pkgs.linuxPackages.nvidia_x11}/lib"
           python main.py
         '';
       };
@@ -36,6 +36,7 @@
             p.python-lsp-server
             p.numpy
             p.pytorch
+            p.torchmetrics
             p.ipython
             p.black
             p.flake8

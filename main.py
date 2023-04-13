@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 import os
 import torch
+import torchmetrics as tm
 import time
 from pathlib import Path
 from dataclasses import dataclass
+from collections.abc import Callable
+from typing import List
+from copy import deepcopy
+
 
 @dataclass
 class DataConfig:
@@ -14,14 +19,17 @@ class DataConfig:
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, data_config: DataConfig):
+        self.n_samples = 100
         self.config = data_config
-        self.x = torch.rand(torch.Size((1000, *data_config.input_shape)))
+        self.x = torch.rand(torch.Size((self.n_samples, *data_config.input_shape)))
         self.y = torch.sin(self.x)
+        self.sample_ids = torch.range(start=0, end=self.n_samples)
 
     def __getitem__(self, idx):
         input = self.x[idx]
         target = self.y[idx]
-        return input, target
+        sample_id = self.sample_ids[idx]
+        return input, target, sample_id
 
     def __len__(self):
         return self.x.shape[0]
@@ -63,14 +71,55 @@ class ModelFactory:
 
 
 @dataclass
+class MetricSample:
+    prediction: torch.Tensor
+    target: torch.Tensor
+    sample_id: torch.Tensor
+    epoch: int
+
+
+@dataclass(frozen=True)
+class MetricSampleKey:
+    sample_id: int
+    epoch: int
+
+
 class Metric:
-    pass
+    # TODO: This should be tracked together with state and serialized/deserialized
+    def __init__(self, metric_fn: Callable[[torch.Tensor, torch.Tensor], object]):
+        self.values = dict()
+        self.metric_fn = metric_fn
+        self.metric_name = metric_fn.__name__
+
+    def __call__(self, metric_sample: MetricSample):
+        for idx in range(metric_sample.sample_id.shape[0]):
+            prediction = metric_sample.prediction[idx]
+            target = metric_sample.target[idx]
+            sample_id = metric_sample.sample_id[idx]
+            value = self.metric_fn(preds=prediction, target=target).detach().cpu()
+            key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
+            self.values[key] = value
+
+    def mean(self, epoch):
+        keys = filter(lambda key: key.epoch == epoch, self.values.keys())
+        vals = torch.tensor([self.values[key] for key in keys])
+        return torch.mean(vals)
+
+    def serialize(self):
+        return self.values
+
+    def deserialize(self, values):
+        self.values = deepcopy(values)
+
+    def name(self):
+        return self.metric_name
 
 
 @dataclass
 class TrainEpochState:
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
+    metrics: List[Metric]
     epoch: int
 
 
@@ -90,7 +139,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
 
     model.train()
 
-    for i, (input, target) in enumerate(dataloader):
+    for i, (input, target, sample_id) in enumerate(dataloader):
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
@@ -102,6 +151,15 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         loss_val.backward()
         optimizer.step()
 
+        metric_sample = MetricSample(
+            prediction=output,
+            target=target,
+            sample_id=sample_id,
+            epoch=train_epoch_state.epoch,
+        )
+        for metric in train_epoch_state.metrics:
+            metric(metric_sample)
+
     train_epoch_state.epoch += 1
 
 
@@ -110,14 +168,20 @@ class TrainConfig:
     model_config: object
     data_config: object
     epochs: int
+    metrics: List[Callable[[], Metric]]
     _version: int = 0
 
 
 def serialize(train_epoch_state: TrainEpochState):
+    serialized_metrics = [
+        (metric.name(), metric.serialize()) for metric in train_epoch_state.metrics
+    ]
+    serialized_metrics = {name: value for name, value in serialized_metrics}
     data_dict = dict(
         model=train_epoch_state.model.state_dict(),
         optimizer=train_epoch_state.optimizer.state_dict(),
         epoch=train_epoch_state.epoch,
+        metrics=serialized_metrics,
     )
     torch.save(data_dict, "checkpoint.pt")
 
@@ -134,12 +198,16 @@ def deserialize(
     optimizer = torch.optim.AdamW(model.parameters())
     optimizer.load_state_dict(data_dict["optimizer"])
 
+    metrics = []
+    for metric in train_config.metrics:
+        metric_instance = metric()
+        metric_instance.deserialize(data_dict["metrics"][metric_instance.name()])
+        metrics.append(metric_instance)
+
     epoch = data_dict["epoch"]
 
     return TrainEpochState(
-        model=model,
-        optimizer=optimizer,
-        epoch=epoch,
+        model=model, optimizer=optimizer, epoch=epoch, metrics=metrics
     )
 
 
@@ -148,10 +216,12 @@ def create_initial_state(train_config: TrainConfig, device_id):
     model = models.create(train_config.model_config, train_config.data_config)
     model = model.to(torch.device(device_id))
     opt = torch.optim.AdamW(model.parameters())
+    metrics = [metric() for metric in train_config.metrics]
 
     return TrainEpochState(
         model=model,
         optimizer=opt,
+        metrics=metrics,
         epoch=0,
     )
 
@@ -177,6 +247,9 @@ def do_training(train_config: TrainConfig, state: TrainEpochState, device_id):
         time.sleep(1)
         print(f"Epoch {state.epoch} done")
 
+        for metric in state.metrics:
+            print(f"{metric.name()}: {metric.mean(state.epoch - 1):.04E}")
+
 
 def main():
     if torch.cuda.is_available():
@@ -191,7 +264,11 @@ def main():
         data_config=DataConfig(
             torch.Size([1]), output_shape=torch.Size([1]), batch_size=2
         ),
-        epochs=2,
+        epochs=10,
+        metrics=[
+            lambda: Metric(tm.functional.mean_absolute_error),
+            lambda: Metric(tm.functional.mean_squared_error),
+        ],
     )
     checkpoint_path = Path("checkpoint.pt")
 
