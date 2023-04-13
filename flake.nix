@@ -28,7 +28,7 @@
       };
     in {
       packages.x86_64-linux.default = program;
-      devShell.x86_64_linux = pkgs.mkShellNoCC {
+      devShells.x86_64-linux.default = pkgs.mkShellNoCC {
         buildInputs = with pkgs; [
           helix
           nixfmt

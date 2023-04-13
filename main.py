@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 from dataclasses import dataclass
 
-
 @dataclass
 class DataConfig:
     input_shape: torch.Size
