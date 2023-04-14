@@ -18,6 +18,7 @@
           numpy
           pytorch
           torchmetrics
+          plotext
         ];
 
         src = ./.;
@@ -36,6 +37,7 @@
             p.python-lsp-server
             p.numpy
             p.pytorch
+            p.plotext
             p.torchmetrics
             p.ipython
             p.black

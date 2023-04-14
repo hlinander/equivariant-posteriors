@@ -1,7 +1,6 @@
 import torch
 from dataclasses import dataclass
-
-from lib.data import DataConfig
+from lib.data import DataSpec
 
 
 @dataclass
@@ -10,15 +9,11 @@ class DenseConfig:
 
 
 class Dense(torch.nn.Module):
-    def __init__(self, model_config: DenseConfig, data_config: DataConfig):
+    def __init__(self, model_config: DenseConfig, data_spec: DataSpec):
         super().__init__()
         self.config = model_config
-        self.l1 = torch.nn.Linear(
-            data_config.input_shape.numel(), model_config.d_hidden
-        )
-        self.l2 = torch.nn.Linear(
-            model_config.d_hidden, data_config.output_shape.numel()
-        )
+        self.l1 = torch.nn.Linear(data_spec.input_shape.numel(), model_config.d_hidden)
+        self.l2 = torch.nn.Linear(model_config.d_hidden, data_spec.output_shape.numel())
 
     def forward(self, x):
         x = x.reshape(x.shape[0], -1)

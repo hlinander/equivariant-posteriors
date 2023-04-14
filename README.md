@@ -1,6 +1,8 @@
 # Equivariant posteriors
 
 ## Nix
+This project uses [Nix](https://nixos.org/) to manage development and runtime dependencies.
+
 ### Install
 Install nix to your home-folder or system wide.
 ```
@@ -35,4 +37,10 @@ Start a development shell
 To build and run tests
 ```
   nix build
+```
+
+### Build singularity image
+Build a singularity image with CUDA support containing the project
+```
+  nix build .#sing
 ```

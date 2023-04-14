@@ -20,24 +20,35 @@ class MetricSampleKey:
 
 class Metric:
     # TODO: This should be tracked together with state and serialized/deserialized
-    def __init__(self, metric_fn: Callable[[torch.Tensor, torch.Tensor], object]):
+    def __init__(
+        self,
+        metric_fn: Callable[[torch.Tensor, torch.Tensor], object],
+        metric_kwargs=None,
+    ):
         self.values = dict()
         self.metric_fn = metric_fn
         self.metric_name = metric_fn.__name__
+        self.metric_kwargs = metric_kwargs if metric_kwargs is not None else dict()
+        self.mean_mem = dict()
 
     def __call__(self, metric_sample: MetricSample):
-        for idx in range(metric_sample.sample_id.shape[0]):
-            prediction = metric_sample.prediction[idx]
-            target = metric_sample.target[idx]
-            sample_id = metric_sample.sample_id[idx]
-            value = self.metric_fn(preds=prediction, target=target).detach().cpu()
-            key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
-            self.values[key] = value
+        prediction = metric_sample.prediction
+        target = metric_sample.target
+        sample_id = metric_sample.sample_id
+        values = (
+            self.metric_fn(preds=prediction, target=target, **self.metric_kwargs)
+            .detach()
+            .cpu()
+        )
+        key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
+        self.values[key] = values.mean()
 
     def mean(self, epoch):
-        keys = filter(lambda key: key.epoch == epoch, self.values.keys())
-        vals = torch.tensor([self.values[key] for key in keys])
-        return torch.mean(vals)
+        if epoch not in self.mean_mem:
+            keys = filter(lambda key: key.epoch == epoch, self.values.keys())
+            vals = torch.tensor([self.values[key] for key in keys])
+            self.mean_mem[epoch] = torch.mean(vals)
+        return self.mean_mem[epoch]
 
     def serialize(self):
         return self.values
