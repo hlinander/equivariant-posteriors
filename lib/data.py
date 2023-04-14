@@ -10,7 +10,8 @@ class DataSpec:
 
 @dataclass
 class DataSineConfig:
-    pass
+    input_shape: torch.Size
+    output_shape: torch.Size
 
 
 class DataSine(torch.utils.data.Dataset):
@@ -34,7 +35,7 @@ class DataSine(torch.utils.data.Dataset):
         return self.x.shape[0]
 
 
-@dataclass
+@dataclass(frozen=True)
 class DataSpiralsConfig:
     pass
 

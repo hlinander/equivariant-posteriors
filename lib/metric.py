@@ -47,7 +47,7 @@ class Metric:
         if epoch not in self.mean_mem:
             keys = filter(lambda key: key.epoch == epoch, self.values.keys())
             vals = torch.tensor([self.values[key] for key in keys])
-            self.mean_mem[epoch] = torch.mean(vals)
+            self.mean_mem[epoch] = torch.mean(vals).item()
         return self.mean_mem[epoch]
 
     def serialize(self):

@@ -24,7 +24,7 @@
         src = ./.;
 
         checkPhase = ''
-          python main.py
+          python test.py
         '';
       };
     in {

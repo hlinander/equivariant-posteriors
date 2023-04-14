@@ -1,6 +1,8 @@
+#!/usr/bin/env python
 import os
 import torch
 import torchmetrics as tm
+import plotext as plt
 
 from lib.train import TrainConfig
 from lib.train import TrainEval
@@ -11,8 +13,7 @@ from lib.data import DataSpiralsConfig
 
 
 from lib.train import load_or_create_state
-
-import plotext as plt
+from lib.train import do_training
 
 
 def loss(preds, target):
@@ -27,18 +28,16 @@ def main():
 
     print(f"Using device {device_id}")
 
-    plt.clt()
-
-    for ensemble_idx in range(5):
+    metrics = {}
+    for mlp_dim in [1, 5, 10, 20, 50]:
         train_config = TrainConfig(
             model_config=TransformerConfig(
-                embed_d=30, mlp_dim=20, n_seq=2, batch_size=500
+                embed_d=30, mlp_dim=mlp_dim, n_seq=2, batch_size=500
             ),
             data_config=DataSpiralsConfig(),
             loss=torch.nn.BCELoss(),
             batch_size=500,
-            epochs=300,
-            ensemble_id=ensemble_idx,
+            ensemble_id=0,
         )
         train_eval = TrainEval(
             metrics=[
@@ -49,15 +48,26 @@ def main():
                 lambda: Metric(loss),
             ],
         )
-        train_run = TrainRun(train_config=train_config, train_eval=train_eval)
+        train_run = TrainRun(
+            train_config=train_config,
+            train_eval=train_eval,
+            epochs=300,
+        )
 
         state = load_or_create_state(train_run, device_id)
 
-        epochs = list(range(state.epoch))
-        means = [state.metrics[1].mean(epoch) for epoch in epochs]
-        plt.plot(epochs, means)
+        do_training(train_run, state, device_id)
 
+        metrics[mlp_dim] = (state.metrics, state.epoch)
+
+    for mlp_dim, (metrics, epoch) in metrics.items():
+        epochs = list(range(epoch))
+        means = [metrics[0].mean(epoch) for epoch in epochs]
+        plt.plot(epochs, means, label=f"{mlp_dim}")
+
+    plt.title("embed d")
     plt.show()
+    plt.save_fig("./mlp_dim.html")
 
 
 if __name__ == "__main__":

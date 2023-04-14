@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from lib.data import DataSpec
 
 
-@dataclass
+@dataclass(frozen=True)
 class TransformerConfig:
     embed_d: int
     mlp_dim: int

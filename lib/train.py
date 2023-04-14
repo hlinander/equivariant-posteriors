@@ -2,7 +2,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
-import time
 import torch
 import plotext as plt
 import shutil
@@ -11,6 +10,7 @@ from lib.metric import Metric
 from lib.metric import MetricSample
 from lib.model import ModelFactory
 from lib.data import DataFactory
+from lib.stable_hash import stable_hash
 
 
 @dataclass
@@ -66,12 +66,32 @@ class TrainConfig:
     data_config: object
     loss: torch.nn.Module
     batch_size: int
-    epochs: int
-    metrics: List[Callable[[], Metric]]
+    ensemble_id: int = 0
     _version: int = 0
 
 
-def serialize(train_epoch_state: TrainEpochState):
+@dataclass
+class TrainEval:
+    metrics: List[Callable[[], Metric]]
+
+
+@dataclass
+class TrainRun:
+    train_config: TrainConfig
+    train_eval: TrainEval
+    epochs: int
+
+
+def get_checkpoint_path(train_config):
+    config_hash = stable_hash(train_config)
+    checkpoint_dir = Path("checkpoints/")
+    checkpoint_dir.mkdir(exist_ok=True)
+    tmp_checkpoint = checkpoint_dir / f"_checkpoint_{config_hash}.pt"
+    checkpoint = checkpoint_dir / f"checkpoint_{config_hash}.pt"
+    return checkpoint, tmp_checkpoint
+
+
+def serialize(train_config: TrainConfig, train_epoch_state: TrainEpochState):
     serialized_metrics = [
         (metric.name(), metric.serialize()) for metric in train_epoch_state.metrics
     ]
@@ -82,29 +102,41 @@ def serialize(train_epoch_state: TrainEpochState):
         epoch=train_epoch_state.epoch,
         metrics=serialized_metrics,
     )
-    torch.save(data_dict, "_checkpoint.pt")
-    shutil.move("_checkpoint.pt", "checkpoint.pt")
+
+    checkpoint, tmp_checkpoint = get_checkpoint_path(train_config)
+    torch.save(data_dict, tmp_checkpoint)
+    shutil.move(tmp_checkpoint, checkpoint)
 
 
 @dataclass
 class DeserializeConfig:
     model_factory: ModelFactory
     data_factory: DataFactory
-    train_config: TrainConfig
-    checkpoint_path: Path
+    train_run: TrainRun
     device_id: torch.device
 
 
 def deserialize(config: DeserializeConfig):
-    data_dict = torch.load(config.checkpoint_path)
+    train_config = config.train_run.train_config
+    checkpoint_path, _ = get_checkpoint_path(train_config)
+    if not checkpoint_path.is_file():
+        return None
+    else:
+        print(f"{checkpoint_path}")
 
-    ds = config.data_factory.create(config.train_config.data_config)
+    data_dict = torch.load(checkpoint_path)
+
+    ds = config.data_factory.create(train_config.data_config)
     dataloader = torch.utils.data.DataLoader(
-        ds, batch_size=config.train_config.batch_size, shuffle=True, drop_last=True
+        ds,
+        batch_size=train_config.batch_size,
+        shuffle=True,
+        drop_last=True,
     )
 
     model = config.model_factory.create(
-        config.train_config.model_config, config.train_config.data_config
+        train_config.model_config,
+        train_config.data_config,
     )
     model = model.to(torch.device(config.device_id))
     model.load_state_dict(data_dict["model"])
@@ -113,7 +145,7 @@ def deserialize(config: DeserializeConfig):
     optimizer.load_state_dict(data_dict["optimizer"])
 
     metrics = []
-    for metric in config.train_config.metrics:
+    for metric in config.train_run.train_eval.metrics:
         metric_instance = metric()
         metric_instance.deserialize(data_dict["metrics"][metric_instance.name()])
         metrics.append(metric_instance)
@@ -129,10 +161,10 @@ def deserialize(config: DeserializeConfig):
     )
 
 
-def create_initial_state(train_config: TrainConfig, device_id):
-    models = ModelFactory()
-    datasets = DataFactory()
-
+def create_initial_state(
+    models: ModelFactory, datasets: DataFactory, train_run: TrainRun, device_id
+):
+    train_config = train_run.train_config
     ds = datasets.create(train_config.data_config)
     dataloader = torch.utils.data.DataLoader(
         ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
@@ -141,36 +173,47 @@ def create_initial_state(train_config: TrainConfig, device_id):
     model = models.create(train_config.model_config, train_config.data_config)
     model = model.to(torch.device(device_id))
     opt = torch.optim.Adam(model.parameters())
-    metrics = [metric() for metric in train_config.metrics]
+    metrics = [metric() for metric in train_run.train_eval.metrics]
 
     return TrainEpochState(
         model=model, optimizer=opt, metrics=metrics, epoch=0, dataloader=dataloader
     )
 
 
-def load_state(train_config: TrainConfig, checkpoint_path, device_id):
+def load_or_create_state(train_run: TrainRun, device_id):
     models = ModelFactory()
     datasets = DataFactory()
+
     config = DeserializeConfig(
         model_factory=models,
         data_factory=datasets,
-        train_config=train_config,
-        checkpoint_path=checkpoint_path,
+        train_run=train_run,
         device_id=device_id,
     )
-    return deserialize(config)
+
+    state = deserialize(config)
+
+    if state is None:
+        state = create_initial_state(
+            models=models,
+            datasets=datasets,
+            train_run=config.train_run,
+            device_id=config.device_id,
+        )
+
+    return state
 
 
-def do_training(train_config: TrainConfig, state: TrainEpochState, device_id):
+def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     train_epoch_spec = TrainEpochSpec(
-        loss=train_config.loss,
+        loss=train_run.train_config.loss,
         device_id=device_id,
     )
 
     plt.title(state.metrics[0].name())
-    while state.epoch < train_config.epochs:
+    while state.epoch < train_run.epochs:
         train(state, train_epoch_spec)
-        serialize(state)
+        serialize(train_run.train_config, state)
         # time.sleep(1)
         # print(f"Epoch {state.epoch} done")
 
@@ -180,6 +223,5 @@ def do_training(train_config: TrainConfig, state: TrainEpochState, device_id):
         plt.cld()
         epochs = list(range(state.epoch))
         means = [state.metrics[0].mean(epoch) for epoch in epochs]
-        # print(means)
         plt.plot(epochs, means)
         plt.show()
