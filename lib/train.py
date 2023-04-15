@@ -1,10 +1,13 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import List
 from pathlib import Path
 import torch
 import plotext as plt
 import shutil
+import logging
+from contextlib import redirect_stdout
+import io
 
 from lib.metric import Metric
 from lib.metric import MetricSample
@@ -82,7 +85,7 @@ class TrainRun:
     epochs: int
 
 
-def get_checkpoint_path(train_config):
+def get_checkpoint_path(train_config) -> (Path, Path):
     config_hash = stable_hash(train_config)
     checkpoint_dir = Path("checkpoints/")
     checkpoint_dir.mkdir(exist_ok=True)
@@ -210,18 +213,58 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         device_id=device_id,
     )
 
-    plt.title(state.metrics[0].name())
     while state.epoch < train_run.epochs:
         train(state, train_epoch_spec)
         serialize(train_run.train_config, state)
-        # time.sleep(1)
-        # print(f"Epoch {state.epoch} done")
+        try:
+            visualize_progress(state, train_run)
+        except Exception as e:
+            logging.error("Visualization failed")
+            logging.error(str(e))
 
-        # for metric in state.metrics:
-        #     print(f"{metric.name()}: {metric.mean(state.epoch - 1):.04E}")
-        plt.clt()
-        plt.cld()
-        epochs = list(range(state.epoch))
-        means = [state.metrics[0].mean(epoch) for epoch in epochs]
-        plt.plot(epochs, means)
-        plt.show()
+
+def visualize_progress(state, train_run):
+    plt.clt()
+    plt.cld()
+    epochs = list(range(state.epoch))
+    n_metrics = min(4, len(state.metrics))
+    # Two columns
+    plt.subplots(1, 2)
+
+    # First column (many metrics in rows)
+    plt.subplot(1, 1).subplots(n_metrics, 1)
+    for idx in range(n_metrics):
+        means = [state.metrics[idx].mean(epoch) for epoch in epochs]
+        plt.subplot(1, 1).subplot(idx + 1, 1)
+        plt.title(state.metrics[idx].name())
+        plt.plot(epochs, means, label=f"{state.metrics[idx].name()}")
+
+    # Second column (config)
+    plt.subplot(1, 2)
+    plt.title("Config")
+    tc = "\n".join(text_config(asdict(train_run)))
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.text(tc, 0, 1)
+    plt.show()
+
+    checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
+    f = io.StringIO()
+    with redirect_stdout(f):
+        plt.save_fig(f"{checkpoint_path}.tmp.html")
+        plt.save_fig(f"{checkpoint_path}.term_")
+        plt.save_fig(f"{checkpoint_path}.term_color_", keep_colors=True)
+    shutil.move(f"{checkpoint_path}.tmp.html", f"{checkpoint_path}.html")
+    shutil.move(f"{checkpoint_path}.term_", f"{checkpoint_path}.term")
+    shutil.move(f"{checkpoint_path}.term_color_", f"{checkpoint_path}.term_color")
+
+
+def text_config(config, level=0, y=0):
+    text = []
+    for key, value in config.items():
+        if isinstance(value, dict):
+            text.append(f"{'  '*level}{key}:")
+            text = text + text_config(value, level + 1)
+        else:
+            text.append(f"{'  '*level}{key}: {value}")
+    return text

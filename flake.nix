@@ -19,6 +19,8 @@
           pytorch
           torchmetrics
           plotext
+          gitpython
+          wandb
         ];
 
         src = ./.;
@@ -42,6 +44,8 @@
             p.ipython
             p.black
             p.flake8
+            p.gitpython
+            p.wandb
           ]))
         ];
       };

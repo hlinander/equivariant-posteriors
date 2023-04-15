@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import os
 import torch
 import torchmetrics as tm
 from pathlib import Path
@@ -8,8 +7,8 @@ from lib.train import TrainConfig
 from lib.train import TrainEval
 from lib.train import TrainRun
 from lib.metric import Metric
-from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
+from lib.models.mlp import MLPClassConfig
 from lib.ablation import ablation
 
 
@@ -23,11 +22,9 @@ def bce(preds, target):
     )
 
 
-def create_config(embed_d):
+def create_config(mlp_dim):
     train_config = TrainConfig(
-        model_config=TransformerConfig(
-            embed_d=embed_d, mlp_dim=10, n_seq=2, batch_size=500
-        ),
+        model_config=MLPClassConfig(width=mlp_dim),
         data_config=DataSpiralsConfig(),
         loss=torch.nn.BCELoss(),
         batch_size=500,
@@ -52,4 +49,4 @@ def create_config(embed_d):
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, [1, 5, 20, 50, 100])
+    ablation(Path(__file__).parent / "results", create_config, [10, 50, 100, 200])
