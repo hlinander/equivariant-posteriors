@@ -1,6 +1,4 @@
-from collections.abc import Callable
 from dataclasses import dataclass, asdict
-from typing import List
 from pathlib import Path
 import torch
 import plotext as plt
@@ -10,26 +8,16 @@ from contextlib import redirect_stdout
 import io
 import time
 
-from lib.metric import Metric
 from lib.metric import MetricSample
 from lib.model import ModelFactory
 from lib.data import DataFactory
 from lib.stable_hash import stable_hash
+from lib.render_dataframe import render_dataframe
 
-
-@dataclass
-class TrainEpochState:
-    model: torch.nn.Module
-    optimizer: torch.optim.Optimizer
-    metrics: List[Metric]
-    dataloader: torch.utils.data.DataLoader
-    epoch: int
-
-
-@dataclass
-class TrainEpochSpec:
-    loss: object
-    device_id: int
+from lib.train_dataclasses import TrainEpochState
+from lib.train_dataclasses import TrainEpochSpec
+from lib.train_dataclasses import Factories
+from lib.train_dataclasses import TrainRun
 
 
 def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
@@ -64,36 +52,6 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     train_epoch_state.epoch += 1
 
 
-@dataclass
-class OptimizerConfig:
-    optimizer: torch.optim.Optimizer
-    kwargs: dict
-
-
-@dataclass
-class TrainConfig:
-    model_config: object
-    data_config: object
-    loss: torch.nn.Module
-    optimizer: OptimizerConfig
-    batch_size: int
-    save_nth_epoch: int
-    ensemble_id: int = 0
-    _version: int = 0
-
-
-@dataclass
-class TrainEval:
-    metrics: List[Callable[[], Metric]]
-
-
-@dataclass
-class TrainRun:
-    train_config: TrainConfig
-    train_eval: TrainEval
-    epochs: int
-
-
 def get_checkpoint_path(train_config) -> (Path, Path):
     config_hash = stable_hash(train_config)
     checkpoint_dir = Path("checkpoints/")
@@ -103,9 +61,19 @@ def get_checkpoint_path(train_config) -> (Path, Path):
     return checkpoint, tmp_checkpoint
 
 
-def serialize(train_run: TrainRun, train_epoch_state: TrainEpochState):
-    train_config = train_run.train_config
-    if train_epoch_state.epoch % train_config.save_nth_epoch != 0:
+@dataclass
+class SerializeConfig:
+    factories: Factories
+    train_run: TrainRun
+    train_epoch_state: TrainEpochState
+
+
+def serialize(config: SerializeConfig):
+    train_config = config.train_run.train_config
+    train_epoch_state = config.train_epoch_state
+    train_run = config.train_run
+
+    if train_epoch_state.epoch % train_run.save_nth_epoch != 0:
         # Save if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
             return
@@ -118,6 +86,7 @@ def serialize(train_run: TrainRun, train_epoch_state: TrainEpochState):
         optimizer=train_epoch_state.optimizer.state_dict(),
         epoch=train_epoch_state.epoch,
         metrics=serialized_metrics,
+        train_run=config.train_run.serialize_human(config.factories),
     )
 
     checkpoint, tmp_checkpoint = get_checkpoint_path(train_config)
@@ -127,8 +96,7 @@ def serialize(train_run: TrainRun, train_epoch_state: TrainEpochState):
 
 @dataclass
 class DeserializeConfig:
-    model_factory: ModelFactory
-    data_factory: DataFactory
+    factories: Factories
     train_run: TrainRun
     device_id: torch.device
 
@@ -143,7 +111,7 @@ def deserialize(config: DeserializeConfig):
 
     data_dict = torch.load(checkpoint_path)
 
-    ds = config.data_factory.create(train_config.data_config)
+    ds = config.factories.data_factory.create(train_config.data_config)
     dataloader = torch.utils.data.DataLoader(
         ds,
         batch_size=train_config.batch_size,
@@ -151,7 +119,7 @@ def deserialize(config: DeserializeConfig):
         drop_last=True,
     )
 
-    model = config.model_factory.create(
+    model = config.factories.model_factory.create(
         train_config.model_config,
         train_config.data_config,
     )
@@ -202,10 +170,10 @@ def create_initial_state(
 def load_or_create_state(train_run: TrainRun, device_id):
     models = ModelFactory()
     datasets = DataFactory()
+    factories = Factories(model_factory=models, data_factory=datasets)
 
     config = DeserializeConfig(
-        model_factory=models,
-        data_factory=datasets,
+        factories=factories,
         train_run=train_run,
         device_id=device_id,
     )
@@ -229,10 +197,15 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         loss=train_run.train_config.loss,
         device_id=device_id,
     )
+    factories = Factories(model_factory=ModelFactory(), data_factory=DataFactory())
+
+    serialize_config = SerializeConfig(
+        factories=factories, train_run=train_run, train_epoch_state=state
+    )
 
     while state.epoch <= train_run.epochs:
         train(state, train_epoch_spec)
-        serialize(train_run, state)
+        serialize(serialize_config)
         try:
             now = time.time()
             if now > next_visualization:
@@ -241,6 +214,9 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
+
+    df = render_dataframe(train_run, state)
+    df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
 
 
 def visualize_progress(state, train_run):

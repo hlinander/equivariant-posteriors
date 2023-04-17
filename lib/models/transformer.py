@@ -10,6 +10,9 @@ class TransformerConfig:
     n_seq: int
     batch_size: int
 
+    def serialize_human(self, factories):
+        return self.__dict__
+
 
 class Transformer(torch.nn.Module):
     def __init__(self, config: TransformerConfig, data_spec: DataSpec):

@@ -21,6 +21,7 @@
           plotext
           gitpython
           wandb
+          pandas
         ];
 
         src = ./.;
@@ -44,6 +45,8 @@
             p.gitpython
             p.wandb
             p.snakeviz
+            p.pandas
+            p.matplotlib
           ]))
         ];
     in {

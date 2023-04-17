@@ -7,6 +7,9 @@ from lib.dataspec import DataSpec
 class MLPClassConfig:
     width: int
 
+    def serialize_human(self, factories):
+        return self.__dict__
+
 
 class MLPClass(torch.nn.Module):
     def __init__(self, config: MLPClassConfig, data_spec: DataSpec):

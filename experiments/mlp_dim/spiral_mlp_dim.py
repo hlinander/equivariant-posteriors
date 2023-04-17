@@ -31,7 +31,6 @@ def create_config(mlp_dim):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
         ),
-        save_nth_epoch=20,
         data_config=DataSpiralsConfig(),
         loss=torch.nn.BCELoss(),
         batch_size=500,
@@ -51,9 +50,12 @@ def create_config(mlp_dim):
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
+        save_nth_epoch=20,
     )
     return train_run
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, [1, 5, 10, 20, 50])
+    ablation(
+        Path(__file__).parent / "results", create_config, lambda: [1, 5, 10, 20, 50]
+    )

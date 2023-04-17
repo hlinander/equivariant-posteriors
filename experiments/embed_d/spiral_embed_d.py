@@ -3,10 +3,10 @@ import torch
 import torchmetrics as tm
 from pathlib import Path
 
-from lib.train import TrainConfig
-from lib.train import TrainEval
-from lib.train import TrainRun
-from lib.train import OptimizerConfig
+from lib.train_dataclasses import TrainConfig
+from lib.train_dataclasses import TrainEval
+from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
@@ -32,7 +32,6 @@ def create_config(embed_d):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
         ),
-        save_nth_epoch=20,
         loss=torch.nn.BCELoss(),
         batch_size=500,
         ensemble_id=0,
@@ -51,9 +50,14 @@ def create_config(embed_d):
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
+        save_nth_epoch=20,
     )
     return train_run
 
 
+def create_values():
+    return [1, 5, 20, 50, 100]
+
+
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, [1, 5, 20, 50, 100])
+    ablation(Path(__file__).parent / "results", create_config, create_values())

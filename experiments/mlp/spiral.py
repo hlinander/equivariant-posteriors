@@ -31,7 +31,6 @@ def create_config(mlp_dim):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
         ),
-        save_nth_epoch=20,
         batch_size=500,
         ensemble_id=0,
     )
@@ -49,9 +48,12 @@ def create_config(mlp_dim):
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
+        save_nth_epoch=20,
     )
     return train_run
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, [10, 50, 100, 200])
+    ablation(
+        Path(__file__).parent / "results", create_config, lambda: [10, 50, 100, 200]
+    )

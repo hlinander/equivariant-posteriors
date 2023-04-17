@@ -17,3 +17,6 @@ class ModelFactory:
 
     def create(self, model_config, data_config) -> torch.nn.Module:
         return self.models[model_config.__class__](model_config, data_config)
+
+    def get_class(self, model_config):
+        return self.models[model_config.__class__]
