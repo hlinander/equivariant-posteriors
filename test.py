@@ -7,6 +7,7 @@ from pathlib import Path
 from lib.train import TrainConfig
 from lib.train import TrainEval
 from lib.train import TrainRun
+from lib.train import OptimizerConfig
 from lib.metric import Metric
 from lib.models.dense import DenseConfig
 from lib.data import DataSineConfig
@@ -29,6 +30,7 @@ def main():
             input_shape=torch.Size([1]), output_shape=torch.Size([1])
         ),
         loss=torch.nn.MSELoss(),
+        optimizer=OptimizerConfig(optimizer=torch.optim.Adam, kwargs=dict()),
         batch_size=2,
     )
     train_eval = TrainEval(

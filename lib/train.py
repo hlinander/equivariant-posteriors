@@ -8,6 +8,7 @@ import shutil
 import logging
 from contextlib import redirect_stdout
 import io
+import time
 
 from lib.metric import Metric
 from lib.metric import MetricSample
@@ -64,11 +65,19 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
 
 
 @dataclass
+class OptimizerConfig:
+    optimizer: torch.optim.Optimizer
+    kwargs: dict
+
+
+@dataclass
 class TrainConfig:
     model_config: object
     data_config: object
     loss: torch.nn.Module
+    optimizer: OptimizerConfig
     batch_size: int
+    save_nth_epoch: int
     ensemble_id: int = 0
     _version: int = 0
 
@@ -94,7 +103,12 @@ def get_checkpoint_path(train_config) -> (Path, Path):
     return checkpoint, tmp_checkpoint
 
 
-def serialize(train_config: TrainConfig, train_epoch_state: TrainEpochState):
+def serialize(train_run: TrainRun, train_epoch_state: TrainEpochState):
+    train_config = train_run.train_config
+    if train_epoch_state.epoch % train_config.save_nth_epoch != 0:
+        # Save if this is the last epoch regardless
+        if train_epoch_state.epoch != train_run.epochs:
+            return
     serialized_metrics = [
         (metric.name(), metric.serialize()) for metric in train_epoch_state.metrics
     ]
@@ -144,7 +158,9 @@ def deserialize(config: DeserializeConfig):
     model = model.to(torch.device(config.device_id))
     model.load_state_dict(data_dict["model"])
 
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = train_config.optimizer.optimizer(
+        model.parameters(), **train_config.optimizer.kwargs
+    )
     optimizer.load_state_dict(data_dict["optimizer"])
 
     metrics = []
@@ -208,16 +224,20 @@ def load_or_create_state(train_run: TrainRun, device_id):
 
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
+    next_visualization = time.time()
     train_epoch_spec = TrainEpochSpec(
         loss=train_run.train_config.loss,
         device_id=device_id,
     )
 
-    while state.epoch < train_run.epochs:
+    while state.epoch <= train_run.epochs:
         train(state, train_epoch_spec)
-        serialize(train_run.train_config, state)
+        serialize(train_run, state)
         try:
-            visualize_progress(state, train_run)
+            now = time.time()
+            if now > next_visualization:
+                next_visualization = now + 1
+                visualize_progress(state, train_run)
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))

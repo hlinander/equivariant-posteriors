@@ -6,6 +6,7 @@ from pathlib import Path
 from lib.train import TrainConfig
 from lib.train import TrainEval
 from lib.train import TrainRun
+from lib.train import OptimizerConfig
 from lib.metric import Metric
 from lib.data import DataSpiralsConfig
 from lib.models.mlp import MLPClassConfig
@@ -27,6 +28,10 @@ def create_config(mlp_dim):
         model_config=MLPClassConfig(width=mlp_dim),
         data_config=DataSpiralsConfig(),
         loss=torch.nn.BCELoss(),
+        optimizer=OptimizerConfig(
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
+        ),
+        save_nth_epoch=20,
         batch_size=500,
         ensemble_id=0,
     )
@@ -43,7 +48,7 @@ def create_config(mlp_dim):
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
-        epochs=300,
+        epochs=500,
     )
     return train_run
 

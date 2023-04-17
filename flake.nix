@@ -29,10 +29,7 @@
           python test.py
         '';
       };
-    in {
-      packages.x86_64-linux.default = program;
-      devShells.x86_64-linux.default = pkgs.mkShellNoCC {
-        buildInputs = with pkgs; [
+      devinputs = with pkgs; [
           helix
           nixfmt
           (python3.withPackages (p: [
@@ -46,16 +43,28 @@
             p.flake8
             p.gitpython
             p.wandb
+            p.snakeviz
           ]))
         ];
-      };
+    in {
+      packages.x86_64-linux.default = program;
+      devShells.x86_64-linux.default = pkgs.mkShellNoCC {
+        buildInputs = devinputs;
+         };
 
       sing = pkgs.singularity-tools.buildImage {
         name = "equivariant-posteriors";
         diskSize = 1024 * 60;
         memSize = 1024 * 8;
-        contents =
-          [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
+        contents = 
+          [ 
+            (pkgs.buildEnv {
+                  name = "root";
+                  paths = [ pkgs.bashInteractive pkgs.coreutils program devinputs];
+                  pathsToLink = [ "/bin" ];
+                })          
+          ];
+          # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
           #!${pkgs.stdenv.shell}
           exec /bin/sh $@'';

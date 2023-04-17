@@ -1,6 +1,6 @@
 import torch
 from dataclasses import dataclass
-from lib.data import DataSpec
+from lib.dataspec import DataSpec
 
 
 @dataclass
