@@ -3,10 +3,10 @@ import torch
 import torchmetrics as tm
 from pathlib import Path
 
-from lib.train import TrainConfig
-from lib.train import TrainEval
-from lib.train import TrainRun
-from lib.train import OptimizerConfig
+from lib.train_dataclasses import TrainConfig
+from lib.train_dataclasses import TrainEval
+from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.data import DataSpiralsConfig
 from lib.models.mlp import MLPClassConfig
@@ -54,6 +54,4 @@ def create_config(mlp_dim):
 
 
 if __name__ == "__main__":
-    ablation(
-        Path(__file__).parent / "results", create_config, lambda: [10, 50, 100, 200]
-    )
+    ablation(Path(__file__).parent / "results", create_config, [10, 50, 100, 200])

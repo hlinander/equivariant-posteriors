@@ -6,6 +6,7 @@ from typing import Callable
 from lib.metric import Metric
 from lib.model import ModelFactory
 from lib.data import DataFactory
+from lib.stable_hash import stable_hash
 
 
 @dataclass
@@ -62,6 +63,11 @@ class TrainConfig:
             ),
         )
 
+    def ensemble_dict(self):
+        ensemble_config = self.__dict__.copy()
+        ensemble_config.pop("ensemble_id")
+        return ensemble_config
+
 
 @dataclass
 class TrainEval:
@@ -81,6 +87,8 @@ class TrainRun:
     def serialize_human(self, factories: Factories):
         return dict(
             train_config=self.train_config.serialize_human(factories),
+            train_id=stable_hash(self.train_config),
+            ensemble_id=stable_hash(self.train_config.ensemble_dict()),
             train_eval=self.train_eval.serialize_human(factories),
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,

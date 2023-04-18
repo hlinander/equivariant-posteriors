@@ -33,6 +33,7 @@
       devinputs = with pkgs; [
           helix
           nixfmt
+          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp]; })
           (python3.withPackages (p: [
             p.python-lsp-server
             p.numpy
@@ -47,6 +48,7 @@
             p.snakeviz
             p.pandas
             p.matplotlib
+            p.plotnine
           ]))
         ];
     in {

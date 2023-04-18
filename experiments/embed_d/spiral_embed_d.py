@@ -10,7 +10,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
-from lib.ablation import ablation
+from lib.generic_ablation import generic_ablation
 
 
 def loss(preds, target):
@@ -23,7 +23,7 @@ def bce(preds, target):
     )
 
 
-def create_config(embed_d):
+def create_config(embed_d, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=embed_d, mlp_dim=10, n_seq=2, batch_size=500
@@ -34,7 +34,7 @@ def create_config(embed_d):
         ),
         loss=torch.nn.BCELoss(),
         batch_size=500,
-        ensemble_id=0,
+        ensemble_id=ensemble_id,
     )
     train_eval = TrainEval(
         metrics=[
@@ -56,8 +56,8 @@ def create_config(embed_d):
 
 
 def create_values():
-    return [1, 5, 20, 50, 100]
+    return dict(embed_d=[1, 5, 20, 50, 100], ensemble_id=list(range(5)))
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, create_values())
+    generic_ablation(Path(__file__).parent / "results", create_config, create_values())

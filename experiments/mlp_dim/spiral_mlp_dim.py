@@ -3,14 +3,14 @@ import torch
 import torchmetrics as tm
 from pathlib import Path
 
-from lib.train import TrainConfig
-from lib.train import TrainEval
-from lib.train import TrainRun
-from lib.train import OptimizerConfig
+from lib.train_dataclasses import TrainConfig
+from lib.train_dataclasses import TrainEval
+from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
-from lib.ablation import ablation
+from lib.generic_ablation import generic_ablation
 
 
 def loss(preds, target):
@@ -23,10 +23,10 @@ def bce(preds, target):
     )
 
 
-def create_config(mlp_dim):
+def create_config(mlp_dim, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
-            embed_d=30, mlp_dim=mlp_dim, n_seq=2, batch_size=500
+            embed_d=50, mlp_dim=mlp_dim, n_seq=2, batch_size=500
         ),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
@@ -34,7 +34,7 @@ def create_config(mlp_dim):
         data_config=DataSpiralsConfig(),
         loss=torch.nn.BCELoss(),
         batch_size=500,
-        ensemble_id=0,
+        ensemble_id=ensemble_id,
     )
     train_eval = TrainEval(
         metrics=[
@@ -56,6 +56,8 @@ def create_config(mlp_dim):
 
 
 if __name__ == "__main__":
-    ablation(
-        Path(__file__).parent / "results", create_config, lambda: [1, 5, 10, 20, 50]
+    generic_ablation(
+        Path(__file__).parent / "results",
+        create_config,
+        dict(mlp_dim=[1, 5, 10, 20, 50], ensemble_id=list(range(5))),
     )

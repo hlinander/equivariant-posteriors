@@ -1,8 +1,11 @@
 library(ggplot2)
 library(dplyr)
+library(latex2exp)
+
+
 database <-
-  read.csv("~/projects/equivariant_posteriors/database.csv")
-ggplot(
+  read.csv("database.csv")
+plot <- ggplot(
   dplyr::filter(
     database,
     ensemble_id != "",
@@ -24,4 +27,5 @@ ggplot(
     quantile(x, 0.9),
   alpha = 0.2,
   color = NA
-) + stat_summary(geom = "line", fun = median, color = "black") + scale_fill_brewer(palette="Spectral")
+) + stat_summary(geom = "line", fun = median, color = "black") + scale_fill_brewer(palette="Spectral") + labs(linetype=TeX("$d_{embed}$"), fill=TeX("$d_{embed}$"))
+ggsave("embed_d.pdf")
