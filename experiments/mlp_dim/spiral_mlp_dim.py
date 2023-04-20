@@ -10,6 +10,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
+from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
 
 
@@ -31,13 +32,14 @@ def create_config(mlp_dim, ensemble_id):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
         ),
-        data_config=DataSpiralsConfig(),
+        train_data_config=DataSpiralsConfig(seed=0, N=1000),
+        val_data_config=DataSpiralsConfig(seed=1, N=500),
         loss=torch.nn.BCELoss(),
         batch_size=500,
         ensemble_id=ensemble_id,
     )
     train_eval = TrainEval(
-        metrics=[
+        train_metrics=[
             lambda: Metric(
                 tm.functional.accuracy,
                 metric_kwargs=dict(task="binary", multidim_average="samplewise"),
@@ -45,12 +47,22 @@ def create_config(mlp_dim, ensemble_id):
             lambda: Metric(loss),
             lambda: Metric(bce),
         ],
+        validation_metrics=[
+            lambda: Metric(
+                tm.functional.accuracy,
+                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
+            ),
+            lambda: Metric(bce),
+            lambda: Metric(loss),
+        ],
+        data_visualizer=visualize_spiral,
     )
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
         save_nth_epoch=20,
+        validate_nth_epoch=20,
     )
     return train_run
 

@@ -7,6 +7,9 @@ from lib.dataspec import DataSpec
 class DenseConfig:
     d_hidden: int = 300
 
+    def serialize_human(self, factories):
+        return self.__dict__
+
 
 class Dense(torch.nn.Module):
     def __init__(self, model_config: DenseConfig, data_spec: DataSpec):

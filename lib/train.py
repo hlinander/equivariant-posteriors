@@ -1,5 +1,7 @@
+import traceback
 from dataclasses import dataclass, asdict
 from pathlib import Path
+from typing import List
 import torch
 import plotext as plt
 import shutil
@@ -9,6 +11,7 @@ import io
 import time
 
 from lib.metric import MetricSample
+from lib.metric import Metric
 from lib.model import ModelFactory
 from lib.data import DataFactory
 from lib.stable_hash import stable_hash
@@ -20,9 +23,40 @@ from lib.train_dataclasses import Factories
 from lib.train_dataclasses import TrainRun
 
 
+def validate(
+    train_epoch_state: TrainEpochState,
+    train_epoch_spec: TrainEpochSpec,
+    train_run: TrainRun,
+):
+    if train_epoch_state.epoch % train_run.validate_nth_epoch != 0:
+        # Evaluate if this is the last epoch regardless
+        if train_epoch_state.epoch != train_run.epochs:
+            return
+    model = train_epoch_state.model
+    dataloader = train_epoch_state.val_dataloader
+    device = train_epoch_spec.device_id
+
+    model.eval()
+
+    with torch.no_grad():
+        for i, (input, target, sample_id) in enumerate(dataloader):
+            input = input.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            output = model(input)
+
+            metric_sample = MetricSample(
+                prediction=output,
+                target=target,
+                sample_id=sample_id,
+                epoch=train_epoch_state.epoch,
+            )
+            for metric in train_epoch_state.validation_metrics:
+                metric(metric_sample)
+
+
 def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     model = train_epoch_state.model
-    dataloader = train_epoch_state.dataloader
+    dataloader = train_epoch_state.train_dataloader
     loss = train_epoch_spec.loss
     optimizer = train_epoch_state.optimizer
     device = train_epoch_spec.device_id
@@ -46,7 +80,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
             sample_id=sample_id,
             epoch=train_epoch_state.epoch,
         )
-        for metric in train_epoch_state.metrics:
+        for metric in train_epoch_state.train_metrics:
             metric(metric_sample)
 
     train_epoch_state.epoch += 1
@@ -68,6 +102,12 @@ class SerializeConfig:
     train_epoch_state: TrainEpochState
 
 
+def serialize_metrics(metrics: List[Metric]):
+    serialized_metrics = [(metric.name(), metric.serialize()) for metric in metrics]
+    serialized_metrics = {name: value for name, value in serialized_metrics}
+    return serialized_metrics
+
+
 def serialize(config: SerializeConfig):
     train_config = config.train_run.train_config
     train_epoch_state = config.train_epoch_state
@@ -77,15 +117,12 @@ def serialize(config: SerializeConfig):
         # Save if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
             return
-    serialized_metrics = [
-        (metric.name(), metric.serialize()) for metric in train_epoch_state.metrics
-    ]
-    serialized_metrics = {name: value for name, value in serialized_metrics}
     data_dict = dict(
         model=train_epoch_state.model.state_dict(),
         optimizer=train_epoch_state.optimizer.state_dict(),
         epoch=train_epoch_state.epoch,
-        metrics=serialized_metrics,
+        train_metrics=serialize_metrics(train_epoch_state.train_metrics),
+        validation_metrics=serialize_metrics(train_epoch_state.validation_metrics),
         train_run=config.train_run.serialize_human(config.factories),
     )
 
@@ -111,9 +148,16 @@ def deserialize(config: DeserializeConfig):
 
     data_dict = torch.load(checkpoint_path)
 
-    ds = config.factories.data_factory.create(train_config.data_config)
-    dataloader = torch.utils.data.DataLoader(
-        ds,
+    train_ds = config.factories.data_factory.create(train_config.train_data_config)
+    train_dataloader = torch.utils.data.DataLoader(
+        train_ds,
+        batch_size=train_config.batch_size,
+        shuffle=True,
+        drop_last=True,
+    )
+    val_ds = config.factories.data_factory.create(train_config.val_data_config)
+    val_dataloader = torch.utils.data.DataLoader(
+        val_ds,
         batch_size=train_config.batch_size,
         shuffle=True,
         drop_last=True,
@@ -121,7 +165,7 @@ def deserialize(config: DeserializeConfig):
 
     model = config.factories.model_factory.create(
         train_config.model_config,
-        train_config.data_config,
+        train_config.val_data_config,
     )
     model = model.to(torch.device(config.device_id))
     model.load_state_dict(data_dict["model"])
@@ -131,11 +175,19 @@ def deserialize(config: DeserializeConfig):
     )
     optimizer.load_state_dict(data_dict["optimizer"])
 
-    metrics = []
-    for metric in config.train_run.train_eval.metrics:
+    train_metrics = []
+    for metric in config.train_run.train_eval.train_metrics:
         metric_instance = metric()
-        metric_instance.deserialize(data_dict["metrics"][metric_instance.name()])
-        metrics.append(metric_instance)
+        metric_instance.deserialize(data_dict["train_metrics"][metric_instance.name()])
+        train_metrics.append(metric_instance)
+
+    validation_metrics = []
+    for metric in config.train_run.train_eval.validation_metrics:
+        metric_instance = metric()
+        metric_instance.deserialize(
+            data_dict["validation_metrics"][metric_instance.name()]
+        )
+        validation_metrics.append(metric_instance)
 
     epoch = data_dict["epoch"]
 
@@ -143,8 +195,10 @@ def deserialize(config: DeserializeConfig):
         model=model,
         optimizer=optimizer,
         epoch=epoch,
-        metrics=metrics,
-        dataloader=dataloader,
+        train_metrics=train_metrics,
+        validation_metrics=validation_metrics,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
     )
 
 
@@ -152,18 +206,32 @@ def create_initial_state(
     models: ModelFactory, datasets: DataFactory, train_run: TrainRun, device_id
 ):
     train_config = train_run.train_config
-    ds = datasets.create(train_config.data_config)
-    dataloader = torch.utils.data.DataLoader(
-        ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
+    train_ds = datasets.create(train_config.train_data_config)
+    train_dataloader = torch.utils.data.DataLoader(
+        train_ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
+    )
+    val_ds = datasets.create(train_config.val_data_config)
+    val_dataloader = torch.utils.data.DataLoader(
+        val_ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
     )
 
-    model = models.create(train_config.model_config, train_config.data_config)
+    torch.manual_seed(train_config.ensemble_id)
+    model = models.create(train_config.model_config, train_config.train_data_config)
     model = model.to(torch.device(device_id))
     opt = torch.optim.Adam(model.parameters())
-    metrics = [metric() for metric in train_run.train_eval.metrics]
+    train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
+    validation_metrics = [
+        metric() for metric in train_run.train_eval.validation_metrics
+    ]
 
     return TrainEpochState(
-        model=model, optimizer=opt, metrics=metrics, epoch=0, dataloader=dataloader
+        model=model,
+        optimizer=opt,
+        train_metrics=train_metrics,
+        validation_metrics=validation_metrics,
+        epoch=0,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
     )
 
 
@@ -204,7 +272,11 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     )
 
     while state.epoch <= train_run.epochs:
+        # print(f"{state.epoch}")
         train(state, train_epoch_spec)
+        validate(state, train_epoch_spec, train_run)
+        # if state.epoch == 20:
+        #     breakpoint()
         serialize(serialize_config)
         try:
             now = time.time()
@@ -214,6 +286,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
+            print(traceback.format_exc())
 
     df = render_dataframe(train_run, state)
     df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
@@ -222,21 +295,42 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
 def visualize_progress(state, train_run):
     plt.clt()
     plt.cld()
+    plt.scatter()
     epochs = list(range(state.epoch))
-    n_metrics = min(4, len(state.metrics))
+    n_metrics = min(4, len(state.validation_metrics))
     # Two columns
     plt.subplots(1, 2)
 
     # First column (many metrics in rows)
     plt.subplot(1, 1).subplots(n_metrics, 1)
     for idx in range(n_metrics):
-        means = [state.metrics[idx].mean(epoch) for epoch in epochs]
+        train_means = [
+            (epoch, state.train_metrics[idx].mean(epoch)) for epoch in epochs
+        ]
+        train_means = [
+            (epoch, mean) for (epoch, mean) in train_means if mean is not None
+        ]
+        val_means = [
+            (epoch, state.validation_metrics[idx].mean(epoch)) for epoch in epochs
+        ]
+        val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
-        plt.title(state.metrics[idx].name())
-        plt.plot(epochs, means, label=f"{state.metrics[idx].name()}")
+        plt.title(state.validation_metrics[idx].name())
+        if len(train_means) > 0:
+            x = [epoch for (epoch, mean) in train_means]
+            y = [mean for (epoch, mean) in train_means]
+            plt.plot(x, y, label=f"Train {state.validation_metrics[idx].name()}")
+        if len(val_means) > 0:
+            x = [epoch for (epoch, mean) in val_means]
+            y = [mean for (epoch, mean) in val_means]
+            plt.plot(x, y, label=f"Val {state.validation_metrics[idx].name()}")
 
     # Second column (config)
-    plt.subplot(1, 2)
+    plt.subplot(1, 2).subplots(2, 1)
+    plt.subplot(1, 2).subplot(1, 1)
+    if train_run.train_eval.data_visualizer is not None:
+        train_run.train_eval.data_visualizer(plt, state)
+    plt.subplot(1, 2).subplot(2, 1)
     plt.title("Config")
     tc = "\n".join(text_config(asdict(train_run)))
     plt.xlim(0, 1)

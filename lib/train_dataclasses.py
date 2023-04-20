@@ -13,9 +13,11 @@ from lib.stable_hash import stable_hash
 class TrainEpochState:
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
-    metrics: List[Metric]
-    dataloader: torch.utils.data.DataLoader
+    train_metrics: List[Metric]
+    validation_metrics: List[Metric]
+    train_dataloader: torch.utils.data.DataLoader
     epoch: int
+    val_dataloader: torch.utils.data.DataLoader = None
 
 
 @dataclass
@@ -39,12 +41,13 @@ class Factories:
 @dataclass
 class TrainConfig:
     model_config: object
-    data_config: object
+    train_data_config: object
     loss: torch.nn.Module
     optimizer: OptimizerConfig
     batch_size: int
     ensemble_id: int = 0
     _version: int = 0
+    val_data_config: object = None
 
     def serialize_human(self, factories: Factories):
         return dict(
@@ -53,8 +56,8 @@ class TrainConfig:
                 name=factories.model_factory.get_class(self.model_config).__name__,
             ),
             data=dict(
-                config=self.data_config.serialize_human(factories),
-                name=factories.data_factory.get_class(self.data_config).__name__,
+                config=self.train_data_config.serialize_human(factories),
+                name=factories.data_factory.get_class(self.train_data_config).__name__,
             ),
             loss=self.loss.__class__.__name__,
             optimizer=dict(
@@ -71,10 +74,15 @@ class TrainConfig:
 
 @dataclass
 class TrainEval:
-    metrics: List[Callable[[], Metric]]
+    train_metrics: List[Callable[[], Metric]]
+    validation_metrics: List[Callable[[], Metric]]
+    data_visualizer: Callable[[object, TrainEpochState], None] = None
 
     def serialize_human(self, factories: Factories):
-        return [metric().name() for metric in self.metrics]
+        return dict(
+            train_metrics=[metric().name() for metric in self.train_metrics],
+            val_metric=[metric().name() for metric in self.validation_metrics],
+        )
 
 
 @dataclass
@@ -83,6 +91,7 @@ class TrainRun:
     train_eval: TrainEval
     epochs: int
     save_nth_epoch: int
+    validate_nth_epoch: int
 
     def serialize_human(self, factories: Factories):
         return dict(

@@ -23,9 +23,9 @@ def ablation(out_dir, create_config, values):
 
         do_training(train_run, state, device_id)
 
-        metric_ablation[value] = (state.metrics, state.epoch)
+        metric_ablation[value] = (state.validation_metrics, state.epoch)
 
-    for metric_idx in range(len(train_run.train_eval.metrics)):
+    for metric_idx in range(len(train_run.train_eval.train_metrics)):
         plt.clf()
         plt.cld()
         plt.title(f"{state.metrics[metric_idx].name()}")
@@ -35,8 +35,8 @@ def ablation(out_dir, create_config, values):
             plt.plot(epochs, means, label=f"{param}")
 
         plt.show()
-        plt.save_fig(out_dir / f"{state.metrics[metric_idx].name()}.html")
+        plt.save_fig(out_dir / f"{state.validation_metrics[metric_idx].name()}.html")
         plt.save_fig(
-            out_dir / f"{state.metrics[metric_idx].name()}",
+            out_dir / f"{state.validation_metrics[metric_idx].name()}",
             keep_colors=True,
         )

@@ -24,11 +24,19 @@ def render_dataframe(train_run: TrainRun, train_epoch_state: TrainEpochState):
             train_run.serialize_human(factories)
         ).items()
     ]
-    metric_headers = [metric.name() for metric in train_epoch_state.metrics]
-    headers = ["epoch"] + config_headers + metric_headers
+    train_metric_headers = [metric.name() for metric in train_epoch_state.train_metrics]
+    val_metric_headers = [
+        f"val_{metric.name()}" for metric in train_epoch_state.validation_metrics
+    ]
+    headers = ["epoch"] + config_headers + train_metric_headers + val_metric_headers
     rows = []
     for epoch in range(train_epoch_state.epoch):
-        metric_values = [metric.mean(epoch) for metric in train_epoch_state.metrics]
-        rows.append([epoch] + config_cols + metric_values)
+        train_metric_values = [
+            metric.mean(epoch) for metric in train_epoch_state.train_metrics
+        ]
+        val_metric_values = [
+            metric.mean(epoch) for metric in train_epoch_state.validation_metrics
+        ]
+        rows.append([epoch] + config_cols + train_metric_values + val_metric_values)
 
     return pandas.DataFrame(columns=headers, data=rows)

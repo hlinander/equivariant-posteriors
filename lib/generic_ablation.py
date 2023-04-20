@@ -27,20 +27,36 @@ def generic_ablation(out_dir, create_config, values_dict):
 
         do_training(train_run, state, device_id)
 
-        metric_ablation[values] = (state.metrics, state.epoch)
+        metric_ablation[values] = (
+            state.train_metrics,
+            state.validation_metrics,
+            state.epoch,
+        )
 
-    for metric_idx in range(len(train_run.train_eval.metrics)):
+    for metric_idx in range(len(train_run.train_eval.validation_metrics)):
         plt.clf()
         plt.cld()
-        plt.title(f"{state.metrics[metric_idx].name()}")
-        for param, (metrics, epoch) in metric_ablation.items():
+        plt.title(f"{state.validation_metrics[metric_idx].name()}")
+        for param, (train_metrics, val_metrics, epoch) in metric_ablation.items():
             epochs = list(range(epoch))
-            means = [metrics[metric_idx].mean(epoch) for epoch in epochs]
-            plt.plot(epochs, means, label=f"{param}")
+            train_means = [train_metrics[metric_idx].mean(epoch) for epoch in epochs]
+            train_means = [mean for mean in train_means if mean is not None]
+            val_means = [val_metrics[metric_idx].mean(epoch) for epoch in epochs]
+            val_means = [mean for mean in val_means if mean is not None]
+            plt.plot(
+                epochs,
+                train_means,
+                label=f"Train {state.validation_metrics[metric_idx].name()}",
+            )
+            plt.plot(
+                epochs,
+                val_means,
+                label=f"Val {state.validation_metrics[metric_idx].name()}",
+            )
 
         plt.show()
-        plt.save_fig(out_dir / f"{state.metrics[metric_idx].name()}.html")
+        plt.save_fig(out_dir / f"{state.validation_metrics[metric_idx].name()}.html")
         plt.save_fig(
-            out_dir / f"{state.metrics[metric_idx].name()}",
+            out_dir / f"{state.validation_metrics[metric_idx].name()}",
             keep_colors=True,
         )

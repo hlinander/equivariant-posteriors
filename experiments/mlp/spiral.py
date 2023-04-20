@@ -9,8 +9,9 @@ from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.data import DataSpiralsConfig
+from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
-from lib.ablation import ablation
+from lib.generic_ablation import generic_ablation
 
 
 def loss(preds, target):
@@ -23,19 +24,20 @@ def bce(preds, target):
     )
 
 
-def create_config(mlp_dim):
+def create_config(mlp_dim, ensemble_id):
     train_config = TrainConfig(
         model_config=MLPClassConfig(width=mlp_dim),
-        data_config=DataSpiralsConfig(),
+        train_data_config=DataSpiralsConfig(seed=0, N=1000),
+        val_data_config=DataSpiralsConfig(seed=1, N=500),
         loss=torch.nn.BCELoss(),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
         ),
         batch_size=500,
-        ensemble_id=0,
+        ensemble_id=ensemble_id,
     )
     train_eval = TrainEval(
-        metrics=[
+        train_metrics=[
             lambda: Metric(
                 tm.functional.accuracy,
                 metric_kwargs=dict(task="binary", multidim_average="samplewise"),
@@ -43,15 +45,29 @@ def create_config(mlp_dim):
             lambda: Metric(loss),
             lambda: Metric(bce),
         ],
+        validation_metrics=[
+            lambda: Metric(
+                tm.functional.accuracy,
+                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
+            ),
+            lambda: Metric(bce),
+            lambda: Metric(loss),
+        ],
+        data_visualizer=visualize_spiral,
     )
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
         save_nth_epoch=20,
+        validate_nth_epoch=20,
     )
     return train_run
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, [10, 50, 100, 200])
+    generic_ablation(
+        Path(__file__).parent / "results",
+        create_config,
+        dict(mlp_dim=[100, 10, 50, 100, 200], ensemble_id=list(range(5))),
+    )
