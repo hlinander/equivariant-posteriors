@@ -1,3 +1,4 @@
 checkpoints/
 database.csv
 database.df.pickle
+__pycache__
