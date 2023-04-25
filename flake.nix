@@ -22,6 +22,7 @@
           gitpython
           wandb
           pandas
+          psycopg
         ];
 
         src = ./.;
@@ -49,6 +50,7 @@
             p.pandas
             p.matplotlib
             p.plotnine
+            p.psycopg
           ]))
         ];
     in {

@@ -58,7 +58,7 @@ class Metric:
         return self.values
 
     def deserialize(self, values):
-        self.values = deepcopy(values)
+        self.values = values
 
     def name(self):
         return self.metric_name

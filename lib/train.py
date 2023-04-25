@@ -16,6 +16,7 @@ from lib.model import ModelFactory
 from lib.data import DataFactory
 from lib.stable_hash import stable_hash
 from lib.render_dataframe import render_dataframe
+from lib.render_psql import render_psql
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
@@ -289,6 +290,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
             print(traceback.format_exc())
 
     df = render_dataframe(train_run, state)
+    render_psql(train_run, state)
     df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
 
 
