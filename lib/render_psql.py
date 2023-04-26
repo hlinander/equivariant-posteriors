@@ -175,7 +175,13 @@ def insert_or_update_train_run(conn, train_run: TrainRun):
 def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
     factories = Factories()
     train_run_dict = train_run.serialize_human(factories)
-    setup_psql()
+    try:
+        setup_psql()
+    except psycopg.errors.OperationalError as e:
+        print("Couldn't setup PSQL datasink.")
+        print(str(e))
+        return
+
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
         host="localhost",

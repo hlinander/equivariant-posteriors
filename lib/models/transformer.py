@@ -9,6 +9,8 @@ class TransformerConfig:
     mlp_dim: int
     n_seq: int
     batch_size: int
+    num_layers: int
+    num_heads: int
 
     def serialize_human(self, factories):
         return self.__dict__
@@ -23,14 +25,14 @@ class Transformer(torch.nn.Module):
 
         self.layer = torch.nn.TransformerDecoderLayer(
             d_model=embed_d,
-            nhead=1,
+            nhead=config.num_heads,
             dim_feedforward=config.mlp_dim,
             dropout=0.0,
             batch_first=True,
             activation="gelu",
         )
         self.transformer = torch.nn.TransformerDecoder(
-            self.layer, num_layers=2, norm=lnorm
+            self.layer, num_layers=config.num_layers, norm=lnorm
         )
 
         self.debed = torch.nn.Linear(embed_d, 1)
