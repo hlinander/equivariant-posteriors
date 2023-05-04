@@ -31,7 +31,7 @@ def generate_spiral_points(N, angle_factor):
         ],
         dim=1,
     )
-    ys1 = torch.zeros(N, 1)
+    ys1 = torch.zeros(N, dtype=torch.long)
 
     xs2 = torch.stack(
         [
@@ -40,7 +40,7 @@ def generate_spiral_points(N, angle_factor):
         ],
         dim=1,
     )
-    ys2 = torch.ones(N, 1)
+    ys2 = torch.ones(N, dtype=torch.long)
     xs = torch.concat([xs1, xs2], dim=0)
     ys = torch.concat([ys1, ys2], dim=0)
     sample_ids = torch.arange(0, xs.shape[0], 1, dtype=torch.int32)
@@ -51,11 +51,13 @@ class DataSpirals(torch.utils.data.Dataset):
     def __init__(self, data_config: DataSpiralsConfig):
         torch.manual_seed(data_config.seed)
         self.spiral = generate_spiral_points(data_config.N, data_config.angle_factor)
+        self.n_classes = 2
 
     def data_spec(self):
         return DataSpec(
-            input_shape=self.data.spiral.shape[1:],
-            output_shape=self.spiral.ys.shape[1:],
+            input_shape=self.spiral.xs.shape[1:],
+            target_shape=self.spiral.ys.shape[1:],
+            output_shape=torch.Size([self.n_classes]),
         )
 
     def __getitem__(self, idx):
