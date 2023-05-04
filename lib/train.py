@@ -165,8 +165,7 @@ def deserialize(config: DeserializeConfig):
     )
 
     model = config.factories.model_factory.create(
-        train_config.model_config,
-        train_config.val_data_config,
+        train_config.model_config, val_ds.data_spec()
     )
     model = model.to(torch.device(config.device_id))
     model.load_state_dict(data_dict["model"])
@@ -217,7 +216,7 @@ def create_initial_state(
     )
 
     torch.manual_seed(train_config.ensemble_id)
-    model = models.create(train_config.model_config, train_config.train_data_config)
+    model = models.create(train_config.model_config, train_ds.data_spec())
     model = model.to(torch.device(device_id))
     opt = torch.optim.Adam(model.parameters())
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]

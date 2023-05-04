@@ -23,6 +23,7 @@
           wandb
           pandas
           psycopg
+          pytest
         ];
 
         src = ./.;
@@ -34,7 +35,8 @@
       devinputs = with pkgs; [
           helix
           nixfmt
-          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp]; })
+          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork]; })
+          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork]; })
           (python3.withPackages (p: [
             p.python-lsp-server
             p.numpy
@@ -51,6 +53,7 @@
             p.matplotlib
             p.plotnine
             p.psycopg
+            p.pytest
           ]))
         ];
     in {
@@ -70,6 +73,8 @@
                   paths = [ pkgs.bashInteractive pkgs.coreutils program devinputs];
                   pathsToLink = [ "/bin" ];
                 })          
+              program
+              devinputs
           ];
           # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''

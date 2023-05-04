@@ -35,7 +35,7 @@ class Transformer(torch.nn.Module):
             self.layer, num_layers=config.num_layers, norm=lnorm
         )
 
-        self.debed = torch.nn.Linear(embed_d, 1)
+        self.debed = torch.nn.Linear(embed_d, data_spec.output_shape[-1])
         self.register_buffer(
             "mem",
             torch.randn(
@@ -46,4 +46,4 @@ class Transformer(torch.nn.Module):
     def forward(self, x):
         embed = self.embed(x)
         tout = self.transformer(embed, self.mem)
-        return torch.sigmoid(self.debed(tout))[:, 0, :]
+        return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]

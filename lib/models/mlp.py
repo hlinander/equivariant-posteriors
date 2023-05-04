@@ -17,7 +17,7 @@ class MLPClass(torch.nn.Module):
         width = config.width
         self.mlp1 = torch.nn.Linear(2, width, bias=True)
         self.mlp2 = torch.nn.Linear(width, width, bias=True)
-        self.mlp3 = torch.nn.Linear(width, 1, bias=True)
+        self.mlp3 = torch.nn.Linear(width, data_spec.output_shape[-1], bias=True)
 
     def forward(self, x):
         y = x.reshape(x.shape[0], -1)
@@ -28,4 +28,5 @@ class MLPClass(torch.nn.Module):
         y = self.mlp3(y)
         tout = y
         # tout = tout.reshape(x.shape[0], 2, -1)
-        return torch.sigmoid(tout)
+        # return torch.sigmoid(tout)
+        return torch.softmax(tout, dim=-1)
