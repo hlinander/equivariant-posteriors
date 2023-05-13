@@ -46,7 +46,8 @@ def validate(
             output = model(input)
 
             metric_sample = MetricSample(
-                prediction=output,
+                output=output,
+                prediction=model.output_to_value(output),
                 target=target,
                 sample_id=sample_id,
                 epoch=train_epoch_state.epoch,
@@ -73,18 +74,19 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         optimizer.zero_grad()
         loss_val.backward()
         optimizer.step()
-        # print(f"{loss_val.detach().cpu()}")
+
+        if i == 0:
+            train_epoch_state.memory_stats = torch.cuda.memory_stats_as_nested_dict()
 
         metric_sample = MetricSample(
-            prediction=output,
+            output=output,
+            prediction=model.output_to_value(output),
             target=target,
             sample_id=sample_id,
             epoch=train_epoch_state.epoch,
         )
         for metric in train_epoch_state.train_metrics:
             metric(metric_sample)
-
-    train_epoch_state.epoch += 1
 
 
 def get_checkpoint_path(train_config) -> (Path, Path):
@@ -160,7 +162,7 @@ def deserialize(config: DeserializeConfig):
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
-        shuffle=True,
+        shuffle=False,
         drop_last=True,
     )
 
@@ -212,13 +214,13 @@ def create_initial_state(
     )
     val_ds = datasets.create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
-        val_ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
+        val_ds, batch_size=train_config.batch_size, shuffle=False, drop_last=True
     )
 
     torch.manual_seed(train_config.ensemble_id)
     model = models.create(train_config.model_config, train_ds.data_spec())
     model = model.to(torch.device(device_id))
-    opt = torch.optim.Adam(model.parameters())
+    opt = torch.optim.Adam(model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
         metric() for metric in train_run.train_eval.validation_metrics
@@ -272,17 +274,15 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     )
 
     while state.epoch <= train_run.epochs:
-        # print(f"{state.epoch}")
         train(state, train_epoch_spec)
         validate(state, train_epoch_spec, train_run)
-        # if state.epoch == 20:
-        #     breakpoint()
+        state.epoch += 1
         serialize(serialize_config)
         try:
             now = time.time()
             if now > next_visualization:
                 next_visualization = now + 1
-                visualize_progress(state, train_run)
+                visualize_progress(state, train_run, device_id)
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
@@ -293,38 +293,47 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
 
 
-def visualize_progress(state, train_run):
+def visualize_progress(state, train_run, device):
     plt.clt()
     plt.cld()
     plt.scatter()
     epochs = list(range(state.epoch))
-    n_metrics = min(4, len(state.validation_metrics))
     # Two columns
-    plt.subplots(1, 2)
+    plt.subplots(1, 3)
+
+    train_metric_names = [metric.name() for metric in state.train_metrics]
+    val_metric_names = [metric.name() for metric in state.validation_metrics]
+
+    common_metrics = list(set(train_metric_names).intersection(set(val_metric_names)))
+    common_metrics = sorted(common_metrics)
+    n_metrics = min(4, len(common_metrics))
+
+    train_indices = [train_metric_names.index(name) for name in common_metrics]
+    val_indices = [val_metric_names.index(name) for name in common_metrics]
 
     # First column (many metrics in rows)
     plt.subplot(1, 1).subplots(n_metrics, 1)
+
     for idx in range(n_metrics):
-        train_means = [
-            (epoch, state.train_metrics[idx].mean(epoch)) for epoch in epochs
-        ]
+        train_metric = state.train_metrics[train_indices[idx]]
+        val_metric = state.validation_metrics[val_indices[idx]]
+
+        train_means = [(epoch, train_metric.mean(epoch)) for epoch in epochs]
         train_means = [
             (epoch, mean) for (epoch, mean) in train_means if mean is not None
         ]
-        val_means = [
-            (epoch, state.validation_metrics[idx].mean(epoch)) for epoch in epochs
-        ]
+        val_means = [(epoch, val_metric.mean(epoch)) for epoch in epochs]
         val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
-        plt.title(state.validation_metrics[idx].name())
+        plt.title(common_metrics[idx])
         if len(train_means) > 0:
             x = [epoch for (epoch, mean) in train_means]
             y = [mean for (epoch, mean) in train_means]
-            plt.plot(x, y, label=f"Train {state.validation_metrics[idx].name()}")
+            plt.plot(x, y, label=f"Train {common_metrics[idx]}")
         if len(val_means) > 0:
             x = [epoch for (epoch, mean) in val_means]
             y = [mean for (epoch, mean) in val_means]
-            plt.plot(x, y, label=f"Val {state.validation_metrics[idx].name()}")
+            plt.plot(x, y, label=f"Val {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
@@ -336,7 +345,16 @@ def visualize_progress(state, train_run):
     tc = "\n".join(text_config(asdict(train_run)))
     plt.xlim(0, 1)
     plt.ylim(0, 1)
-    plt.text(tc, 0, 1)
+    plt.text(tc, 0, 1, color="black")
+
+    # Third column
+    plt.subplot(1, 3)
+    plot_memory_stats(plt, filter_memory_stats(state.memory_stats), device)
+    # tc = "\n".join(text_config(filter_memory_stats(state.memory_stats)))
+    # plt.xlim(0, 1)
+    # plt.ylim(0, 1)
+    # plt.text(tc, 0, 1, color="black")
+
     plt.show()
 
     checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
@@ -359,3 +377,28 @@ def text_config(config, level=0, y=0):
         else:
             text.append(f"{'  '*level}{key}: {value}")
     return text
+
+
+def filter_memory_stats(memory_stats: dict):
+    return {
+        key: value["all"]
+        for key, value in memory_stats.items()
+        if isinstance(value, dict)
+        and "all" in value
+        and key in ["allocated_bytes", "reserved_bytes", "active_bytes"]
+    }
+
+
+def plot_memory_stats(plt, memory_stats: dict, device):
+    device_stats = torch.cuda.get_device_properties(device)
+
+    def bytes_to_mb(bytes):
+        return bytes / 1e6
+
+    keys = list(memory_stats.keys())
+    current = [bytes_to_mb(memory_stats[key]["current"]) for key in keys]
+    peak = [bytes_to_mb(memory_stats[key]["peak"]) for key in keys]
+    max = [bytes_to_mb(device_stats.total_memory) for key in keys]
+    plt.stacked_bar(
+        keys, [current, peak, max], label=["current", "peak", "max"], orientation="v"
+    )

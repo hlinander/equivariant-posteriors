@@ -1,5 +1,5 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
   outputs = { self, nixpkgs, ... }:
     let
       system = "x86_64-linux";
@@ -17,9 +17,10 @@
         propagatedBuildInputs = with pkgs.python3Packages; [
           numpy
           pytorch
+          torchvision
           torchmetrics
           plotext
-          gitpython
+#          gitpython
           wandb
           pandas
           psycopg
@@ -41,12 +42,13 @@
             p.python-lsp-server
             p.numpy
             p.pytorch
+            p.torchvision
             p.plotext
             p.torchmetrics
             p.ipython
             p.black
             p.flake8
-            p.gitpython
+           # p.gitpython
             p.wandb
             p.snakeviz
             p.pandas

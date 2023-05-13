@@ -1,5 +1,6 @@
 import torch
 from dataclasses import dataclass
+from dataclasses import field
 from typing import List
 from typing import Callable
 
@@ -18,6 +19,7 @@ class TrainEpochState:
     train_dataloader: torch.utils.data.DataLoader
     epoch: int
     val_dataloader: torch.utils.data.DataLoader = None
+    memory_stats: dict = field(default_factory=torch.cuda.memory_stats_as_nested_dict)
 
 
 @dataclass
