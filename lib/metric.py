@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from copy import deepcopy
 from collections.abc import Callable
 import torch
 
 
 @dataclass
 class MetricSample:
+    output: torch.Tensor
     prediction: torch.Tensor
     target: torch.Tensor
     sample_id: torch.Tensor
@@ -24,7 +24,9 @@ class Metric:
         self,
         metric_fn: Callable[[torch.Tensor, torch.Tensor], object],
         metric_kwargs=None,
+        raw_output=False,
     ):
+        self.raw_output = raw_output
         self.values = dict()
         self.metric_fn = metric_fn
         self.metric_name = metric_fn.__name__
@@ -32,14 +34,22 @@ class Metric:
         self.mean_mem = dict()
 
     def __call__(self, metric_sample: MetricSample):
-        prediction = metric_sample.prediction
-        target = metric_sample.target
-        sample_id = metric_sample.sample_id
-        values = (
-            self.metric_fn(preds=prediction, target=target, **self.metric_kwargs)
-            .detach()
-            .cpu()
-        )
+        output = metric_sample.output.detach()
+        prediction = metric_sample.prediction.detach()
+        target = metric_sample.target.detach()
+        sample_id = metric_sample.sample_id.detach()
+        if self.raw_output:
+            values = (
+                self.metric_fn(preds=output, target=target, **self.metric_kwargs)
+                .detach()
+                .cpu()
+            )
+        else:
+            values = (
+                self.metric_fn(preds=prediction, target=target, **self.metric_kwargs)
+                .detach()
+                .cpu()
+            )
         key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
         self.values[key] = values.mean()
 

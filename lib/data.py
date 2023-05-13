@@ -2,6 +2,7 @@ import torch
 from lib.datasets.sine import DataSineConfig, DataSine
 from lib.datasets.spiral import DataSpiralsConfig, DataSpirals
 from lib.datasets.uniform import DataUniformConfig, DataUniform
+from lib.datasets.mnist import DataMNISTConfig, DataMNIST
 
 
 class DataFactory:
@@ -10,6 +11,7 @@ class DataFactory:
         self.datasets[DataSpiralsConfig] = DataSpirals
         self.datasets[DataSineConfig] = DataSine
         self.datasets[DataUniformConfig] = DataUniform
+        self.datasets[DataMNISTConfig] = DataMNIST
 
     def register(self, config_class, data_class):
         self.datasets[config_class] = data_class
