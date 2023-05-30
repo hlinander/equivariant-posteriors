@@ -1,4 +1,13 @@
 # Equivariant posteriors
+Test bed for equivariant posterior project.
+
+Train and evaluate PyTorch models with reproducibility in mind.
+
+- Computational environment reproducible through Nix flake.
+- Python based configuration in terms of dataclasses.
+- Convenient metric functionality with focus on saving as much as possible for future inspection.
+- Simple TUI for easy progress inspection.
+- Postgres storage with experimental Apache Superset couplings for easy visualization and run tracking.
 
 ## Nix
 This project uses [Nix](https://nixos.org/) to manage development and runtime dependencies.
