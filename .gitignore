@@ -2,3 +2,12 @@ checkpoints/
 database.csv
 database.df.pickle
 __pycache__
+.Rhistory
+flake.lock2
+image.sif
+.gitignore
+profile
+result
+database/
+/datasets/
+results/
