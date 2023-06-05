@@ -1,5 +1,4 @@
 import torch
-import torchmetrics as tm
 import os
 import pandas as pd
 
@@ -14,7 +13,6 @@ from lib.data import DataSpiralsConfig
 from lib.data import DataUniformConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
-from lib.models.transformer import TransformerConfig
 import lib.uncertainty as uncertainty
 
 
