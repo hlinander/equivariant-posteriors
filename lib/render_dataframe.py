@@ -3,7 +3,6 @@ import json
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
-from lib.train_dataclasses import Factories
 
 
 def dict_to_normalized_json(input_dict):
@@ -11,18 +10,13 @@ def dict_to_normalized_json(input_dict):
 
 
 def render_dataframe(train_run: TrainRun, train_epoch_state: TrainEpochState):
-    factories = Factories()
     config_cols = [
         value
-        for key, value in dict_to_normalized_json(
-            train_run.serialize_human(factories)
-        ).items()
+        for key, value in dict_to_normalized_json(train_run.serialize_human()).items()
     ]
     config_headers = [
         key
-        for key, value in dict_to_normalized_json(
-            train_run.serialize_human(factories)
-        ).items()
+        for key, value in dict_to_normalized_json(train_run.serialize_human()).items()
     ]
     train_metric_headers = [metric.name() for metric in train_epoch_state.train_metrics]
     val_metric_headers = [

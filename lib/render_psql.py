@@ -2,10 +2,14 @@ import psycopg
 import pandas
 import json
 import time
+from threading import Thread
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
-from lib.train_dataclasses import Factories
+
+
+# TODO explain analyze, psql \x, web explain analyze, CTE,
+# TODO one table per value type
 
 
 def dict_to_normalized_json(input_dict):
@@ -38,7 +42,7 @@ def setup_psql():
             """
                 CREATE TABLE IF NOT EXISTS metrics (
                     id serial PRIMARY KEY,
-                    created_at TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
                     train_id text,
                     ensemble_id text,
                     epoch int,
@@ -53,7 +57,7 @@ def setup_psql():
             """
                 CREATE TABLE IF NOT EXISTS runs (
                     id serial PRIMARY KEY,
-                    created_at TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
                     train_id text,
                     ensemble_id text,
                     variable text,
@@ -73,6 +77,7 @@ def insert_param(conn, train_id, ensemble_id, variable, value):
         float: lambda v: dict(value_text=str(v), value_float=v, value_int=None),
         int: lambda v: dict(value_text=str(v), value_float=None, value_int=v),
         list: lambda v: dict(value_text=str(v), value_float=None, value_int=None),
+        bool: lambda v: dict(value_text=str(v), value_float=None, value_int=None),
     }
     value_dict = dict(
         train_id=train_id,
@@ -101,11 +106,6 @@ def create_metrics_view(conn):
     properties = (
         f"(train_id_and_epoch TEXT, train_id TEXT, epoch INTEGER, {properties})"
     )
-
-    # try:
-    #     conn.execute("DROP VIEW metrics_view")
-    # except psycopg.errors.UndefinedTable:
-    #     conn.commit()
 
     create_view_sql2 = f"""
        CREATE OR REPLACE VIEW metrics_view AS
@@ -164,17 +164,31 @@ def create_param_view(conn, train_run: TrainRun):
 
 
 def insert_or_update_train_run(conn, train_run: TrainRun):
-    factories = Factories()
-    train_run_flat = dict_to_normalized_json(train_run.serialize_human(factories))
+    train_run_flat = dict_to_normalized_json(train_run.serialize_human())
     for key, value in train_run_flat.items():
         insert_param(
             conn, train_run_flat["train_id"], train_run_flat["ensemble_id"], key, value
         )
 
 
+_threads = []
+
+
 def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
-    factories = Factories()
-    train_run_dict = train_run.serialize_human(factories)
+    if len(_threads) > 3:
+        thread = _threads.pop(0)
+        thread.join()
+
+    thread = Thread(
+        target=_render_psql,
+        kwargs=dict(train_run=train_run, train_epoch_state=train_epoch_state),
+    )
+    thread.start()
+    _threads.append(thread)
+
+
+def _render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
+    train_run_dict = train_run.serialize_human()
     try:
         setup_psql()
     except psycopg.errors.OperationalError as e:
