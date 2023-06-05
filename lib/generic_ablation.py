@@ -23,8 +23,10 @@ def generic_ablation(out_dir, create_config, values_dict):
     for values in combinations:
         kwargs = {name: val for name, val in zip(kwarg_names, values)}
         train_run = create_config(**kwargs)
+        print("Create or load state...")
         state = load_or_create_state(train_run, device_id)
 
+        print("Do training...")
         do_training(train_run, state, device_id)
 
         metric_ablation[values] = (
