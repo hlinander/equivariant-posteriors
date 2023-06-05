@@ -262,7 +262,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     print("Run epochs...")
-    while state.epoch <= train_run.epochs:
+    while state.epoch < train_run.epochs:
         train(state, train_epoch_spec)
         validate(state, train_epoch_spec, train_run)
         state.epoch += 1
