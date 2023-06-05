@@ -284,7 +284,9 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     render_psql(train_run, state)
 
     print("Pickling dataframe...")
-    df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
+    df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"
+    if not Path(df_path).is_file():
+        df.to_pickle(path=df_path)
 
     print("Done.")
 
