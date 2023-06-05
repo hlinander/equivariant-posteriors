@@ -11,3 +11,5 @@ result
 database/
 /datasets/
 results/
+*.npy
+

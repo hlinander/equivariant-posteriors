@@ -8,7 +8,6 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.classification_metrics import create_classification_metrics
 from lib.data_factory import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
-from lib.models.mlp import MLPClassConfig
 from lib.models.transformer import TransformerConfig
 from lib.generic_ablation import generic_ablation
 
@@ -37,7 +36,7 @@ def create_config(mlp_dim, ensemble_id):
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
-        epochs=500,
+        epochs=80,
         save_nth_epoch=10,
         validate_nth_epoch=5,
     )

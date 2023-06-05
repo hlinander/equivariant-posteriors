@@ -23,3 +23,6 @@ class Dense(torch.nn.Module):
         x = self.l1(x)
         x = self.l2(x)
         return x
+
+    def output_to_value(self, x):
+        return self.forward(x)
