@@ -12,15 +12,14 @@ import time
 
 from lib.metric import MetricSample
 from lib.metric import Metric
-from lib.model import ModelFactory
-from lib.data import DataFactory
+import lib.data_factory as data_factory
+import lib.model_factory as model_factory
 from lib.stable_hash import stable_hash
 from lib.render_dataframe import render_dataframe
 from lib.render_psql import render_psql
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
-from lib.train_dataclasses import Factories
 from lib.train_dataclasses import TrainRun
 
 
@@ -100,7 +99,6 @@ def get_checkpoint_path(train_config) -> (Path, Path):
 
 @dataclass
 class SerializeConfig:
-    factories: Factories
     train_run: TrainRun
     train_epoch_state: TrainEpochState
 
@@ -126,7 +124,7 @@ def serialize(config: SerializeConfig):
         epoch=train_epoch_state.epoch,
         train_metrics=serialize_metrics(train_epoch_state.train_metrics),
         validation_metrics=serialize_metrics(train_epoch_state.validation_metrics),
-        train_run=config.train_run.serialize_human(config.factories),
+        train_run=config.train_run.serialize_human(),
     )
 
     checkpoint, tmp_checkpoint = get_checkpoint_path(train_config)
@@ -136,7 +134,6 @@ def serialize(config: SerializeConfig):
 
 @dataclass
 class DeserializeConfig:
-    factories: Factories
     train_run: TrainRun
     device_id: torch.device
 
@@ -151,14 +148,14 @@ def deserialize(config: DeserializeConfig):
 
     data_dict = torch.load(checkpoint_path)
 
-    train_ds = config.factories.data_factory.create(train_config.train_data_config)
+    train_ds = data_factory.get_factory().create(train_config.train_data_config)
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
         shuffle=True,
         drop_last=True,
     )
-    val_ds = config.factories.data_factory.create(train_config.val_data_config)
+    val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
@@ -166,7 +163,7 @@ def deserialize(config: DeserializeConfig):
         drop_last=True,
     )
 
-    model = config.factories.model_factory.create(
+    model = model_factory.get_factory().create(
         train_config.model_config, val_ds.data_spec()
     )
     model = model.to(torch.device(config.device_id))
@@ -204,30 +201,30 @@ def deserialize(config: DeserializeConfig):
     )
 
 
-def create_initial_state(
-    models: ModelFactory, datasets: DataFactory, train_run: TrainRun, device_id
-):
+def create_initial_state(train_run: TrainRun, device_id):
     train_config = train_run.train_config
-    train_ds = datasets.create(train_config.train_data_config)
+    train_ds = data_factory.get_factory().create(train_config.train_data_config)
     train_dataloader = torch.utils.data.DataLoader(
         train_ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
     )
-    val_ds = datasets.create(train_config.val_data_config)
+    val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
         val_ds, batch_size=train_config.batch_size, shuffle=False, drop_last=True
     )
 
     torch.manual_seed(train_config.ensemble_id)
-    model = models.create(train_config.model_config, train_ds.data_spec())
-    model = model.to(torch.device(device_id))
-    opt = torch.optim.Adam(model.parameters(), **train_config.optimizer.kwargs)
+    init_model = model_factory.get_factory().create(
+        train_config.model_config, train_ds.data_spec()
+    )
+    init_model = init_model.to(torch.device(device_id))
+    opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
         metric() for metric in train_run.train_eval.validation_metrics
     ]
 
     return TrainEpochState(
-        model=model,
+        model=init_model,
         optimizer=opt,
         train_metrics=train_metrics,
         validation_metrics=validation_metrics,
@@ -238,12 +235,7 @@ def create_initial_state(
 
 
 def load_or_create_state(train_run: TrainRun, device_id):
-    models = ModelFactory()
-    datasets = DataFactory()
-    factories = Factories(model_factory=models, data_factory=datasets)
-
     config = DeserializeConfig(
-        factories=factories,
         train_run=train_run,
         device_id=device_id,
     )
@@ -252,8 +244,6 @@ def load_or_create_state(train_run: TrainRun, device_id):
 
     if state is None:
         state = create_initial_state(
-            models=models,
-            datasets=datasets,
             train_run=config.train_run,
             device_id=config.device_id,
         )
@@ -267,12 +257,11 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         loss=train_run.train_config.loss,
         device_id=device_id,
     )
-    factories = Factories(model_factory=ModelFactory(), data_factory=DataFactory())
 
-    serialize_config = SerializeConfig(
-        factories=factories, train_run=train_run, train_epoch_state=state
-    )
+    print("Serializing config...")
+    serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
+    print("Run epochs...")
     while state.epoch <= train_run.epochs:
         train(state, train_epoch_spec)
         validate(state, train_epoch_spec, train_run)
@@ -288,9 +277,16 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
             logging.error(str(e))
             print(traceback.format_exc())
 
+    print("Render dataframe...")
     df = render_dataframe(train_run, state)
+
+    print("Render psql...")
     render_psql(train_run, state)
+
+    print("Pickling dataframe...")
     df.to_pickle(path=f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle")
+
+    print("Done.")
 
 
 def visualize_progress(state, train_run, device):

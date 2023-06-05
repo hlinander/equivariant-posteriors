@@ -9,7 +9,7 @@ from lib.dataspec import DataSpec
 class DataMNISTConfig:
     validation: bool = False
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return dict(validation=self.validation)
 
 

@@ -5,7 +5,7 @@ from lib.datasets.uniform import DataUniformConfig, DataUniform
 from lib.datasets.mnist import DataMNISTConfig, DataMNIST
 
 
-class DataFactory:
+class _DataFactory:
     def __init__(self):
         self.datasets = dict()
         self.datasets[DataSpiralsConfig] = DataSpirals
@@ -21,3 +21,14 @@ class DataFactory:
 
     def get_class(self, data_config):
         return self.datasets[data_config.__class__]
+
+
+_data_factory = None
+
+
+def get_factory():
+    global _data_factory
+    if _data_factory is None:
+        _data_factory = _DataFactory()
+
+    return _data_factory

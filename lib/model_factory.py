@@ -5,7 +5,7 @@ from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 
 
-class ModelFactory:
+class _ModelFactory:
     def __init__(self):
         self.models = dict()
         self.models[DenseConfig] = Dense
@@ -20,3 +20,14 @@ class ModelFactory:
 
     def get_class(self, model_config):
         return self.models[model_config.__class__]
+
+
+_model_factory = None
+
+
+def get_factory():
+    global _model_factory
+    if _model_factory is None:
+        _model_factory = _ModelFactory()
+
+    return _model_factory

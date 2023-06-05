@@ -9,7 +9,7 @@ class DataUniformConfig:
     max: float
     N: int
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return dict(min=self.min, max=self.max, N=self.N)
 
 

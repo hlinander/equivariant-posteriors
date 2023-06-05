@@ -13,7 +13,7 @@ class TransformerConfig:
     num_layers: int
     num_heads: int
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return self.__dict__
 
 

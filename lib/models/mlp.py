@@ -7,7 +7,7 @@ from lib.dataspec import DataSpec
 class MLPClassConfig:
     width: int
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return self.__dict__
 
 
