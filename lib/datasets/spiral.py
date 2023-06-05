@@ -9,7 +9,7 @@ class DataSpiralsConfig:
     N: int
     angle_factor: float = 1.0
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return dict(seed=self.seed, N=self.N)
 
 

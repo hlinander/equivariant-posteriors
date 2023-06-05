@@ -7,7 +7,7 @@ from lib.dataspec import DataSpec
 class DenseConfig:
     d_hidden: int = 300
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return self.__dict__
 
 

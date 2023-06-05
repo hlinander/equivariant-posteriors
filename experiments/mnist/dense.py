@@ -6,7 +6,7 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.classification_metrics import create_classification_metrics
-from lib.data import DataMNISTConfig
+from lib.data_factory import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 from lib.models.mlp import MLPClassConfig
 from lib.models.transformer import TransformerConfig

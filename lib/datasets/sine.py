@@ -8,7 +8,7 @@ class DataSineConfig:
     input_shape: torch.Size
     output_shape: torch.Size
 
-    def serialize_human(self, factories):
+    def serialize_human(self):
         return self.__dict__
 
 
