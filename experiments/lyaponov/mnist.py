@@ -1,6 +1,7 @@
 import os
 import torch
 import pandas as pd
+import numpy as np
 from pathlib import Path
 
 from lib.ensemble import create_ensemble_config
@@ -13,6 +14,7 @@ from lib.data_factory import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 import lib.uncertainty as uncertainty
 import lib.data_factory as data_factory
+from lib.stable_hash import json_dumps_dataclass
 
 import lib.model_factory as model_factory
 
@@ -60,24 +62,7 @@ def create_config(ensemble_id):
     return train_run
 
 
-if __name__ == "__main__":
-    if torch.cuda.is_available():
-        device_id = torch.device("cuda", int(os.environ.get("LOCAL_RANK", 0)))
-    else:
-        device_id = "cpu"
-    ensemble_config = create_ensemble_config(create_config, 10)
-    ensemble = create_ensemble(ensemble_config, device_id)
-
-    # ds = data_factory.create(DataSpiralsConfig(seed=5, N=1000))
-    ds = data_factory.get_factory().create(DataMNISTConfig(validation=True))
-    dataloader = torch.utils.data.DataLoader(
-        ds,
-        batch_size=128,
-        shuffle=False,
-        drop_last=True,
-    )
-    uncertainties = uncertainty.uncertainty(dataloader, ensemble, device_id)
-
+def calculate_projection_coords(ds, dataloader):
     model_proj = FeedforwardNeuralNetModel_proj(
         FeedProjConfig(**model_kwargs), ds.data_spec()
     )
@@ -93,17 +78,134 @@ if __name__ == "__main__":
         projections.append(model_proj.bottleneck.detach().cpu().clone())
 
     xy = torch.concat(projections, dim=0)
-    # r = torch.linalg.vector_norm(ds.uniform.xs.squeeze(), dim=-1)
+    return xy
+
+
+def mnist_test_data(ensemble, device_id):
+    ds = data_factory.get_factory().create(DataMNISTConfig(validation=True))
+    dataloader = torch.utils.data.DataLoader(
+        ds,
+        batch_size=128,
+        shuffle=False,
+        drop_last=False,
+    )
+    uncertainties = uncertainty.uncertainty(dataloader, ensemble, device_id)
+
+    # Calculate projection coordinates
+    xy = calculate_projection_coords(ds, dataloader)
+
+    # Load exponent data
+    exponents = torch.tensor(
+        np.load(
+            Path(__file__).parent
+            / "exponent_data"
+            / "test"
+            / "FTLE_test_N20_L16_Tanh.npy"
+        )
+    )
+    exponents = exponents[:, None]
+
+    ludvig_coords = torch.tensor(
+        np.load(
+            Path(__file__).parent
+            / "exponent_data"
+            / "test"
+            / "proj_coords_test_N20_L16_Tanh.npy"
+        )
+    )
+
+    ludvig_label = torch.tensor(
+        np.load(
+            Path(__file__).parent
+            / "exponent_data"
+            / "test"
+            / "y_labels_test_N20_L16_Tanh.npy"
+        )
+    )
+    ludvig_label = torch.argmax(ludvig_label, dim=-1)[:, None]
+
+    return uncertainties, xy, exponents, ludvig_coords, ludvig_label
+
+
+def mnist_train_data(ensemble, device_id):
+    ds = data_factory.get_factory().create(DataMNISTConfig(validation=False))
+    dataloader = torch.utils.data.DataLoader(
+        ds,
+        batch_size=128,
+        shuffle=False,
+        drop_last=False,
+    )
+    uncertainties = uncertainty.uncertainty(dataloader, ensemble, device_id)
+
+    # Calculate projection coordinates
+    xy = calculate_projection_coords(ds, dataloader)
+
+    # Load exponent data
+    exponents = torch.tensor(
+        np.load(
+            Path(__file__).parent / "exponent_data" / "train" / "FTLE_N20_L16_Tanh.npy"
+        )
+    )
+    exponents = exponents[:, None]
+
+    ludvig_coords = torch.tensor(
+        np.load(
+            Path(__file__).parent
+            / "exponent_data"
+            / "train"
+            / "proj_coords_N20_L16_Tanh.npy"
+        )
+    )
+
+    ludvig_label = torch.tensor(
+        np.load(
+            Path(__file__).parent
+            / "exponent_data"
+            / "train"
+            / "y_labels_N20_L16_Tanh.npy"
+        )
+    )
+    ludvig_label = torch.argmax(ludvig_label, dim=-1)[:, None]
+
+    return uncertainties, xy, exponents, ludvig_coords, ludvig_label
+
+
+def save_uncertainty_data(data_tuple, filename):
+    uncertainties, xy, exponents, ludvig_coords, ludvig_label = data_tuple
     data = torch.concat(
         [
             uncertainties.MI[:, None],
             uncertainties.H[:, None],
+            uncertainties.A[:, None],
             uncertainties.sample_ids[:, None],
-            # r[:, None],
+            exponents,
             xy,
+            ludvig_coords,
             uncertainties.mean_pred[:, None],
+            ludvig_label,
         ],
         dim=-1,
     )
-    df = pd.DataFrame(columns=["MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    df.to_csv(Path(__file__).parent / "uncertainty_lyaponov.csv")
+    df = pd.DataFrame(
+        columns=["MI", "H", "A", "id", "FTLE", "x", "y", "lx", "ly", "pred", "llabel"],
+        data=data.numpy(),
+    )
+    df.to_csv(Path(__file__).parent / filename)
+
+
+if __name__ == "__main__":
+    if torch.cuda.is_available():
+        device_id = torch.device("cuda", int(os.environ.get("LOCAL_RANK", 0)))
+    else:
+        device_id = "cpu"
+    print(json_dumps_dataclass(create_config(0)))
+    ensemble_config = create_ensemble_config(create_config, 10)
+    ensemble = create_ensemble(ensemble_config, device_id)
+    print("N members = ", ensemble.n_members)
+
+    # ds = data_factory.create(DataSpiralsConfig(seed=5, N=1000))
+    data_tuple = mnist_test_data(ensemble, device_id)
+    save_uncertainty_data(data_tuple, "mnist_test_uncertainty.csv")
+
+    data_tuple = mnist_train_data(ensemble, device_id)
+    save_uncertainty_data(data_tuple, "mnist_train_uncertainty.csv")
