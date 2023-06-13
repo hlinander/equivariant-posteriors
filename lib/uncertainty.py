@@ -7,16 +7,24 @@ from lib.ensemble import Ensemble
 # H(y | D) - E_T[H(y | D, x)]
 
 
-def mutual_information(probs: torch.Tensor):
+def mean_entropy(probs: torch.Tensor):
     entropy_given_theta = entropy(probs)
     mean_entropy = torch.mean(entropy_given_theta, dim=-1)
-    return predictive_entropy(probs) - mean_entropy
+    return mean_entropy
+
+
+def mutual_information(probs: torch.Tensor):
+    mu_H = mean_entropy(probs)
+    return predictive_entropy(probs) - mu_H
 
 
 def predictive_entropy(probs: torch.Tensor):
     assert len(probs.shape) == 3
     ensemble_mean = probs.mean(dim=1)
     return entropy(ensemble_mean)
+
+
+# H - (H - mu_H) = mu_H
 
 
 def entropy(probs: torch.Tensor):
@@ -57,6 +65,7 @@ def test_mutual_information():
 class Uncertainty:
     MI: torch.Tensor
     H: torch.Tensor
+    A: torch.Tensor
     mean_pred: torch.Tensor
     sample_ids: torch.Tensor
 
@@ -65,6 +74,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     sample_ids = []
     MIS = []
     HS = []
+    AS = []
     mean_preds = []
     for input, target, sample_id in data_loader:
         probs = torch.zeros(
@@ -74,16 +84,21 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         for idx, member in enumerate(ensemble.members):
             probs[:, idx, :] = member.forward_full(input).detach()
 
+        # breakpoint()
+
         MI = mutual_information(probs)
         H = predictive_entropy(probs)
+        A = mean_entropy(probs)
         sample_ids.append(sample_id)
         mean_preds.append(torch.argmax(torch.mean(probs, dim=1), dim=-1))
         MIS.append(MI)
         HS.append(H)
+        AS.append(A)
 
     return Uncertainty(
         MI=torch.concat(MIS),
         H=torch.concat(HS),
+        A=torch.concat(AS),
         sample_ids=torch.concat(sample_ids),
         mean_pred=torch.concat(mean_preds),
     )
