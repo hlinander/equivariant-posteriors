@@ -9,7 +9,7 @@ from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
-from lib.data import DataSpiralsConfig
+from lib.data_factory import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
 
@@ -27,10 +27,15 @@ def bce(preds, target):
 def create_config(mlp_dim, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
-            embed_d=50, mlp_dim=mlp_dim, n_seq=2, batch_size=500
+            embed_d=50,
+            mlp_dim=mlp_dim,
+            n_seq=2,
+            batch_size=500,
+            num_layers=1,
+            num_heads=1,
         ),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),

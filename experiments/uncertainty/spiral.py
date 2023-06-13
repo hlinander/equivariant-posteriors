@@ -26,7 +26,7 @@ def create_config(ensemble_id):
         val_data_config=DataSpiralsConfig(seed=1, N=500),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
         batch_size=500,
         ensemble_id=ensemble_id,

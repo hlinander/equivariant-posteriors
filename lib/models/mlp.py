@@ -30,10 +30,10 @@ class MLPClass(torch.nn.Module):
         tout = y
         # tout = tout.reshape(x.shape[0], 2, -1)
         # return torch.sigmoid(tout)
-        return tout, torch.softmax(tout, dim=-1)
+        return tout, torch.softmax(tout.detach(), dim=-1)
 
-    # def forward_full(self, x):
-    #     return self.output_to_value(self.forward(x))
+    def forward_full(self, x):
+        return self.output_to_value(self.forward(x))
 
-    # def output_to_value(self, output):
-    #     return torch.softmax(output, dim=-1)
+    def output_to_value(self, output):
+        return torch.softmax(output, dim=-1)

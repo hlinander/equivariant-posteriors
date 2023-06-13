@@ -84,8 +84,6 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         for idx, member in enumerate(ensemble.members):
             probs[:, idx, :] = member(input)[1].detach()
 
-        # breakpoint()
-
         MI = mutual_information(probs)
         H = predictive_entropy(probs)
         A = mean_entropy(probs)

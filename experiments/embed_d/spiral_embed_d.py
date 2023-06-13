@@ -4,14 +4,13 @@ import torchmetrics as tm
 from pathlib import Path
 
 from lib.train_dataclasses import TrainConfig
-from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
-from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
-from lib.data import DataSpiralsConfig
+from lib.data_factory import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
+from lib.classification_metrics import create_classification_metrics
 
 
 def loss(preds, target):
@@ -27,36 +26,23 @@ def bce(preds, target):
 def create_config(embed_d, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
-            embed_d=embed_d, mlp_dim=10, n_seq=2, batch_size=500
+            embed_d=embed_d,
+            mlp_dim=10,
+            n_seq=2,
+            batch_size=500,
+            num_layers=2,
+            num_heads=1,
         ),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
-        loss=torch.nn.BCELoss(),
+        loss=torch.nn.CrossEntropyLoss(),
         batch_size=500,
         ensemble_id=ensemble_id,
     )
-    train_eval = TrainEval(
-        train_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
-        validation_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
-        data_visualizer=visualize_spiral,
-    )
+    train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
@@ -68,7 +54,7 @@ def create_config(embed_d, ensemble_id):
 
 
 def create_values():
-    return dict(embed_d=[1, 5, 20, 50, 100], ensemble_id=list(range(5)))
+    return dict(embed_d=[100, 1, 5, 20, 50, 100], ensemble_id=list(range(5)))
 
 
 if __name__ == "__main__":
