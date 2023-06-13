@@ -50,13 +50,14 @@ class Transformer(torch.nn.Module):
         embed = self.pos_embed(embed)
         tout = self.transformer(embed, self.mem)
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
-        return self.debed(tout[:, 0, :])
+        output = self.debed(tout[:, 0, :])
+        return output, self.output_to_valueout(output)
 
     def output_to_value(self, output):
         return torch.softmax(output, dim=-1)
 
-    def forward_full(self, x):
-        return self.output_to_value(self.forward(x))
+    # def forward_full(self, x):
+    #     return self.output_to_value(self.forward(x))
 
 
 class PositionalEncoding(torch.nn.Module):

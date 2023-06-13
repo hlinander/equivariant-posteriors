@@ -7,7 +7,7 @@ def visualize_spiral(plt, state: TrainEpochState):
     with torch.no_grad():
         for input, target, _ in state.val_dataloader:
             input = input.to("cuda:0", non_blocking=True)
-            output = state.model(input).cpu()
+            output = state.model(input)[1].cpu()
 
     class1 = input[output[:, 0] <= 0.5].cpu()
     class2 = input[output[:, 0] > 0.5].cpu()

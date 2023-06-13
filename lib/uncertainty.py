@@ -82,7 +82,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         )
         input = input.to(device, non_blocking=True)
         for idx, member in enumerate(ensemble.members):
-            probs[:, idx, :] = member.forward_full(input).detach()
+            probs[:, idx, :] = member(input)[1].detach()
 
         # breakpoint()
 

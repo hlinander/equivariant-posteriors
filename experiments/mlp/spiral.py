@@ -6,7 +6,7 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.classification_metrics import create_classification_metrics
-from lib.data import DataSpiralsConfig
+from lib.data_factory import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
 from lib.generic_ablation import generic_ablation
