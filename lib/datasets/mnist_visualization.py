@@ -8,7 +8,7 @@ def visualize_mnist(plt, state: TrainEpochState):
     input, target, ids = next(iter(state.val_dataloader))
     with torch.no_grad():
         input = input.to("cuda:0", non_blocking=True)
-        output = state.model(input).cpu()
+        output = state.model(input)[1].cpu()
         digits = torch.argmax(output, dim=-1)
 
     images = input.cpu().reshape(-1, 1, 28, 28)

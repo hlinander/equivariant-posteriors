@@ -22,8 +22,6 @@ from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train_dataclasses import TrainRun
 
-from lib.ddp import ddp_setup
-
 
 def validate(
     train_epoch_state: TrainEpochState,
@@ -156,7 +154,6 @@ def deserialize(config: DeserializeConfig):
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
-        shuffle=False,
         drop_last=True,
         sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
     )
@@ -172,11 +169,11 @@ def deserialize(config: DeserializeConfig):
     model = model_factory.get_factory().create(
         train_config.model_config, val_ds.data_spec()
     )
-    model.load_state_dict(data_dict["model"])
     model = model.to(torch.device(config.device_id))
     model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[config.device_id]
+        model, device_ids=[config.device_id], find_unused_parameters=True
     )
+    model.load_state_dict(data_dict["model"])
 
     optimizer = train_config.optimizer.optimizer(
         model.parameters(), **train_config.optimizer.kwargs
@@ -216,7 +213,6 @@ def create_initial_state(train_run: TrainRun, device_id):
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
-        shuffle=False,
         drop_last=True,
         sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
     )
@@ -235,7 +231,7 @@ def create_initial_state(train_run: TrainRun, device_id):
     )
     init_model = init_model.to(torch.device(device_id))
     init_model = torch.nn.parallel.DistributedDataParallel(
-        init_model, device_ids=[device_id]
+        init_model, device_ids=[device_id], find_unused_parameters=True
     )
     opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]

@@ -21,7 +21,7 @@ class Transformer(torch.nn.Module):
     def __init__(self, config: TransformerConfig, data_spec: DataSpec):
         super().__init__()
         embed_d = config.embed_d
-        self.embed = torch.nn.Linear(14 * 14, embed_d, bias=True)
+        self.embed = torch.nn.Linear(data_spec.input_shape[-1], embed_d, bias=True)
         lnorm = torch.nn.LayerNorm(embed_d, eps=1e-5)
 
         self.pos_embed = PositionalEncoding(config.embed_d, dropout=0.0)
@@ -51,7 +51,7 @@ class Transformer(torch.nn.Module):
         tout = self.transformer(embed, self.mem)
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
         output = self.debed(tout[:, 0, :])
-        return output, self.output_to_valueout(output)
+        return output, self.output_to_value(output)
 
     def output_to_value(self, output):
         return torch.softmax(output, dim=-1)

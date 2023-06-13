@@ -10,7 +10,8 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
-from lib.ablation import ablation
+from lib.datasets.spiral_visualization import visualize_spiral
+from lib.generic_ablation import generic_ablation
 
 
 def loss(preds, target):
@@ -23,26 +24,27 @@ def bce(preds, target):
     )
 
 
-def create_config(embed_d):
+def create_config(layers, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
-            embed_d=embed_d,
-            mlp_dim=1,
+            embed_d=20,
+            mlp_dim=10,
             n_seq=2,
             batch_size=500,
-            num_layers=2,
+            num_layers=layers,
             num_heads=1,
         ),
-        data_config=DataSpiralsConfig(),
+        train_data_config=DataSpiralsConfig(seed=0, N=1000),
+        val_data_config=DataSpiralsConfig(seed=1, N=500),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
         loss=torch.nn.BCELoss(),
         batch_size=500,
-        ensemble_id=0,
+        ensemble_id=ensemble_id,
     )
     train_eval = TrainEval(
-        metrics=[
+        train_metrics=[
             lambda: Metric(
                 tm.functional.accuracy,
                 metric_kwargs=dict(task="binary", multidim_average="samplewise"),
@@ -50,19 +52,29 @@ def create_config(embed_d):
             lambda: Metric(bce),
             lambda: Metric(loss),
         ],
+        validation_metrics=[
+            lambda: Metric(
+                tm.functional.accuracy,
+                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
+            ),
+            lambda: Metric(bce),
+            lambda: Metric(loss),
+        ],
+        data_visualizer=visualize_spiral,
     )
     train_run = TrainRun(
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,
         save_nth_epoch=20,
+        validate_nth_epoch=20,
     )
     return train_run
 
 
 def create_values():
-    return [1, 5, 20, 50, 100]
+    return dict(layers=[1, 2, 3, 4], ensemble_id=list(range(3)))
 
 
 if __name__ == "__main__":
-    ablation(Path(__file__).parent / "results", create_config, create_values())
+    generic_ablation(Path(__file__).parent / "results", create_config, create_values())

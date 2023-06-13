@@ -19,7 +19,7 @@ def create_config(mlp_dim, ensemble_id):
         val_data_config=DataSpiralsConfig(seed=1, N=500),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.01)
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
         batch_size=500,
         ensemble_id=ensemble_id,
@@ -39,5 +39,5 @@ if __name__ == "__main__":
     generic_ablation(
         Path(__file__).parent / "results",
         create_config,
-        dict(mlp_dim=[100, 10, 50, 100, 200], ensemble_id=list(range(5))),
+        dict(mlp_dim=[200, 10, 50, 100, 200], ensemble_id=list(range(5))),
     )

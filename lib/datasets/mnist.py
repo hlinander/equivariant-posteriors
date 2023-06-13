@@ -26,7 +26,7 @@ class DataMNIST(torch.utils.data.Dataset):
 
     def data_spec(self):
         return DataSpec(
-            input_shape=torch.Size([28 * 28]),
+            input_shape=torch.Size([4, 14 * 14]),
             target_shape=torch.Size([1]),
             output_shape=torch.Size([self.n_classes]),
         )
