@@ -101,10 +101,10 @@ class FeedforwardNeuralNetModel(nn.Module):
                 # Obtain output
                 out = self.g(out)
 
-        return out
+        return out, self.output_to_value(out)
 
-    def forward_full(self, x):
-        return self.output_to_value(self.forward(x))
+    # def forward_full(self, x):
+    # return self.output_to_value(self.forward(x))
 
     def output_to_value(self, output):
         return torch.softmax(output, dim=-1)
@@ -199,10 +199,10 @@ class FeedforwardNeuralNetModel_proj(nn.Module):
                 if l == self.hidden_layers:
                     self.bottleneck = out
 
-        return out
+        return out, self.output_to_value(out)
 
-    def forward_full(self, x):
-        return self.output_to_value(self.forward(x))
+    # def forward_full(self, x):
+    # return self.output_to_value(self.forward(x))
 
     def output_to_value(self, output):
         return torch.softmax(output, dim=-1)
