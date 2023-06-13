@@ -37,7 +37,7 @@
           helix
           nixfmt
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork]; })
-          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate]; })
+          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
           (python3.withPackages (p: [
             p.python-lsp-server
             p.numpy
