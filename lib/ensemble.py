@@ -4,6 +4,7 @@ import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
+from lib.ddp import ddp_setup
 
 
 @dataclass
@@ -28,6 +29,7 @@ def create_ensemble_config(
 
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
+    device_id = ddp_setup()
     for member_config in ensemble_config.members:
         state = load_or_create_state(member_config, device_id)
         do_training(member_config, state, device_id)

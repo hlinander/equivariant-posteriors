@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 export PYTHONPATH=$(pwd)
-python $@
+torchrun --standalone --nnodes=1 --nproc_per_node=1 $@

@@ -22,6 +22,8 @@ from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train_dataclasses import TrainRun
 
+from lib.ddp import ddp_setup
+
 
 def validate(
     train_epoch_state: TrainEpochState,
@@ -42,11 +44,11 @@ def validate(
         for i, (input, target, sample_id) in enumerate(dataloader):
             input = input.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
-            output = model(input)
+            output, prediction = model(input)
 
             metric_sample = MetricSample(
                 output=output,
-                prediction=model.output_to_value(output),
+                prediction=prediction,
                 target=target,
                 sample_id=sample_id,
                 epoch=train_epoch_state.epoch,
@@ -64,10 +66,12 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
 
     model.train()
 
+    dataloader.sampler.set_epoch(train_epoch_state.epoch)
+
     for i, (input, target, sample_id) in enumerate(dataloader):
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
-        output = model(input)
+        output, prediction = model(input)
 
         loss_val = loss(output, target)
         optimizer.zero_grad()
@@ -79,7 +83,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
 
         metric_sample = MetricSample(
             output=output,
-            prediction=model.output_to_value(output),
+            prediction=prediction,
             target=target,
             sample_id=sample_id,
             epoch=train_epoch_state.epoch,
@@ -146,14 +150,15 @@ def deserialize(config: DeserializeConfig):
     else:
         print(f"{checkpoint_path}")
 
-    data_dict = torch.load(checkpoint_path)
+    data_dict = torch.load(checkpoint_path, map_location=f"cuda:{config.device_id}")
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
-        shuffle=True,
+        shuffle=False,
         drop_last=True,
+        sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
     )
     val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
@@ -161,13 +166,17 @@ def deserialize(config: DeserializeConfig):
         batch_size=train_config.batch_size,
         shuffle=False,
         drop_last=True,
+        sampler=torch.utils.data.distributed.DistributedSampler(val_ds),
     )
 
     model = model_factory.get_factory().create(
         train_config.model_config, val_ds.data_spec()
     )
-    model = model.to(torch.device(config.device_id))
     model.load_state_dict(data_dict["model"])
+    model = model.to(torch.device(config.device_id))
+    model = torch.nn.parallel.DistributedDataParallel(
+        model, device_ids=[config.device_id]
+    )
 
     optimizer = train_config.optimizer.optimizer(
         model.parameters(), **train_config.optimizer.kwargs
@@ -205,11 +214,19 @@ def create_initial_state(train_run: TrainRun, device_id):
     train_config = train_run.train_config
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
     train_dataloader = torch.utils.data.DataLoader(
-        train_ds, batch_size=train_config.batch_size, shuffle=True, drop_last=True
+        train_ds,
+        batch_size=train_config.batch_size,
+        shuffle=False,
+        drop_last=True,
+        sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
     )
     val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
-        val_ds, batch_size=train_config.batch_size, shuffle=False, drop_last=True
+        val_ds,
+        batch_size=train_config.batch_size,
+        shuffle=False,
+        drop_last=True,
+        sampler=torch.utils.data.distributed.DistributedSampler(val_ds),
     )
 
     torch.manual_seed(train_config.ensemble_id)
@@ -217,6 +234,9 @@ def create_initial_state(train_run: TrainRun, device_id):
         train_config.model_config, train_ds.data_spec()
     )
     init_model = init_model.to(torch.device(device_id))
+    init_model = torch.nn.parallel.DistributedDataParallel(
+        init_model, device_ids=[device_id]
+    )
     opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
@@ -253,6 +273,7 @@ def load_or_create_state(train_run: TrainRun, device_id):
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     next_visualization = time.time()
+
     train_epoch_spec = TrainEpochSpec(
         loss=train_run.train_config.loss,
         device_id=device_id,
@@ -280,8 +301,8 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     print("Render dataframe...")
     df = render_dataframe(train_run, state)
 
-    print("Render psql...")
-    render_psql(train_run, state)
+    # print("Render psql...")
+    # render_psql(train_run, state)
 
     print("Pickling dataframe...")
     df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"
