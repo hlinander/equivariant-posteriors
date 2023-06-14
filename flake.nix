@@ -30,7 +30,7 @@
         src = ./.;
 
         checkPhase = ''
-          python test.py
+          ${pkgs.python3Packages.pytorch}/bin/torchrun --standalone --nnodes=1 --nproc_per_node=1 test.py
         '';
       };
       devinputs = with pkgs; [

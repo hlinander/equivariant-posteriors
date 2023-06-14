@@ -3,11 +3,11 @@ import torchvision as tv
 from lib.train_dataclasses import TrainEpochState
 
 
-def visualize_mnist(plt, state: TrainEpochState):
+def visualize_mnist(plt, state: TrainEpochState, device_id):
     state.model.eval()
     input, target, ids = next(iter(state.val_dataloader))
     with torch.no_grad():
-        input = input.to("cuda:0", non_blocking=True)
+        input = input.to(device_id, non_blocking=True)
         output = state.model(input)[1].cpu()
         digits = torch.argmax(output, dim=-1)
 
