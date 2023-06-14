@@ -9,6 +9,11 @@ def ddp_setup(backend=None) -> str:
         rank: Unique identifier of each process
        world_size: Total number of processes
     """
+    if "TORCH_DEVICE" in os.environ:
+        device = os.environ["TORCH_DEVICE"]
+        print(f"Using device {device}")
+        return device
+
     if backend is None:
         if torch.cuda.is_available():
             backend = "nccl"
