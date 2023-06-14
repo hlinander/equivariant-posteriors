@@ -64,7 +64,8 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
 
     model.train()
 
-    dataloader.sampler.set_epoch(train_epoch_state.epoch)
+    if dataloader.sampler.__class__.__name__ == "DistributedSampler":
+        dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
     for i, (input, target, sample_id) in enumerate(dataloader):
         input = input.to(device, non_blocking=True)
@@ -153,19 +154,30 @@ def deserialize(config: DeserializeConfig):
     data_dict = torch.load(checkpoint_path, map_location=torch.device(config.device_id))
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
+    val_ds = data_factory.get_factory().create(train_config.val_data_config)
+
+    if config.device_id == "nccl":
+        train_shuffle = False
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_ds)
+        val_sampler = torch.utils.data.distributed.DistributedSampler(val_ds)
+    else:
+        train_shuffle = True
+        train_sampler = None
+        val_sampler = None
+
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
         drop_last=True,
-        sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
+        sampler=train_sampler,
+        shuffle=train_shuffle,
     )
-    val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
         shuffle=False,
         drop_last=True,
-        sampler=torch.utils.data.distributed.DistributedSampler(val_ds),
+        sampler=val_sampler,
     )
 
     model = model_factory.get_factory().create(
@@ -173,14 +185,13 @@ def deserialize(config: DeserializeConfig):
     )
     model = model.to(torch.device(config.device_id))
 
-    if config.device_id == "cpu":
-        device_id_list = None
+    if config.device_id == "cpu" or config.device_id == "mps":
+        pass
     else:
         device_id_list = [config.device_id]
-
-    model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=device_id_list, find_unused_parameters=True
-    )
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=device_id_list, find_unused_parameters=True
+        )
     model.load_state_dict(data_dict["model"])
 
     optimizer = train_config.optimizer.optimizer(
@@ -217,20 +228,32 @@ def deserialize(config: DeserializeConfig):
 
 def create_initial_state(train_run: TrainRun, device_id):
     train_config = train_run.train_config
+
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
+    val_ds = data_factory.get_factory().create(train_config.val_data_config)
+
+    if device_id == "nccl":
+        train_shuffle = False
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_ds)
+        val_sampler = torch.utils.data.distributed.DistributedSampler(val_ds)
+    else:
+        train_shuffle = True
+        train_sampler = None
+        val_sampler = None
+
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
         drop_last=True,
-        sampler=torch.utils.data.distributed.DistributedSampler(train_ds),
+        sampler=train_sampler,
+        shuffle=train_shuffle,
     )
-    val_ds = data_factory.get_factory().create(train_config.val_data_config)
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
         shuffle=False,
         drop_last=True,
-        sampler=torch.utils.data.distributed.DistributedSampler(val_ds),
+        sampler=val_sampler,
     )
 
     torch.manual_seed(train_config.ensemble_id)
@@ -238,13 +261,13 @@ def create_initial_state(train_run: TrainRun, device_id):
         train_config.model_config, train_ds.data_spec()
     )
     init_model = init_model.to(torch.device(device_id))
-    if device_id == "cpu":
-        device_id_list = None
+    if device_id == "cpu" or device_id == "mps":
+        pass
     else:
         device_id_list = [device_id]
-    init_model = torch.nn.parallel.DistributedDataParallel(
-        init_model, device_ids=device_id_list, find_unused_parameters=True
-    )
+        init_model = torch.nn.parallel.DistributedDataParallel(
+            init_model, device_ids=device_id_list, find_unused_parameters=True
+        )
     opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
