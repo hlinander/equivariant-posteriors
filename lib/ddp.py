@@ -3,15 +3,26 @@ import os
 import torch
 
 
-def ddp_setup() -> str:
+def ddp_setup(backend=None) -> str:
     """
     Args:
         rank: Unique identifier of each process
        world_size: Total number of processes
     """
+    if backend is None:
+        if torch.cuda.is_available():
+            backend = "nccl"
+        else:
+            backend = "gloo"
+
     torch.distributed.init_process_group(
-        backend="nccl", init_method="env://", timeout=timedelta(seconds=10)
+        backend=backend, init_method="env://", timeout=timedelta(seconds=10)
     )
     device_id = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(device_id)
-    return device_id
+    if backend == "nccl":
+        torch.cuda.set_device(device_id)
+        return device_id
+    if backend == "gloo":
+        return "cpu"
+
+    raise Exception("Unsupported backend")

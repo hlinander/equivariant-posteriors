@@ -76,8 +76,10 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         loss_val.backward()
         optimizer.step()
 
-        if i == 0:
-            train_epoch_state.memory_stats = torch.cuda.memory_stats_as_nested_dict()
+        if i == 0 and device != "cpu":
+            train_epoch_state.device_memory_stats = (
+                torch.cuda.memory_stats_as_nested_dict()
+            )
 
         metric_sample = MetricSample(
             output=output,
@@ -148,7 +150,7 @@ def deserialize(config: DeserializeConfig):
     else:
         print(f"{checkpoint_path}")
 
-    data_dict = torch.load(checkpoint_path, map_location=f"cuda:{config.device_id}")
+    data_dict = torch.load(checkpoint_path, map_location=torch.device(config.device_id))
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
     train_dataloader = torch.utils.data.DataLoader(
@@ -170,8 +172,14 @@ def deserialize(config: DeserializeConfig):
         train_config.model_config, val_ds.data_spec()
     )
     model = model.to(torch.device(config.device_id))
+
+    if config.device_id == "cpu":
+        device_id_list = None
+    else:
+        device_id_list = [config.device_id]
+
     model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[config.device_id], find_unused_parameters=True
+        model, device_ids=device_id_list, find_unused_parameters=True
     )
     model.load_state_dict(data_dict["model"])
 
@@ -230,8 +238,12 @@ def create_initial_state(train_run: TrainRun, device_id):
         train_config.model_config, train_ds.data_spec()
     )
     init_model = init_model.to(torch.device(device_id))
+    if device_id == "cpu":
+        device_id_list = None
+    else:
+        device_id_list = [device_id]
     init_model = torch.nn.parallel.DistributedDataParallel(
-        init_model, device_ids=[device_id], find_unused_parameters=True
+        init_model, device_ids=device_id_list, find_unused_parameters=True
     )
     opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
@@ -354,7 +366,7 @@ def visualize_progress(state, train_run, device):
     plt.subplot(1, 2).subplots(2, 1)
     plt.subplot(1, 2).subplot(1, 1)
     if train_run.train_eval.data_visualizer is not None:
-        train_run.train_eval.data_visualizer(plt, state)
+        train_run.train_eval.data_visualizer(plt, state, device)
     plt.subplot(1, 2).subplot(2, 1)
     plt.title("Config")
     tc = "\n".join(text_config(asdict(train_run)))
@@ -364,7 +376,10 @@ def visualize_progress(state, train_run, device):
 
     # Third column
     plt.subplot(1, 3)
-    plot_memory_stats(plt, filter_memory_stats(state.memory_stats), device)
+    if state.device_memory_stats is not None:
+        plot_device_memory_stats(
+            plt, filter_memory_stats(state.device_memory_stats), device
+        )
     # tc = "\n".join(text_config(filter_memory_stats(state.memory_stats)))
     # plt.xlim(0, 1)
     # plt.ylim(0, 1)
@@ -404,7 +419,7 @@ def filter_memory_stats(memory_stats: dict):
     }
 
 
-def plot_memory_stats(plt, memory_stats: dict, device):
+def plot_device_memory_stats(plt, memory_stats: dict, device):
     device_stats = torch.cuda.get_device_properties(device)
 
     def bytes_to_mb(bytes):

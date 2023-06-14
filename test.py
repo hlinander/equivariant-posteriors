@@ -13,14 +13,11 @@ from lib.data_factory import DataSineConfig
 
 from lib.train import load_or_create_state
 from lib.train import do_training
+from lib.ddp import ddp_setup
 
 
 def main():
-    if torch.cuda.is_available():
-        device_id = torch.device("cuda", int(os.environ.get("LOCAL_RANK", 0)))
-    else:
-        device_id = "cpu"
-
+    device_id = ddp_setup("gloo")
     print(f"Using device {device_id}")
 
     train_config = TrainConfig(
