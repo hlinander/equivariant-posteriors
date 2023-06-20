@@ -3,6 +3,7 @@ import torch
 from lib.models.dense import Dense, DenseConfig
 from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
+from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 
 
 class _ModelFactory:
@@ -11,6 +12,7 @@ class _ModelFactory:
         self.models[DenseConfig] = Dense
         self.models[TransformerConfig] = Transformer
         self.models[MLPClassConfig] = MLPClass
+        self.models[MLPProjClassConfig] = MLPProjClass
 
     def register(self, config_class, model_class):
         self.models[config_class] = model_class
