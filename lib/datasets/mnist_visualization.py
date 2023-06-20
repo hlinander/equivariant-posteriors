@@ -8,8 +8,8 @@ def visualize_mnist(plt, state: TrainEpochState, device_id):
     input, target, ids = next(iter(state.val_dataloader))
     with torch.no_grad():
         input = input.to(device_id, non_blocking=True)
-        output = state.model(input)[1].cpu()
-        digits = torch.argmax(output, dim=-1)
+        output = state.model(input)
+        digits = torch.argmax(output["predictions"].cpu(), dim=-1)
 
     images = input.cpu().reshape(-1, 1, 28, 28)
     images = 255.0 * images[:4]

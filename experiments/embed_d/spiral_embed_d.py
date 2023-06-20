@@ -6,6 +6,7 @@ from pathlib import Path
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
+from lib.train_dataclasses import ComputeConfig
 from lib.models.transformer import TransformerConfig
 from lib.data_factory import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
@@ -44,6 +45,7 @@ def create_config(embed_d, ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
+        compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,

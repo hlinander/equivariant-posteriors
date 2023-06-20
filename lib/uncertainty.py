@@ -82,7 +82,8 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         )
         input = input.to(device, non_blocking=True)
         for idx, member in enumerate(ensemble.members):
-            probs[:, idx, :] = member(input)[1].detach()
+            output = member(input)
+            probs[:, idx, :] = output["predictions"]
 
         MI = mutual_information(probs)
         H = predictive_entropy(probs)

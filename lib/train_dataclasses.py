@@ -44,12 +44,20 @@ class TrainConfig:
     ensemble_id: int = 0
     _version: int = 0
     val_data_config: object = None
+    post_model_create_hook: object = None
+    model_pre_train_hook: object = None
 
     def serialize_human(self):
         return dict(
             model=dict(
                 config=self.model_config.serialize_human(),
                 name=model_factory.get_factory().get_class(self.model_config).__name__,
+                post_model_create_hook=self.post_model_create_hook.__name__
+                if self.post_model_create_hook is not None
+                else None,
+                model_pre_train_hook=self.model_pre_train_hook.__name__
+                if self.model_pre_train_hook is not None
+                else None,
             ),
             data=dict(
                 config=self.train_data_config.serialize_human(),
@@ -84,7 +92,16 @@ class TrainEval:
 
 
 @dataclass
+class ComputeConfig:
+    distributed: bool
+
+    def serialize_human(self):
+        self.__dict__
+
+
+@dataclass
 class TrainRun:
+    compute_config: ComputeConfig
     train_config: TrainConfig
     train_eval: TrainEval
     epochs: int
@@ -93,6 +110,7 @@ class TrainRun:
 
     def serialize_human(self):
         return dict(
+            compute_config=self.compute_config.serialize_human(),
             train_config=self.train_config.serialize_human(),
             train_id=stable_hash(self.train_config),
             ensemble_id=stable_hash(self.train_config.ensemble_dict()),

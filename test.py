@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import os
 import torch
 import torchmetrics as tm
 
@@ -7,6 +6,7 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
+from lib.train_dataclasses import ComputeConfig
 from lib.metric import Metric
 from lib.models.dense import DenseConfig
 from lib.data_factory import DataSineConfig
@@ -43,6 +43,7 @@ def main():
         ],
     )
     train_run = TrainRun(
+        compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
         epochs=20,
