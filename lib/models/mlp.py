@@ -1,11 +1,12 @@
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from typing import List
 
 
 @dataclass(frozen=True)
 class MLPClassConfig:
-    width: int
+    widths: List[int]
 
     def serialize_human(self):
         return self.__dict__
@@ -14,26 +15,27 @@ class MLPClassConfig:
 class MLPClass(torch.nn.Module):
     def __init__(self, config: MLPClassConfig, data_spec: DataSpec):
         super().__init__()
-        width = config.width
-        self.flatten = torch.nn.Flatten()
-        self.mlp1 = torch.nn.Linear(data_spec.input_shape.numel(), width, bias=True)
-        self.mlp2 = torch.nn.Linear(width, width, bias=True)
-        self.mlp3 = torch.nn.Linear(width, data_spec.output_shape[-1], bias=True)
+        self.config = config
+        self.mlp_in = torch.nn.Linear(
+            data_spec.input_shape.numel(), config.widths[0], bias=True
+        )
+        in_out = zip(config.widths[0:], config.widths[1:])
+        self.mlps = torch.nn.ModuleList(
+            [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in in_out]
+        )
+        self.mlp_out = torch.nn.Linear(
+            config.widths[-1], data_spec.output_shape[-1], bias=True
+        )
 
     def forward(self, x):
         y = x.reshape(x.shape[0], -1)
-        y = self.mlp1(y)
+        y = self.mlp_in(y)
         y = torch.nn.functional.gelu(y)
-        y = self.mlp2(y)
-        y = torch.nn.functional.gelu(y)
-        y = self.mlp3(y)
+
+        for idx, mlp in enumerate(self.mlps):
+            y = mlp(y)
+            y = torch.nn.functional.gelu(y)
+
+        y = self.mlp_out(y)
         tout = y
-        # tout = tout.reshape(x.shape[0], 2, -1)
-        # return torch.sigmoid(tout)
-        return tout, torch.softmax(tout.detach(), dim=-1)
-
-    def forward_full(self, x):
-        return self.output_to_value(self.forward(x))
-
-    def output_to_value(self, output):
-        return torch.softmax(output, dim=-1)
+        return dict(logits=tout, predictions=torch.softmax(tout.detach(), dim=-1))

@@ -9,12 +9,14 @@ from lib.ensemble import create_ensemble
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
+from lib.train_dataclasses import ComputeConfig
 from lib.classification_metrics import create_classification_metrics
 from lib.data_factory import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 import lib.uncertainty as uncertainty
 import lib.data_factory as data_factory
 from lib.stable_hash import json_dumps_dataclass
+from lib.ddp import ddp_setup
 
 import lib.model_factory as model_factory
 
@@ -53,6 +55,7 @@ def create_config(ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
+        compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
         epochs=30,
@@ -73,7 +76,7 @@ def calculate_projection_coords(ds, dataloader):
     model_proj.eval()
 
     projections = []
-    for (xs, ys, sample_ids) in dataloader:
+    for xs, ys, sample_ids in dataloader:
         model_proj(xs)
         projections.append(model_proj.bottleneck.detach().cpu().clone())
 
@@ -194,12 +197,10 @@ def save_uncertainty_data(data_tuple, filename):
 
 
 if __name__ == "__main__":
-    if torch.cuda.is_available():
-        device_id = torch.device("cuda", int(os.environ.get("LOCAL_RANK", 0)))
-    else:
-        device_id = "cpu"
     print(json_dumps_dataclass(create_config(0)))
     ensemble_config = create_ensemble_config(create_config, 10)
+
+    device_id = ddp_setup()
     ensemble = create_ensemble(ensemble_config, device_id)
     print("N members = ", ensemble.n_members)
 
