@@ -5,17 +5,30 @@ import hashlib
 
 def json_default(data):
     try:
-        return {"__type": type(data).__name__, **dataclasses.asdict(data)}
+        return data.__name__
     except:
-        try:
-            return data.__name__
-        except:
-            return type(data).__name__
+        return type(data).__name__
+
+
+def serialize_dataclass(instance) -> dict:
+    if dataclasses.is_dataclass(instance):
+        return {
+            "__class__": type(instance).__name__,
+            "__data__": {
+                k: serialize_dataclass(v) for k, v in instance.__dict__.items()
+            },
+        }
+    elif isinstance(instance, list):
+        return [serialize_dataclass(i) for i in instance]
+    elif isinstance(instance, dict):
+        return {k: serialize_dataclass(v) for k, v in instance.items()}
+    else:
+        return instance
 
 
 def json_dumps_dataclass(data_class):
     return json.dumps(
-        data_class,
+        serialize_dataclass(data_class),
         default=json_default,
         ensure_ascii=False,
         sort_keys=True,
