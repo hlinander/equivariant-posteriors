@@ -54,7 +54,7 @@ def validate(
                 epoch=train_epoch_state.epoch,
             )
             for metric in train_epoch_state.validation_metrics:
-                metric(metric_sample)
+                metric(metric_sample, train_epoch_state.model)
 
 
 def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
@@ -74,7 +74,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         target = target.to(device, non_blocking=True)
         output = model(input)
 
-        loss_val = loss(output["logits"], target)
+        loss_val = loss(output["logits"], target, model)
         optimizer.zero_grad()
         loss_val.backward()
         optimizer.step()
@@ -85,6 +85,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
             )
 
         metric_sample = MetricSample(
+            # batch=input,
             output=output["logits"],
             prediction=output["predictions"],
             target=target,
@@ -92,7 +93,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
             epoch=train_epoch_state.epoch,
         )
         for metric in train_epoch_state.train_metrics:
-            metric(metric_sample)
+            metric(metric_sample, train_epoch_state.model)
 
 
 def create_initial_state(train_run: TrainRun, device_id):
@@ -187,6 +188,8 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     while state.epoch < train_run.epochs:
         train(state, train_epoch_spec)
         validate(state, train_epoch_spec, train_run)
+        if train_run.train_config.epoch_hook is not None:
+            train_run.train_config.epoch_hook(state, train_run)
         state.epoch += 1
         serialize(serialize_config)
         try:

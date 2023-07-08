@@ -3,6 +3,7 @@ import json
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
+from lib.metric import epoch_filter
 
 
 def dict_to_normalized_json(input_dict):
@@ -26,10 +27,12 @@ def render_dataframe(train_run: TrainRun, train_epoch_state: TrainEpochState):
     rows = []
     for epoch in range(train_epoch_state.epoch):
         train_metric_values = [
-            metric.mean(epoch) for metric in train_epoch_state.train_metrics
+            metric.store.mean(epoch_filter(epoch))
+            for metric in train_epoch_state.train_metrics
         ]
         val_metric_values = [
-            metric.mean(epoch) for metric in train_epoch_state.validation_metrics
+            metric.store.mean(epoch_filter(epoch))
+            for metric in train_epoch_state.validation_metrics
         ]
         rows.append([epoch] + config_cols + train_metric_values + val_metric_values)
 

@@ -22,17 +22,16 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
-from lib.stable_hash import serialize_dataclass
 
 
 def create_config(ensemble_id):
     train_config = TrainConfig(
-        model_config=MLPClassConfig(widths=[50, 50, 2]),
+        model_config=MLPClassConfig(widths=[20] * 16),
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
-        loss=torch.nn.CrossEntropyLoss(),
+        loss=norm_loss,
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
+            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0)
         ),
         batch_size=128,
         ensemble_id=ensemble_id,
@@ -51,6 +50,8 @@ def create_config(ensemble_id):
 
 def load_model(model: torch.nn.Module, train_run: TrainRun):
     state = torch.load("model.pt")
+    del state["mlp_out.weight"]
+    del state["mlp_out.bias"]
     model.load_state_dict(state, strict=False)
     return model
 
@@ -64,20 +65,25 @@ def freeze(model: torch.nn.Module, train_run: TrainRun):
     return model
 
 
+def norm_loss(out, target, model):
+    return torch.nn.functional.cross_entropy(out, target)
+
+
 def create_config_proj(ensemble_id):
     train_config = TrainConfig(
-        model_config=MLPProjClassConfig(widths=[50, 50, 2], store_layers=True),
+        model_config=MLPProjClassConfig(widths=[20] * 16 + [2], store_layers=True),
         post_model_create_hook=load_model,
         model_pre_train_hook=freeze,
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
-        loss=torch.nn.CrossEntropyLoss(),
+        # loss=torch.nn.CrossEntropyLoss(),
+        loss=norm_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
         batch_size=128,
         ensemble_id=ensemble_id,
-        _version=1,
+        _version=4,
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
@@ -102,6 +108,12 @@ if __name__ == "__main__":
     ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
     ensemble_proj = create_ensemble(ensemble_config_proj, device_id)
 
+    # Verify frozen layer
+    ps = list(ensemble.members[0].mlp_in.parameters())
+    ps_proj = list(ensemble_proj.members[0].mlp_in.parameters())
+    for p, p_proj in zip(ps, ps_proj):
+        assert torch.equal(p, p_proj)
+
     dsu = data_factory.get_factory().create(DataMNISTConfig(validation=True))
     dataloaderu = torch.utils.data.DataLoader(
         dsu,
@@ -118,7 +130,7 @@ if __name__ == "__main__":
     projections = []
 
     def just_logits(x):
-        return ensemble.members[1](x)["logits"]
+        return ensemble.members[0](x)["logits"]
 
     for xs, ys, ids in dataloaderu:
         xs = xs.to(device_id)
@@ -127,7 +139,7 @@ if __name__ == "__main__":
         lambdas.append(lambda1s)
         # X = xs[:, 0, 0]
         # Y = xs[:, 1, 0]
-        output = ensemble_proj.members[1](xs)
+        output = ensemble_proj.members[0](xs)
         projections.append(output["layers"][-1])
         X = output["layers"][-1][:, 0]
         Y = output["layers"][-1][:, 1]

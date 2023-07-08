@@ -7,6 +7,7 @@ import io
 import torch
 
 from lib.paths import get_checkpoint_path
+from lib.metric import epoch_filter
 
 
 def visualize_progress(state, train_run, device):
@@ -34,11 +35,15 @@ def visualize_progress(state, train_run, device):
         train_metric = state.train_metrics[train_indices[idx]]
         val_metric = state.validation_metrics[val_indices[idx]]
 
-        train_means = [(epoch, train_metric.mean(epoch)) for epoch in epochs]
+        train_means = [
+            (epoch, train_metric.store.mean(epoch_filter(epoch))) for epoch in epochs
+        ]
         train_means = [
             (epoch, mean) for (epoch, mean) in train_means if mean is not None
         ]
-        val_means = [(epoch, val_metric.mean(epoch)) for epoch in epochs]
+        val_means = [
+            (epoch, val_metric.store.mean(epoch_filter(epoch))) for epoch in epochs
+        ]
         val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
         plt.title(common_metrics[idx])

@@ -3,18 +3,22 @@ from dataclasses import dataclass
 from typing import List
 from typing import Callable
 
-from lib.metric import Metric
+# from lib.metric import Metric
+import lib.metric
 import lib.model_factory as model_factory
 import lib.data_factory as data_factory
 from lib.stable_hash import stable_hash
+
+
+# Create ModelState with model and optimizer
 
 
 @dataclass
 class TrainEpochState:
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
-    train_metrics: List[Metric]
-    validation_metrics: List[Metric]
+    train_metrics: List[lib.metric.Metric]
+    validation_metrics: List[lib.metric.Metric]
     train_dataloader: torch.utils.data.DataLoader
     epoch: int
     val_dataloader: torch.utils.data.DataLoader = None
@@ -46,6 +50,7 @@ class TrainConfig:
     val_data_config: object = None
     post_model_create_hook: object = None
     model_pre_train_hook: object = None
+    epoch_hook: object = None
 
     def serialize_human(self):
         return dict(
@@ -70,6 +75,9 @@ class TrainConfig:
                 name=self.optimizer.optimizer.__name__,
                 kwargs=self.optimizer.kwargs,
             ),
+            epoch_hook=self.epoch_hook.__name__
+            if self.epoch_hook is not None
+            else None,
         )
 
     def ensemble_dict(self):
@@ -80,8 +88,8 @@ class TrainConfig:
 
 @dataclass
 class TrainEval:
-    train_metrics: List[Callable[[], Metric]]
-    validation_metrics: List[Callable[[], Metric]]
+    train_metrics: List[Callable[[], lib.metric.Metric]]
+    validation_metrics: List[Callable[[], lib.metric.Metric]]
     data_visualizer: Callable[[object, TrainEpochState], None] = None
 
     def serialize_human(self):

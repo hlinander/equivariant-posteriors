@@ -1,5 +1,20 @@
 import torch
 
+# class LyapunovMetric:
+#     def __call__(
+#         self,
+#         metric_sample: MetricSample,
+#         model: torch.nn.Module,
+#     ) -> torch.Tensor:
+#         output = metric_sample.output.detach()
+#         prediction = metric_sample.prediction.detach()
+#         target = metric_sample.target.detach()
+#         lambda1(model, metric_sample.)
+#         return values
+
+#     def name(self):
+#         return self.metric_name
+
 
 def lambda1(model: torch.nn.Module, batch: torch.Tensor):
     jacobians = torch.autograd.functional.jacobian(model, batch).squeeze()

@@ -7,6 +7,7 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
+from lib.train_dataclasses import ComputeConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data import DataSpiralsConfig
@@ -63,6 +64,7 @@ def create_config(layers, ensemble_id):
         data_visualizer=visualize_spiral,
     )
     train_run = TrainRun(
+        compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,

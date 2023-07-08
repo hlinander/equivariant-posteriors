@@ -22,7 +22,7 @@ class MLPProjClass(torch.nn.Module):
         )
         in_out = zip(config.widths[0:], config.widths[1:])
         self.mlps = torch.nn.ModuleList(
-            [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in in_out]
+            [torch.nn.Linear(in_dim, out_dim, bias=True) for in_dim, out_dim in in_out]
         )
         self.mlp_out = torch.nn.Linear(
             config.widths[-1], data_spec.output_shape[-1], bias=True
