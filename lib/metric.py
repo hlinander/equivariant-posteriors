@@ -5,7 +5,7 @@ import torch
 
 @dataclass
 class MetricSample:
-    # batch: torch.Tensor
+    batch: torch.Tensor
     output: torch.Tensor
     prediction: torch.Tensor
     target: torch.Tensor

@@ -3,7 +3,7 @@ import torchmetrics as tm
 
 from lib.metric import MetricFn, Metric, MetricMeanStdStore
 from lib.train_dataclasses import TrainEval
-from lib.lyapunov import lambda1
+from lib.lyapunov import lambda1, LyapunovMetric
 
 
 def loss(preds, target):
@@ -67,6 +67,7 @@ def create_classification_metrics(data_visualizer, n_classes):
             lambda: mean_std(
                 MetricFn(calibration_error, metric_kwargs=dict(n_classes=n_classes))
             ),
+            lambda: mean_std(LyapunovMetric()),
             # lambda: Metric(calibration_error),
         ],
         validation_metrics=[
@@ -82,6 +83,7 @@ def create_classification_metrics(data_visualizer, n_classes):
             ),
             # lambda: Metric(calibration_error),
             lambda: mean_std(MetricFn(loss, raw_output=True)),
+            lambda: mean_std(LyapunovMetric()),
         ],
         data_visualizer=data_visualizer,
     )

@@ -47,6 +47,7 @@ def validate(
             output = model(input)
 
             metric_sample = MetricSample(
+                batch=input,
                 output=output["logits"],
                 prediction=output["predictions"],
                 target=target,
@@ -85,7 +86,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
             )
 
         metric_sample = MetricSample(
-            # batch=input,
+            batch=input,
             output=output["logits"],
             prediction=output["predictions"],
             target=target,
