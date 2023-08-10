@@ -2,6 +2,7 @@ import torch
 
 
 def lambda1(model: torch.nn.Module, batch: torch.Tensor):
+    breakpoint()
     jacobians = torch.autograd.functional.jacobian(model, batch).squeeze()
     # jacobian will be diagonal over the samples in the batch
     # pick out just the diagonal part of the tensor
