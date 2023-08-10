@@ -4,6 +4,7 @@ import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
+from lib.serialization import DeserializeConfig, get_checkpoint_path
 
 
 @dataclass
@@ -28,8 +29,13 @@ def create_ensemble_config(
 
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
+    print("Will try to load ensemble checkpoints from:")
+    for member_config in ensemble_config.members:
+        print(get_checkpoint_path(member_config.train_config)[0].as_posix())
+    print("Loading or training ensemble...")
     for member_config in ensemble_config.members:
         state = load_or_create_state(member_config, device_id)
+        print(state.model)
         do_training(member_config, state, device_id)
         members.append(state.model)
 

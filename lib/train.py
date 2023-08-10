@@ -72,6 +72,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     for i, (input, target, sample_id) in enumerate(dataloader):
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
+        # breakpoint()
         output = model(input)
 
         loss_val = loss(output["logits"], target)
@@ -138,7 +139,9 @@ def create_initial_state(train_run: TrainRun, device_id):
             init_model, device_ids=device_id_list, find_unused_parameters=True
         )
 
-    opt = torch.optim.Adam(init_model.parameters(), **train_config.optimizer.kwargs)
+    opt = train_config.optimizer.optimizer(
+        init_model.parameters(), **train_config.optimizer.kwargs
+    )
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
         metric() for metric in train_run.train_eval.validation_metrics

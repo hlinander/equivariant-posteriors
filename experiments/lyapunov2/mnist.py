@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import torch
-import matplotlib.pyplot as plt
 from pathlib import Path
 import pandas as pd
 
@@ -13,7 +12,6 @@ from lib.classification_metrics import create_classification_metrics
 from lib.data_factory import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 
-# from lib.data_factory import DataUniformConfig
 import lib.data_factory as data_factory
 from lib.models.mlp_proj import MLPProjClassConfig
 from lib.models.mlp import MLPClassConfig
@@ -22,19 +20,21 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
-from lib.stable_hash import serialize_dataclass
 
 
 def create_config(ensemble_id):
     train_config = TrainConfig(
-        model_config=MLPClassConfig(widths=[50, 50, 2]),
+        # model_config=MLPClassConfig(widths=[50, 50]),
+        model_config=MLPClassConfig(widths=[20] * 16),
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
+            optimizer=torch.optim.SGD,
+            kwargs=dict(weight_decay=0.0, lr=0.005, momentum=0.9),
+            # kwargs=dict(weight_decay=0.0, lr=0.001),
         ),
-        batch_size=128,
+        batch_size=2**7,
         ensemble_id=ensemble_id,
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
@@ -42,7 +42,7 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=30,
+        epochs=300,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -51,31 +51,33 @@ def create_config(ensemble_id):
 
 def load_model(model: torch.nn.Module, train_run: TrainRun):
     state = torch.load("model.pt")
-    model.load_state_dict(state, strict=False)
+    model.mlp.load_state_dict(state, strict=False)
     return model
 
 
 def freeze(model: torch.nn.Module, train_run: TrainRun):
-    for param in model.mlp_in.parameters():
+    for param in model.mlp.parameters():
         param.requires_grad = False
-    for layer in model.mlps[:-1]:
-        for param in layer.parameters():
-            param.requires_grad = False
+    # for layer in model.mlps[:-1]:
+    # for param in layer.parameters():
+    # param.requires_grad = False
     return model
 
 
 def create_config_proj(ensemble_id):
+    mlp_config = create_config(0).train_config.model_config
     train_config = TrainConfig(
-        model_config=MLPProjClassConfig(widths=[50, 50, 2], store_layers=True),
+        model_config=MLPProjClassConfig(mlp_config, 2),
         post_model_create_hook=load_model,
         model_pre_train_hook=freeze,
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
+            optimizer=torch.optim.SGD,
+            kwargs=dict(weight_decay=0.0, lr=0.005, momentum=0.9),
         ),
-        batch_size=128,
+        batch_size=2**13,
         ensemble_id=ensemble_id,
         _version=1,
     )
@@ -84,7 +86,7 @@ def create_config_proj(ensemble_id):
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=30,
+        epochs=300,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -94,12 +96,12 @@ def create_config_proj(ensemble_id):
 if __name__ == "__main__":
     device_id = ddp_setup()
 
-    ensemble_config = create_ensemble_config(create_config, 5)
+    ensemble_config = create_ensemble_config(create_config, 2)
     ensemble = create_ensemble(ensemble_config, device_id)
 
     torch.save(ensemble.members[0].state_dict(), "model.pt")
 
-    ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
+    ensemble_config_proj = create_ensemble_config(create_config_proj, 2)
     ensemble_proj = create_ensemble(ensemble_config_proj, device_id)
 
     dsu = data_factory.get_factory().create(DataMNISTConfig(validation=True))
@@ -112,7 +114,7 @@ if __name__ == "__main__":
 
     uq = uncertainty(dataloaderu, ensemble, device_id)
 
-    fig, axs = plt.subplots(2, 2, figsize=(8, 8))
+    # fig, axs = plt.subplots(2, 2, figsize=(8, 8))
 
     lambdas = []
     projections = []
@@ -123,16 +125,18 @@ if __name__ == "__main__":
     for xs, ys, ids in dataloaderu:
         xs = xs.to(device_id)
 
-        lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1))
-        lambdas.append(lambda1s)
-        # X = xs[:, 0, 0]
-        # Y = xs[:, 1, 0]
         output = ensemble_proj.members[1](xs)
-        projections.append(output["layers"][-1])
+        lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1)) / len(
+            output["layers"]
+        )
+        lambdas.append(lambda1s)
+
+        projections.append(output["layers"][-1][:, :2])
         X = output["layers"][-1][:, 0]
         Y = output["layers"][-1][:, 1]
         C = lambda1s
 
+    breakpoint()
     lambda1_tensor = torch.concat(lambdas, dim=0)
     projection_tensor = torch.concat(projections, dim=0)
 
@@ -152,6 +156,6 @@ if __name__ == "__main__":
     )
     df.to_csv(Path(__file__).parent / "uncertainty_mnist.csv")
 
-    fig.tight_layout()
-    plt.show()
-    plt.savefig(Path(__file__).parent / "uq_lambda_mnist.pdf")
+    # fig.tight_layout()
+    # plt.show()
+    # plt.savefig(Path(__file__).parent / "uq_lambda_mnist.pdf")

@@ -12,4 +12,4 @@ def lambda1(model: torch.nn.Module, batch: torch.Tensor):
     u, s, vh = torch.linalg.svd(jacobians)
 
     # Return singular values (ordered by norm)
-    return s[:, 0]
+    return torch.log(s[:, 0])

@@ -19,16 +19,22 @@ class DataMNIST(torch.utils.data.Dataset):
             "datasets",
             train=not data_config.validation,
             download=True,
-            transform=torchvision.transforms.ToTensor(),
+            transform=torchvision.transforms.Compose(
+                [
+                    torchvision.transforms.ToTensor(),
+                    torchvision.transforms.Normalize((0.1307,), (0.3081,)),
+                ]
+            ),
         )
         self.n_classes = 10
         self.config = data_config
 
-    def data_spec(self):
+    @staticmethod
+    def data_spec():
         return DataSpec(
             input_shape=torch.Size([4, 14 * 14]),
             target_shape=torch.Size([1]),
-            output_shape=torch.Size([self.n_classes]),
+            output_shape=torch.Size([10]),
         )
 
     @functools.cache
