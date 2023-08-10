@@ -2,12 +2,13 @@ import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from typing import List
+from lib.models.mlp import MLPClass, MLPClassConfig
 
 
 @dataclass(frozen=True)
 class MLPProjClassConfig:
-    widths: List[int]
-    store_layers: bool = False
+    mlp_config: MLPClassConfig
+    n_proj: int
 
     def serialize_human(self):
         return self.__dict__
@@ -17,32 +18,11 @@ class MLPProjClass(torch.nn.Module):
     def __init__(self, config: MLPProjClassConfig, data_spec: DataSpec):
         super().__init__()
         self.config = config
-        self.mlp_in = torch.nn.Linear(
-            data_spec.input_shape.numel(), config.widths[0], bias=True
-        )
-        in_out = zip(config.widths[0:], config.widths[1:])
-        self.mlps = torch.nn.ModuleList(
-            [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in in_out]
-        )
-        self.mlp_out = torch.nn.Linear(
-            config.widths[-1], data_spec.output_shape[-1], bias=True
-        )
+        self.mlp = MLPClass(config.mlp_config, data_spec)
+        self.mlp_proj = torch.nn.Linear(10, config.n_proj, bias=True)
+        self.mlp_out = torch.nn.Linear(config.n_proj, 10, bias=True)
 
     def forward(self, x):
-        y = x.reshape(x.shape[0], -1)
-        y = self.mlp_in(y)
-        y = torch.nn.functional.gelu(y)
-
-        layers = []
-        for idx, mlp in enumerate(self.mlps):
-            y = mlp(y)
-            if idx < len(self.mlps) - 1:
-                y = torch.nn.functional.gelu(y)
-            if self.config.store_layers:
-                layers.append(y.detach())
-
-        y = self.mlp_out(y)
-        tout = y
-        return dict(
-            logits=tout, predictions=torch.softmax(tout.detach(), dim=-1), layers=layers
-        )
+        out = self.mlp(x)
+        logits = self.mlp_out(self.mlp_proj(out["logits"]))
+        return dict(logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))

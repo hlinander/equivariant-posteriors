@@ -30,11 +30,11 @@ class MLPClass(torch.nn.Module):
     def forward(self, x):
         y = x.reshape(x.shape[0], -1)
         y = self.mlp_in(y)
-        y = torch.nn.functional.gelu(y)
+        y = torch.nn.functional.tanh(y)
 
         for idx, mlp in enumerate(self.mlps):
             y = mlp(y)
-            y = torch.nn.functional.gelu(y)
+            y = torch.nn.functional.tanh(y)
 
         y = self.mlp_out(y)
         tout = y

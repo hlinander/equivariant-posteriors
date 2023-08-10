@@ -1,13 +1,14 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
   outputs = { self, nixpkgs, ... }:
     let
-      system = "x86_64-linux";
+      system = "aarch64-darwin";
       pkgs = (import nixpkgs {
         inherit system;
         config = {
           allowUnfree = true;
-          cudaSupport = true;
+          #cudaSupport = true;
         };
       });
       program = pkgs.python3Packages.buildPythonApplication {
@@ -30,14 +31,16 @@
         src = ./.;
 
         checkPhase = ''
-          ${pkgs.python3Packages.pytorch}/bin/torchrun --standalone --nnodes=1 --nproc_per_node=1 test.py
+          # ${pkgs.python3Packages.pytorch}/bin/torchrun --standalone --nnodes=1 --nproc_per_node=1 test.py
+          export TORCH_DEVICE="cpu"
+          python test.py
         '';
       };
       devinputs = with pkgs; [
           helix
           nixfmt
-          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork]; })
-          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
+          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+          #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
           (python3.withPackages (p: [
             p.python-lsp-server
             p.numpy
@@ -60,7 +63,11 @@
         ];
     in {
       packages.x86_64-linux.default = program;
+      packages.aarch64-darwin.default = program;
       devShells.x86_64-linux.default = pkgs.mkShellNoCC {
+        buildInputs = devinputs;
+         };
+      devShells.aarch64-darwin.default = pkgs.mkShellNoCC {
         buildInputs = devinputs;
          };
 
