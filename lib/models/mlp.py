@@ -2,6 +2,7 @@ import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from typing import List
+import math
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,14 @@ class MLPClass(torch.nn.Module):
         self.mlp_out = torch.nn.Linear(
             config.widths[-1], data_spec.output_shape[-1], bias=True
         )
+        for mlp in self.mlps:
+            torch.nn.init.normal_(mlp.weight, 0.0, std=math.sqrt(1.0 / 20.0))
+            torch.nn.init.normal_(mlp.bias, 0.0, std=math.sqrt(1e-7))
+
+        torch.nn.init.normal_(self.mlp_in.weight, 0.0, math.sqrt(1.0 / (28 * 28)))
+        torch.nn.init.normal_(self.mlp_in.bias, 0.0, std=math.sqrt(1e-7))
+        torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / 20.0))
+        torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
 
     def forward(self, x):
         y = x.reshape(x.shape[0], -1)

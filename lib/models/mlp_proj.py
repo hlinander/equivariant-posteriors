@@ -1,3 +1,4 @@
+import math
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
@@ -22,7 +23,14 @@ class MLPProjClass(torch.nn.Module):
         self.mlp_proj = torch.nn.Linear(10, config.n_proj, bias=True)
         self.mlp_out = torch.nn.Linear(config.n_proj, 10, bias=True)
 
+        torch.nn.init.normal_(self.mlp_proj.weight, 0.0, math.sqrt(1.0 / 10.0))
+        torch.nn.init.normal_(self.mlp_proj.bias, 0.0, std=math.sqrt(1e-7))
+
+        torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / 2.0))
+        torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
+
     def forward(self, x):
         out = self.mlp(x)
-        logits = self.mlp_out(self.mlp_proj(out["logits"]))
-        return dict(logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))
+        projection = self.mlp_proj(out["logits"])
+        logits = self.mlp_out(projection)
+        return dict(projection=projection, logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))

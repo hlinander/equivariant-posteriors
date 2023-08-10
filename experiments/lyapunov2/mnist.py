@@ -2,6 +2,7 @@
 import torch
 from pathlib import Path
 import pandas as pd
+import tqdm
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
@@ -31,10 +32,10 @@ def create_config(ensemble_id):
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.SGD,
-            kwargs=dict(weight_decay=0.0, lr=0.005, momentum=0.9),
+            kwargs=dict(weight_decay=1e-4, lr=0.05, momentum=0.9),
             # kwargs=dict(weight_decay=0.0, lr=0.001),
         ),
-        batch_size=2**7,
+        batch_size=2**13,
         ensemble_id=ensemble_id,
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
@@ -75,7 +76,7 @@ def create_config_proj(ensemble_id):
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.SGD,
-            kwargs=dict(weight_decay=0.0, lr=0.005, momentum=0.9),
+            kwargs=dict(weight_decay=1e-4, lr=0.05, momentum=0.9),
         ),
         batch_size=2**13,
         ensemble_id=ensemble_id,
@@ -95,19 +96,20 @@ def create_config_proj(ensemble_id):
 
 if __name__ == "__main__":
     device_id = ddp_setup()
+    breakpoint()
 
-    ensemble_config = create_ensemble_config(create_config, 2)
+    ensemble_config = create_ensemble_config(create_config, 5)
     ensemble = create_ensemble(ensemble_config, device_id)
 
     torch.save(ensemble.members[0].state_dict(), "model.pt")
 
-    ensemble_config_proj = create_ensemble_config(create_config_proj, 2)
+    ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
     ensemble_proj = create_ensemble(ensemble_config_proj, device_id)
 
     dsu = data_factory.get_factory().create(DataMNISTConfig(validation=True))
     dataloaderu = torch.utils.data.DataLoader(
         dsu,
-        batch_size=128,
+        batch_size=256,
         shuffle=False,
         drop_last=False,
     )
@@ -122,18 +124,18 @@ if __name__ == "__main__":
     def just_logits(x):
         return ensemble.members[1](x)["logits"]
 
-    for xs, ys, ids in dataloaderu:
+    for xs, ys, ids in tqdm.tqdm(dataloaderu):
         xs = xs.to(device_id)
 
         output = ensemble_proj.members[1](xs)
         lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1)) / len(
-            output["layers"]
+            ensemble_config.members[0].train_config.model_config.widths
         )
         lambdas.append(lambda1s)
 
-        projections.append(output["layers"][-1][:, :2])
-        X = output["layers"][-1][:, 0]
-        Y = output["layers"][-1][:, 1]
+        projections.append(output["projection"].detach()[:, :2])
+        X = output["projection"].detach()[:, 0]
+        Y = output["projection"].detach()[:, 1]
         C = lambda1s
 
     breakpoint()
@@ -151,9 +153,7 @@ if __name__ == "__main__":
         ],
         dim=-1,
     )
-    df = pd.DataFrame(
-        columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy()
-    )
+    df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
     df.to_csv(Path(__file__).parent / "uncertainty_mnist.csv")
 
     # fig.tight_layout()

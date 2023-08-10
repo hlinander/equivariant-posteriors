@@ -1,21 +1,25 @@
 {
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs";
+  inputs.helix-pkg.url = "github:helix-editor/helix";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
-  outputs = { self, nixpkgs, ... }:
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
+  outputs = { self, nixpkgs, helix-pkg, ... }:
     let
-      system = "aarch64-darwin";
+      system = "x86_64-linux";
       pkgs = (import nixpkgs {
         inherit system;
         config = {
           allowUnfree = true;
-          #cudaSupport = true;
+          cudaSupport = true;
         };
       });
+      helixmaster = helix-pkg.packages.${system}.default;
       program = pkgs.python3Packages.buildPythonApplication {
         pname = "equivariant-transformers";
         version = "1.0";
 
         propagatedBuildInputs = with pkgs.python3Packages; [
+          tqdm
           numpy
           pytorch
           torchvision
@@ -37,12 +41,15 @@
         '';
       };
       devinputs = with pkgs; [
-          helix
+          ruff
+          helixmaster
           nixfmt
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
           #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
           (python3.withPackages (p: [
+            p.tqdm
             p.python-lsp-server
+            p.python-lsp-ruff
             p.numpy
             p.pytorch
             p.torchvision
