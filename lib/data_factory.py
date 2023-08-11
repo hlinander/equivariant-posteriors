@@ -3,6 +3,7 @@ from lib.datasets.sine import DataSineConfig, DataSine
 from lib.datasets.spiral import DataSpiralsConfig, DataSpirals
 from lib.datasets.uniform import DataUniformConfig, DataUniform
 from lib.datasets.mnist import DataMNISTConfig, DataMNIST
+from lib.datasets.cifar import DataCIFARConfig, DataCIFAR
 
 
 class _DataFactory:
@@ -12,6 +13,7 @@ class _DataFactory:
         self.datasets[DataSineConfig] = DataSine
         self.datasets[DataUniformConfig] = DataUniform
         self.datasets[DataMNISTConfig] = DataMNIST
+        self.datasets[DataCIFARConfig] = DataCIFAR
 
     def register(self, config_class, data_class):
         self.datasets[config_class] = data_class
