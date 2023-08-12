@@ -3,12 +3,17 @@ import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from typing import List
-from lib.models.mlp import MLPClass, MLPClassConfig
+import lib.model_factory as model_factory
+
+# from lib.model_factory import get_factory
+
+# from lib.models.mlp import MLPClass, MLPClassConfig
 
 
 @dataclass(frozen=True)
 class MLPProjClassConfig:
-    mlp_config: MLPClassConfig
+    # mlp_config: MLPClassConfig
+    model_config: object
     n_proj: int
 
     def serialize_human(self):
@@ -19,7 +24,8 @@ class MLPProjClass(torch.nn.Module):
     def __init__(self, config: MLPProjClassConfig, data_spec: DataSpec):
         super().__init__()
         self.config = config
-        self.mlp = MLPClass(config.mlp_config, data_spec)
+        factory = model_factory.get_factory()
+        self.model = factory.create(config.model_config, data_spec)  # MLPClass(config.mlp_config, data_spec)
         self.mlp_proj = torch.nn.Linear(10, config.n_proj, bias=True)
         self.mlp_out = torch.nn.Linear(config.n_proj, 10, bias=True)
 
@@ -30,7 +36,7 @@ class MLPProjClass(torch.nn.Module):
         torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
 
     def forward(self, x):
-        out = self.mlp(x)
+        out = self.model(x)
         projection = self.mlp_proj(out["logits"])
         logits = self.mlp_out(projection)
         return dict(projection=projection, logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))

@@ -48,6 +48,14 @@ class TrainConfig:
     model_pre_train_hook: object = None
 
     def serialize_human(self):
+        val_data=None
+        if self.val_data_config is not None:
+            val_data = dict(
+                config=self.val_data_config.serialize_human(),
+                name=data_factory.get_factory()
+                .get_class(self.val_data_config)
+                .__name__,
+            )
         return dict(
             model=dict(
                 config=self.model_config.serialize_human(),
@@ -65,11 +73,14 @@ class TrainConfig:
                 .get_class(self.train_data_config)
                 .__name__,
             ),
+            val_data=val_data,
             loss=self.loss.__class__.__name__,
             optimizer=dict(
                 name=self.optimizer.optimizer.__name__,
                 kwargs=self.optimizer.kwargs,
             ),
+            batch_size=self.batch_size,
+            ensemble_id=self.ensemble_id
         )
 
     def ensemble_dict(self):

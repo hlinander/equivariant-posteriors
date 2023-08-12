@@ -1,6 +1,7 @@
 import torch
 
 from lib.models.dense import Dense, DenseConfig
+from lib.models.conv_small import ConvSmall, ConvSmallConfig
 from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
@@ -10,6 +11,7 @@ class _ModelFactory:
     def __init__(self):
         self.models = dict()
         self.models[DenseConfig] = Dense
+        self.models[ConvSmallConfig] = ConvSmall
         self.models[TransformerConfig] = Transformer
         self.models[MLPClassConfig] = MLPClass
         self.models[MLPProjClassConfig] = MLPProjClass

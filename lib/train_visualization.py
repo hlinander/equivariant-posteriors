@@ -57,18 +57,21 @@ def visualize_progress(state, train_run, device):
     if train_run.train_eval.data_visualizer is not None:
         train_run.train_eval.data_visualizer(plt, state, device)
     plt.subplot(1, 2).subplot(2, 1)
-    plt.title("Config")
-    tc = "\n".join(text_config(asdict(train_run)))
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.text(tc, 0, 1, color="black")
 
-    # Third column
-    plt.subplot(1, 3)
     if state.device_memory_stats is not None:
         plot_device_memory_stats(
             plt, filter_memory_stats(state.device_memory_stats), device
         )
+
+    # Third column
+    plt.subplot(1, 3)
+    plt.title("Config")
+    # tc = "\n".join(text_config(asdict(train_run)))
+    tc = "\n".join(text_config(train_run.serialize_human()))
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.text(tc, 0, 1, color="black")
+
 
     plt.show()
 
