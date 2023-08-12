@@ -72,7 +72,6 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     for i, (input, target, sample_id) in enumerate(dataloader):
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
-        # breakpoint()
         output = model(input)
 
         loss_val = loss(output["logits"], target)
@@ -81,9 +80,7 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         optimizer.step()
 
         if i == 0 and torch.cuda.is_available():
-            train_epoch_state.device_memory_stats = (
-                torch.cuda.memory_stats_as_nested_dict()
-            )
+            train_epoch_state.device_memory_stats = torch.cuda.memory_stats_as_nested_dict()
 
         metric_sample = MetricSample(
             output=output["logits"],
@@ -121,14 +118,10 @@ def create_initial_state(train_run: TrainRun, device_id):
     )
 
     torch.manual_seed(train_config.ensemble_id)
-    init_model = model_factory.get_factory().create(
-        train_config.model_config, train_ds.data_spec()
-    )
+    init_model = model_factory.get_factory().create(train_config.model_config, train_ds.data_spec())
 
     if train_config.post_model_create_hook is not None:
-        init_model = train_config.post_model_create_hook(
-            init_model, train_run=train_run
-        )
+        init_model = train_config.post_model_create_hook(init_model, train_run=train_run)
     if train_config.model_pre_train_hook is not None:
         init_model = train_config.model_pre_train_hook(init_model, train_run=train_run)
 
@@ -139,13 +132,9 @@ def create_initial_state(train_run: TrainRun, device_id):
             init_model, device_ids=device_id_list, find_unused_parameters=True
         )
 
-    opt = train_config.optimizer.optimizer(
-        init_model.parameters(), **train_config.optimizer.kwargs
-    )
+    opt = train_config.optimizer.optimizer(init_model.parameters(), **train_config.optimizer.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
-    validation_metrics = [
-        metric() for metric in train_run.train_eval.validation_metrics
-    ]
+    validation_metrics = [metric() for metric in train_run.train_eval.validation_metrics]
 
     return TrainEpochState(
         model=init_model,

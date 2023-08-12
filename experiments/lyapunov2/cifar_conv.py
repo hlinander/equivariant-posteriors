@@ -10,12 +10,13 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
-from lib.data_factory import DataMNISTConfig
-from lib.datasets.mnist_visualization import visualize_mnist
+from lib.data_factory import DataCIFARConfig
+
+# from lib.datasets.mnist_visualization import visualize_mnist
 
 import lib.data_factory as data_factory
 from lib.models.mlp_proj import MLPProjClassConfig
-from lib.models.mlp import MLPClassConfig
+from lib.models.conv_small import ConvSmallConfig
 from lib.lyapunov import lambda1
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
@@ -26,19 +27,19 @@ from lib.uncertainty import uncertainty
 def create_config(ensemble_id):
     train_config = TrainConfig(
         # model_config=MLPClassConfig(widths=[50, 50]),
-        model_config=MLPClassConfig(widths=[20] * 8),
-        train_data_config=DataMNISTConfig(),
-        val_data_config=DataMNISTConfig(validation=True),
+        model_config=ConvSmallConfig(),
+        train_data_config=DataCIFARConfig(),
+        val_data_config=DataCIFARConfig(validation=True),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.SGD,
             kwargs=dict(weight_decay=1e-4, lr=0.05, momentum=0.9),
             # kwargs=dict(weight_decay=0.0, lr=0.001),
         ),
-        batch_size=2**13,
+        batch_size=3000,
         ensemble_id=ensemble_id,
     )
-    train_eval = create_classification_metrics(visualize_mnist, 10)
+    train_eval = create_classification_metrics(None, 10)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
@@ -66,28 +67,28 @@ def freeze(model: torch.nn.Module, train_run: TrainRun):
 
 
 def create_config_proj(ensemble_id):
-    mlp_config = create_config(0).train_config.model_config
+    conv_config = create_config(0).train_config.model_config
     train_config = TrainConfig(
-        model_config=MLPProjClassConfig(mlp_config, 2),
+        model_config=MLPProjClassConfig(conv_config, 2),
         post_model_create_hook=load_model,
         model_pre_train_hook=freeze,
-        train_data_config=DataMNISTConfig(),
-        val_data_config=DataMNISTConfig(validation=True),
+        train_data_config=DataCIFARConfig(),
+        val_data_config=DataCIFARConfig(validation=True),
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.SGD,
             kwargs=dict(weight_decay=1e-4, lr=0.05, momentum=0.9),
         ),
-        batch_size=2**13,
+        batch_size=3000,
         ensemble_id=ensemble_id,
         _version=1,
     )
-    train_eval = create_classification_metrics(visualize_mnist, 10)
+    train_eval = create_classification_metrics(None, 10)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=300,
+        epochs=100,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -97,18 +98,18 @@ def create_config_proj(ensemble_id):
 if __name__ == "__main__":
     device_id = ddp_setup()
 
-    ensemble_config = create_ensemble_config(create_config, 5)
+    ensemble_config = create_ensemble_config(create_config, 1)
     ensemble = create_ensemble(ensemble_config, device_id)
 
     torch.save(ensemble.members[0].state_dict(), "model.pt")
 
-    ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
+    ensemble_config_proj = create_ensemble_config(create_config_proj, 1)
     ensemble_proj = create_ensemble(ensemble_config_proj, device_id)
 
-    dsu = data_factory.get_factory().create(DataMNISTConfig(validation=True))
+    dsu = data_factory.get_factory().create(DataCIFARConfig(validation=True))
     dataloaderu = torch.utils.data.DataLoader(
         dsu,
-        batch_size=10,
+        batch_size=2,
         shuffle=False,
         drop_last=False,
     )
@@ -121,15 +122,16 @@ if __name__ == "__main__":
     projections = []
 
     def just_logits(x):
-        return ensemble.members[1](x)["logits"]
+        return ensemble.members[0](x)["logits"]
 
     for xs, ys, ids in tqdm.tqdm(dataloaderu):
         xs = xs.to(device_id)
 
-        output = ensemble_proj.members[1](xs)
-        lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1)) / len(
-            ensemble_config.members[0].train_config.model_config.widths
-        )
+        output = ensemble_proj.members[0](xs)
+        # lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1)) / len(
+        #     ensemble_config.members[0].train_config.model_config.widths
+        # )
+        lambda1s = lambda1(just_logits, xs.reshape(xs.shape[0], -1)) / 5.0
         lambdas.append(lambda1s)
 
         projections.append(output["projection"].detach()[:, :2])
@@ -152,7 +154,7 @@ if __name__ == "__main__":
         dim=-1,
     )
     df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    df.to_csv(Path(__file__).parent / "uncertainty_mnist.csv")
+    df.to_csv(Path(__file__).parent / f"{Path(__file__).stem}_uncertainty_mnist.csv")
 
     # fig.tight_layout()
     # plt.show()

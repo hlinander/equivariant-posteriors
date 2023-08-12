@@ -46,15 +46,19 @@
           nixfmt
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
           #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
+          # cudatoolkit
           (python3.withPackages (p: [
+            p.rpy2
             p.tqdm
             p.python-lsp-server
             p.python-lsp-ruff
             p.numpy
             p.pytorch
+            # (p.torchvision.override {torch = p.pytorch-bin;})
             p.torchvision
             p.plotext
             p.torchmetrics
+            # (p.torchmetrics.override {torch = p.pytorch-bin;})
             p.ipython
             p.black
             p.flake8
@@ -73,6 +77,11 @@
       packages.aarch64-darwin.default = program;
       devShells.x86_64-linux.default = pkgs.mkShellNoCC {
         buildInputs = devinputs;
+        nativeBuildInputs = [pkgs.cudatoolkit];
+        shellHook = '' 
+          export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
+          # export CUDA_PATH=${pkgs.cudatoolkit}
+        '';
          };
       devShells.aarch64-darwin.default = pkgs.mkShellNoCC {
         buildInputs = devinputs;
