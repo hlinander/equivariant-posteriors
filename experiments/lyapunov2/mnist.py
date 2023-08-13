@@ -22,6 +22,8 @@ from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
 
+import rplot
+
 
 def create_config(ensemble_id):
     train_config = TrainConfig(
@@ -152,8 +154,4 @@ if __name__ == "__main__":
         dim=-1,
     )
     df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    df.to_csv(Path(__file__).parent / "uncertainty_mnist.csv")
-
-    # fig.tight_layout()
-    # plt.show()
-    # plt.savefig(Path(__file__).parent / "uq_lambda_mnist.pdf")
+    rplot.plot_r(df, Path(__file__).parent / f"{__file__}_results")

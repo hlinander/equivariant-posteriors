@@ -22,7 +22,7 @@ class Dense(torch.nn.Module):
         x = x.reshape(x.shape[0], -1)
         x = self.l1(x)
         x = self.l2(x)
-        return x, x
+        return dict(logits=x, predictions=x)
 
     # def output_to_value(self, x):
     # return self.forward(x)

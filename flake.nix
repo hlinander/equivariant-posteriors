@@ -48,7 +48,8 @@
           #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
           # cudatoolkit
           (python3.withPackages (p: [
-            p.rpy2
+            (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+            p.gitpython
             p.tqdm
             p.python-lsp-server
             p.python-lsp-ruff
