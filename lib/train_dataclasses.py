@@ -46,15 +46,14 @@ class TrainConfig:
     val_data_config: object = None
     post_model_create_hook: object = None
     model_pre_train_hook: object = None
+    extra: object = None
 
     def serialize_human(self):
-        val_data=None
+        val_data = None
         if self.val_data_config is not None:
             val_data = dict(
                 config=self.val_data_config.serialize_human(),
-                name=data_factory.get_factory()
-                .get_class(self.val_data_config)
-                .__name__,
+                name=data_factory.get_factory().get_class(self.val_data_config).__name__,
             )
         return dict(
             model=dict(
@@ -69,9 +68,7 @@ class TrainConfig:
             ),
             data=dict(
                 config=self.train_data_config.serialize_human(),
-                name=data_factory.get_factory()
-                .get_class(self.train_data_config)
-                .__name__,
+                name=data_factory.get_factory().get_class(self.train_data_config).__name__,
             ),
             val_data=val_data,
             loss=self.loss.__class__.__name__,
@@ -80,7 +77,7 @@ class TrainConfig:
                 kwargs=self.optimizer.kwargs,
             ),
             batch_size=self.batch_size,
-            ensemble_id=self.ensemble_id
+            ensemble_id=self.ensemble_id,
         )
 
     def ensemble_dict(self):

@@ -21,6 +21,7 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
+from lib.files import prepare_results
 
 import rplot
 
@@ -28,7 +29,7 @@ import rplot
 def create_config(ensemble_id):
     train_config = TrainConfig(
         # model_config=MLPClassConfig(widths=[50, 50]),
-        model_config=MLPClassConfig(widths=[20] * 8),
+        model_config=MLPClassConfig(widths=[20] * 16),
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
         loss=torch.nn.CrossEntropyLoss(),
@@ -52,8 +53,8 @@ def create_config(ensemble_id):
     return train_run
 
 
-def load_model(model: torch.nn.Module, train_run: TrainRun):
-    state = torch.load("model.pt")
+def load_model(model: torch.nn.Module, train_run: TrainRun, result_path: Path):
+    state = torch.load(result_path / "model.pt")
     model.model.load_state_dict(state, strict=False)
     return model
 
@@ -67,11 +68,11 @@ def freeze(model: torch.nn.Module, train_run: TrainRun):
     return model
 
 
-def create_config_proj(ensemble_id):
+def create_config_proj(ensemble_id, result_path):
     mlp_config = create_config(0).train_config.model_config
     train_config = TrainConfig(
         model_config=MLPProjClassConfig(mlp_config, 2),
-        post_model_create_hook=load_model,
+        post_model_create_hook=lambda model, train_run: load_model(model, train_run, result_path),
         model_pre_train_hook=freeze,
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
@@ -102,9 +103,11 @@ if __name__ == "__main__":
     ensemble_config = create_ensemble_config(create_config, 5)
     ensemble = create_ensemble(ensemble_config, device_id)
 
-    torch.save(ensemble.members[0].state_dict(), "model.pt")
+    result_path = prepare_results(Path(__file__).parent, __file__, ensemble_config)
 
-    ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
+    torch.save(ensemble.members[0].state_dict(), result_path / "model.pt")
+
+    ensemble_config_proj = create_ensemble_config(lambda ensemble_id: create_config_proj(ensemble_id, result_path), 5)
     ensemble_proj = create_ensemble(ensemble_config_proj, device_id)
 
     dsu = data_factory.get_factory().create(DataMNISTConfig(validation=True))
@@ -154,4 +157,4 @@ if __name__ == "__main__":
         dim=-1,
     )
     df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    rplot.plot_r(df, Path(__file__).parent / f"{__file__}_results")
+    rplot.plot_r(df, result_path)

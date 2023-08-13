@@ -22,6 +22,7 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
+from lib.files import prepare_results
 
 import rplot
 
@@ -103,6 +104,7 @@ if __name__ == "__main__":
     ensemble_config = create_ensemble_config(create_config, 5)
     ensemble = create_ensemble(ensemble_config, device_id)
 
+    result_path = prepare_results(Path(__file__).parent, __file__, ensemble_config)
     torch.save(ensemble.members[0].state_dict(), "model.pt")
 
     ensemble_config_proj = create_ensemble_config(create_config_proj, 5)
@@ -155,7 +157,7 @@ if __name__ == "__main__":
         dim=-1,
     )
     df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    rplot.plot_r(df, Path(__file__).parent / f"{__file__}_results")
+    rplot.plot_r(df, result_path)
 
     # fig.tight_layout()
     # plt.show()

@@ -11,6 +11,9 @@ from lib.serialization import DeserializeConfig, get_checkpoint_path
 class EnsembleConfig:
     members: list[TrainRun]
 
+    def serialize_human(self):
+        return [member_config.serialize_human() for member_config in self.members]
+
 
 @dataclass
 class Ensemble:
