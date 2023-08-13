@@ -1,3 +1,5 @@
+[![CI](https://github.com/hlinander/equivariant-posteriors/actions/workflows/main.yml/badge.svg)](https://github.com/hlinander/equivariant-posteriors/actions/workflows/main.yml)
+
 # Equivariant posteriors
 Test bed for equivariant posterior project.
 
