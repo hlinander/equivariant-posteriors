@@ -5,12 +5,13 @@
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
   outputs = { self, nixpkgs, helix-pkg, ... }:
     let
+      disableCudaEnvFlag = builtins.getEnv "DISABLE_CUDA";
       system = "x86_64-linux";
       pkgs = (import nixpkgs {
         inherit system;
         config = {
           allowUnfree = true;
-          cudaSupport = true;
+          cudaSupport = disableCudaEnvFlag != "1";
         };
       });
       helixmaster = helix-pkg.packages.${system}.default;
