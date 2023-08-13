@@ -23,6 +23,8 @@ from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
 
+import rplot
+
 
 def create_config(ensemble_id):
     train_config = TrainConfig(
@@ -44,7 +46,7 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=70,
+        epochs=100,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -53,12 +55,12 @@ def create_config(ensemble_id):
 
 def load_model(model: torch.nn.Module, train_run: TrainRun):
     state = torch.load("model.pt")
-    model.mlp.load_state_dict(state, strict=False)
+    model.model.load_state_dict(state, strict=False)
     return model
 
 
 def freeze(model: torch.nn.Module, train_run: TrainRun):
-    for param in model.mlp.parameters():
+    for param in model.model.parameters():
         param.requires_grad = False
     # for layer in model.mlps[:-1]:
     # for param in layer.parameters():
@@ -109,7 +111,7 @@ if __name__ == "__main__":
     dsu = data_factory.get_factory().create(DataCIFARConfig(validation=True))
     dataloaderu = torch.utils.data.DataLoader(
         dsu,
-        batch_size=64,
+        batch_size=8,
         shuffle=False,
         drop_last=False,
     )
@@ -143,17 +145,17 @@ if __name__ == "__main__":
 
     data = torch.concat(
         [
-            lambda1_tensor[:, None],
-            uq.MI[:, None],
-            uq.H[:, None],
-            uq.sample_ids[:, None],
-            projection_tensor,
-            uq.mean_pred[:, None],
+            lambda1_tensor[:, None].cpu(),
+            uq.MI[:, None].cpu(),
+            uq.H[:, None].cpu(),
+            uq.sample_ids[:, None].cpu(),
+            projection_tensor.cpu(),
+            uq.mean_pred[:, None].cpu(),
         ],
         dim=-1,
     )
     df = pd.DataFrame(columns=["lambda", "MI", "H", "id", "x", "y", "pred"], data=data.numpy())
-    df.to_csv(Path(__file__).parent / f"{Path(__file__).stem}_uncertainty_mnist.csv")
+    rplot.plot_r(df, Path(__file__).parent / f"{__file__}_results")
 
     # fig.tight_layout()
     # plt.show()
