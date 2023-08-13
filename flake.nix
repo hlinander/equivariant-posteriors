@@ -26,7 +26,6 @@
           torchvision
           torchmetrics
           plotext
-#          gitpython
           wandb
           pandas
           psycopg
