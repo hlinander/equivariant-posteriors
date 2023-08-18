@@ -14,6 +14,7 @@ from lib.render_psql import render_psql
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import TrainConfig
 
 from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
@@ -57,7 +58,11 @@ def validate(
                 metric(metric_sample)
 
 
-def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
+def train(
+    train_run: TrainRun,
+    train_epoch_state: TrainEpochState,
+    train_epoch_spec: TrainEpochSpec,
+):
     model = train_epoch_state.model
     dataloader = train_epoch_state.train_dataloader
     loss = train_epoch_spec.loss
@@ -65,6 +70,9 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
     device = train_epoch_spec.device_id
 
     model.train()
+
+    if train_run.train_config.model_pre_train_hook is not None:
+        model = train_run.train_config.model_pre_train_hook(model, train_run=train_run)
 
     if dataloader.sampler.__class__.__name__ == "DistributedSampler":
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
@@ -74,13 +82,15 @@ def train(train_epoch_state: TrainEpochState, train_epoch_spec: TrainEpochSpec):
         target = target.to(device, non_blocking=True)
         output = model(input)
 
-        loss_val = loss(output["logits"], target)
+        loss_val = loss(output, target)
         optimizer.zero_grad()
         loss_val.backward()
         optimizer.step()
 
         if i == 0 and torch.cuda.is_available():
-            train_epoch_state.device_memory_stats = torch.cuda.memory_stats_as_nested_dict()
+            train_epoch_state.device_memory_stats = (
+                torch.cuda.memory_stats_as_nested_dict()
+            )
 
         metric_sample = MetricSample(
             output=output["logits"],
@@ -108,6 +118,7 @@ def create_initial_state(train_run: TrainRun, device_id):
         drop_last=True,
         sampler=train_sampler,
         shuffle=train_shuffle,
+        num_workers=train_run.compute_config.num_workers,
     )
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
@@ -115,15 +126,18 @@ def create_initial_state(train_run: TrainRun, device_id):
         shuffle=False,
         drop_last=True,
         sampler=val_sampler,
+        num_workers=train_run.compute_config.num_workers,
     )
 
     torch.manual_seed(train_config.ensemble_id)
-    init_model = model_factory.get_factory().create(train_config.model_config, train_ds.data_spec())
+    init_model = model_factory.get_factory().create(
+        train_config.model_config, train_ds.data_spec()
+    )
 
     if train_config.post_model_create_hook is not None:
-        init_model = train_config.post_model_create_hook(init_model, train_run=train_run)
-    if train_config.model_pre_train_hook is not None:
-        init_model = train_config.model_pre_train_hook(init_model, train_run=train_run)
+        init_model = train_config.post_model_create_hook(
+            init_model, train_run=train_run
+        )
 
     init_model = init_model.to(torch.device(device_id))
     if train_run.compute_config.distributed:
@@ -132,9 +146,13 @@ def create_initial_state(train_run: TrainRun, device_id):
             init_model, device_ids=device_id_list, find_unused_parameters=True
         )
 
-    opt = train_config.optimizer.optimizer(init_model.parameters(), **train_config.optimizer.kwargs)
+    opt = train_config.optimizer.optimizer(
+        init_model.parameters(), **train_config.optimizer.kwargs
+    )
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
-    validation_metrics = [metric() for metric in train_run.train_eval.validation_metrics]
+    validation_metrics = [
+        metric() for metric in train_run.train_eval.validation_metrics
+    ]
 
     return TrainEpochState(
         model=init_model,
@@ -177,7 +195,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
 
     print("Run epochs...")
     while state.epoch < train_run.epochs:
-        train(state, train_epoch_spec)
+        train(train_run, state, train_epoch_spec)
         validate(state, train_epoch_spec, train_run)
         state.epoch += 1
         serialize(serialize_config)
@@ -195,7 +213,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     df = render_dataframe(train_run, state)
 
     # print("Render psql...")
-    # render_psql(train_run, state)
+    render_psql(train_run, state)
 
     print("Pickling dataframe...")
     df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"

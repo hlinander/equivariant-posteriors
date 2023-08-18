@@ -19,6 +19,9 @@ from lib.ddp import ddp_setup
 def main():
     device_id = ddp_setup("gloo")
     print(f"Using device {device_id}")
+    loss = torch.nn.MSELoss()
+    def mse_loss(outputs, targets):
+        return loss(outputs["logits"], targets)
 
     train_config = TrainConfig(
         model_config=DenseConfig(d_hidden=100),
@@ -28,7 +31,7 @@ def main():
         val_data_config=DataSineConfig(
             input_shape=torch.Size([1]), output_shape=torch.Size([1])
         ),
-        loss=torch.nn.MSELoss(),
+        loss=mse_loss,
         optimizer=OptimizerConfig(optimizer=torch.optim.Adam, kwargs=dict()),
         batch_size=2,
     )
@@ -43,7 +46,7 @@ def main():
         ],
     )
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False),
+        compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,
         epochs=20,

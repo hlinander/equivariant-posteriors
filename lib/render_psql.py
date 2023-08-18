@@ -78,14 +78,17 @@ def insert_param(conn, train_id, ensemble_id, variable, value):
         int: lambda v: dict(value_text=str(v), value_float=None, value_int=v),
         list: lambda v: dict(value_text=str(v), value_float=None, value_int=None),
         bool: lambda v: dict(value_text=str(v), value_float=None, value_int=None),
+        type(None): lambda v: dict(value_text="None", value_float=None, value_int=None),
     }
     value_dict = dict(
         train_id=train_id,
         ensemble_id=ensemble_id,
         variable=variable,
     )
+    if value_type not in value_dispatch:
+        value_type = str
+        value = str(value)
     value_dict.update(value_dispatch[value_type](value))
-    print(f"{variable}={value}")
     conn.execute(
         """
         INSERT INTO runs (train_id, ensemble_id, variable, value_text, value_int, value_float)
@@ -94,6 +97,11 @@ def insert_param(conn, train_id, ensemble_id, variable, value):
         """,
         value_dict,
     )
+
+
+def drop_views(conn):
+    conn.execute("DROP VIEW IF EXISTS metrics_and_runs;")
+    conn.execute("DROP VIEW IF EXISTS metrics_view;")
 
 
 def create_metrics_view(conn):
@@ -116,7 +124,7 @@ def create_metrics_view(conn):
             'SELECT DISTINCT variable FROM metrics ORDER BY variable'
         ) AS ct{properties};
     """
-    print(create_view_sql2)
+    # print(create_view_sql2)
     conn.execute("CREATE EXTENSION IF NOT EXISTS tablefunc")
     try:
         conn.execute(create_view_sql2)
@@ -153,7 +161,7 @@ def create_param_view(conn, train_run: TrainRun):
             'SELECT DISTINCT variable FROM runs ORDER BY variable'
         ) AS ct{properties};
     """
-    print(create_view_sql2)
+    # print(create_view_sql2)
     conn.execute("CREATE EXTENSION IF NOT EXISTS tablefunc")
     try:
         conn.execute(create_view_sql2)
@@ -175,6 +183,8 @@ _threads = []
 
 
 def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
+    _render_psql(train_run, train_epoch_state)
+    return
     if len(_threads) > 3:
         thread = _threads.pop(0)
         thread.join()
@@ -235,6 +245,7 @@ def _render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
                     ),
                 )
         conn.commit()
+        drop_views(conn)
         create_metrics_view(conn)
         create_metrics_and_run_info_view(conn)
         conn.commit()

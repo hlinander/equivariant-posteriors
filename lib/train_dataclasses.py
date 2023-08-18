@@ -53,7 +53,9 @@ class TrainConfig:
         if self.val_data_config is not None:
             val_data = dict(
                 config=self.val_data_config.serialize_human(),
-                name=data_factory.get_factory().get_class(self.val_data_config).__name__,
+                name=data_factory.get_factory()
+                .get_class(self.val_data_config)
+                .__name__,
             )
         return dict(
             model=dict(
@@ -68,7 +70,9 @@ class TrainConfig:
             ),
             data=dict(
                 config=self.train_data_config.serialize_human(),
-                name=data_factory.get_factory().get_class(self.train_data_config).__name__,
+                name=data_factory.get_factory()
+                .get_class(self.train_data_config)
+                .__name__,
             ),
             val_data=val_data,
             loss=self.loss.__class__.__name__,
@@ -102,9 +106,10 @@ class TrainEval:
 @dataclass
 class ComputeConfig:
     distributed: bool
+    num_workers: int
 
     def serialize_human(self):
-        self.__dict__
+        return self.__dict__
 
 
 @dataclass

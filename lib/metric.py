@@ -51,6 +51,8 @@ class Metric:
                 .cpu()
             )
         key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
+        if metric_sample.epoch in self.mean_mem:
+            del self.mean_mem[metric_sample.epoch]
         self.values[key] = values.mean()
 
     def mean(self, epoch):

@@ -14,7 +14,9 @@ def serialize_dataclass(instance) -> dict:
     if dataclasses.is_dataclass(instance):
         return {
             "__class__": type(instance).__name__,
-            "__data__": {k: serialize_dataclass(v) for k, v in instance.__dict__.items()},
+            "__data__": {
+                k: serialize_dataclass(v) for k, v in instance.__dict__.items()
+            },
         }
     elif isinstance(instance, list):
         return [serialize_dataclass(i) for i in instance]
@@ -36,7 +38,8 @@ def json_dumps_dataclass(data_class):
 
 
 def stable_hash(data_class):
-    return hashlib.md5(json_dumps_dataclass(data_class)).digest().hex()
+    json_str = json_dumps_dataclass(data_class)
+    return hashlib.md5(json_str).digest().hex()
 
 
 def stable_hash_small(data_class):

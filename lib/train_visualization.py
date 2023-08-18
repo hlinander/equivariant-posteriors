@@ -72,7 +72,6 @@ def visualize_progress(state, train_run, device):
     plt.ylim(0, 1)
     plt.text(tc, 0, 1, color="black")
 
-
     plt.show()
 
     checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
@@ -117,6 +116,6 @@ def plot_device_memory_stats(plt, memory_stats: dict, device):
     current = [bytes_to_mb(memory_stats[key]["current"]) for key in keys]
     peak = [bytes_to_mb(memory_stats[key]["peak"]) for key in keys]
     max = [bytes_to_mb(device_stats.total_memory) for key in keys]
-    plt.stacked_bar(
+    plt.multiple_bar(
         keys, [current, peak, max], label=["current", "peak", "max"], orientation="v"
     )

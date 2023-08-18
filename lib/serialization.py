@@ -75,6 +75,7 @@ def deserialize(config: DeserializeConfig):
         drop_last=True,
         sampler=train_sampler,
         shuffle=train_shuffle,
+        num_workers=config.train_run.compute_config.num_workers,
     )
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
@@ -82,6 +83,7 @@ def deserialize(config: DeserializeConfig):
         shuffle=False,
         drop_last=True,
         sampler=val_sampler,
+        num_workers=config.train_run.compute_config.num_workers,
     )
 
     model = model_factory.get_factory().create(
@@ -94,10 +96,14 @@ def deserialize(config: DeserializeConfig):
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=device_id_list, find_unused_parameters=True
         )
+
     model.load_state_dict(data_dict["model"])
 
     if train_config.model_pre_train_hook is not None:
         model = train_config.model_pre_train_hook(model, config.train_run)
+
+    # if train_config.post_model_create_hook is not None:
+    # model = train_config.post_model_create_hook(model, train_run=config.train_run)
 
     optimizer = train_config.optimizer.optimizer(
         model.parameters(), **train_config.optimizer.kwargs

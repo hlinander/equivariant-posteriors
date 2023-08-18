@@ -8,8 +8,11 @@ import lib.stable_hash as stable_hash
 def create_result_path(base_path: Path, name: str, config: object):
     git_short_rev = git.get_rev_short()
     config_hash = stable_hash.stable_hash_small(config)
-    path = base_path / f"{name}_{git_short_rev}_{config_hash}"
+    path = base_path / "results" / f"{name}_{git_short_rev}_{config_hash}"
     path.mkdir(parents=True, exist_ok=True)
+    current_version = base_path / f"{name}_latest"
+    current_version.unlink(missing_ok=True)
+    current_version.symlink_to(path)
     return path
 
 
@@ -32,8 +35,10 @@ def copy_working_tree_to_destination(dest_path):
             # Ensure the parent directory exists
             dest_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Copy the file
-            shutil.copy2(Path(git.GIT_REPO.working_tree_dir) / file.path, dest_file_path)
+            source_file = Path(git.GIT_REPO.working_tree_dir) / file.path
+            if source_file.is_file():
+                # Copy the file
+                shutil.copy2(source_file, dest_file_path)
 
 
 def prepare_results(base_path: Path, name: str, config: object) -> Path:

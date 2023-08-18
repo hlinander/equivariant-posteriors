@@ -5,7 +5,8 @@ from rpy2.robjects import pandas2ri
 from pathlib import Path
 
 
-def plot_r(dataframe, output_path):
+def plot_r(dataframe: pd.DataFrame, output_path):
+    dataframe.to_csv(output_path / "df.csv")
     patchwork = importr("patchwork")
     ggplot2 = importr("ggplot2")
     Hmisc = importr("Hmisc")
@@ -46,4 +47,13 @@ def plot_r(dataframe, output_path):
       + stat_summary_bin(fun.data="mean_sdl", bins=60)
       + scale_y_continuous(trans="log2"))
     ggsave("{path.as_posix()}", ftle_mi_lambda)"""
+    )
+
+    path = Path(output_path) / "lambda_x.pdf"
+    ro.r(
+        f"""(ftle_x <- ggplot2::ggplot(uncertainty, aes(x=x, y=lambda))
+      + geom_point(alpha=0.1, size=0.2, aes(color=factor(label))) 
+      + stat_summary_bin(fun.data="mean_sdl", bins=60)
+      + scale_y_continuous(trans="log2"))
+    ggsave("{path.as_posix()}", ftle_x)"""
     )
