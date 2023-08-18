@@ -17,7 +17,7 @@ class ConvSmall(torch.nn.Module):
         self.c1 = torch.nn.Conv2d(3, 96, kernel_size=5)
         self.c2 = torch.nn.Conv2d(96, 40, kernel_size=5)
         self.c3 = torch.nn.Conv2d(40, 192, kernel_size=1)
-        self.c4 = torch.nn.Conv2d(192, 10, kernel_size=1)
+        self.c4 = torch.nn.Conv2d(192, data_spec.output_shape[-1], kernel_size=1)
 
         torch.nn.init.normal_(self.c1.weight, 0.0, std=math.sqrt(1.0 / (3 * 5 * 5)))
         torch.nn.init.normal_(self.c1.bias, 0.0, std=math.sqrt(1e-7))

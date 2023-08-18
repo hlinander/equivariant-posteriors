@@ -5,6 +5,7 @@ from lib.models.conv_small import ConvSmall, ConvSmallConfig
 from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
+from lib.models.resnet import Resnet, ResnetConfig
 
 
 class _ModelFactory:
@@ -15,6 +16,7 @@ class _ModelFactory:
         self.models[TransformerConfig] = Transformer
         self.models[MLPClassConfig] = MLPClass
         self.models[MLPProjClassConfig] = MLPProjClass
+        self.models[ResnetConfig] = Resnet
 
     def register(self, config_class, model_class):
         self.models[config_class] = model_class

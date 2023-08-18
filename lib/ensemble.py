@@ -2,8 +2,9 @@ from typing import Callable
 from dataclasses import dataclass
 import torch
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import TrainEpochSpec
 from lib.train import load_or_create_state
-from lib.train import do_training
+from lib.train import do_training, validate
 from lib.serialization import DeserializeConfig, get_checkpoint_path
 
 
@@ -34,9 +35,9 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     print("Loading or training ensemble...")
     for member_config in ensemble_config.members:
         state = load_or_create_state(member_config, device_id)
-        print(state.model)
-        print(sum([p.numel() for p in state.model.parameters()]))
+        # print(sum([p.numel() for p in state.model.parameters()]))
         do_training(member_config, state, device_id)
+        state.model.eval()
         members.append(state.model)
 
     return Ensemble(member_configs=ensemble_config.members, members=members, n_members=len(members))

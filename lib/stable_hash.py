@@ -36,7 +36,9 @@ def json_dumps_dataclass(data_class):
 
 
 def stable_hash(data_class):
-    return hashlib.md5(json_dumps_dataclass(data_class)).digest().hex()
+    json_str = json_dumps_dataclass(data_class)
+    print(json_str)
+    return hashlib.md5(json_str).digest().hex()
 
 
 def stable_hash_small(data_class):

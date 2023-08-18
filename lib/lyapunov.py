@@ -11,8 +11,13 @@ def lambda1(model: torch.nn.Module, batch: torch.Tensor):
     # t_jacobian = start.elapsed_time(end)
     # jacobian will be diagonal over the samples in the batch
     # pick out just the diagonal part of the tensor
-    jacobians = jacobians.diagonal(dim1=0, dim2=2)
 
+    # (batch, d_out, batch, d_in1, d_in2, ...)
+    jacobians = jacobians.diagonal(dim1=0, dim2=2)
+    # (d_out, d_in2, d_in2, ..., 2)
+
+    # Flatten the input dimensions of the data
+    jacobians = jacobians.reshape(jacobians.shape[:1] + (-1,) + jacobians.shape[-1:])
     jacobians = jacobians.permute(2, 0, 1)
 
     # start.record()
