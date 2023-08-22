@@ -14,6 +14,13 @@ Train and evaluate PyTorch models with reproducibility in mind.
 ## Nix
 This project uses [Nix](https://nixos.org/) to manage development and runtime dependencies.
 
+### Binary cache from [Cachix](https://www.cachix.org/)
+We provide cached builds of dependencies for a CUDA enabled system through Cachix. See instructions at
+[https://app.cachix.org/cache/equivariant-posteriors#pull](https://app.cachix.org/cache/equivariant-posteriors#pull).
+
+It is probably also a good idea to enable the CUDA maintainers cache:
+https://app.cachix.org/cache/cuda-maintainers#pull
+
 ### Install
 Install nix to your home-folder or system wide.
 ```
@@ -34,9 +41,7 @@ Enable [flakes](https://zero-to-nix.com/concepts/flakes) by one of
         '';
       };
     ```
-### CUDA binary cache
-Add the binary cache for CUDA enabled packages at
-https://app.cachix.org/cache/cuda-maintainers#pull
+
 
 ### Development 
 Start a development shell
