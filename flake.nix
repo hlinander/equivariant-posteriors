@@ -16,22 +16,38 @@
         };
       });
       helixmaster = helix-pkg.packages.${system}.default;
+      # myPython3 = pkgs.python3.override {
+      #   packageOverrides = pyself: pysuper: {
+      #     torchUncertainty = pysuper.buildPythonPackage rec {
+      #       pname = "torch_uncertainty";
+      #       version = "0.1.4";
+      #       src = pysuper.fetchPypi {
+      #         inherit pname version;
+      #         sha256 = "sha256-4tPBN8ADtBfJ2ffHdf5dcuyXiopv6BM7aLt7fNXLCx0="; # TODO
+      #       };
+      #       propagatedBuildInputs = [ 
+      #        pyself.pytorch-lightning
+      #       ];
+      #       doCheck = false;
+      #     };
+      #   };
+      # };
       program = pkgs.python3Packages.buildPythonApplication {
         pname = "equivariant-transformers";
         version = "1.0";
 
-        propagatedBuildInputs = with pkgs.python3Packages; [
-          tqdm
-          numpy
-          pytorch
-          torchvision
-          torchmetrics
-          plotext
-          wandb
-          pandas
-          psycopg
-          pytest
-        ];
+        propagatedBuildInputs = pkgs.python3.withPackages(p: [#with pkgs.python3Packages; [
+          p.tqdm
+          p.numpy
+          p.pytorch
+          p.torchvision
+          p.torchmetrics
+          p.plotext
+          p.wandb
+          p.pandas
+          p.psycopg
+          p.pytest
+        ]);
 
         src = ./.;
 
@@ -45,11 +61,13 @@
           ruff
           helixmaster
           nixfmt
+          jq
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
           #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
           # cudatoolkit
           (python3.withPackages (p: [
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+            # p.torchUncertainty
             p.gitpython
             p.tqdm
             p.python-lsp-server

@@ -44,8 +44,7 @@ def plot_r(dataframe: pd.DataFrame, output_path):
     ro.r(
         f"""(ftle_mi_lambda <- ggplot2::ggplot(uncertainty, aes(x=lambda, y=MI))
       + geom_point(alpha=0.1, size=0.2, color="blue") 
-      + stat_summary_bin(fun.data="mean_sdl", bins=60)
-      + scale_y_continuous(trans="log2"))
+      + stat_summary_bin(fun.data="mean_sdl", bins=60))
     ggsave("{path.as_posix()}", ftle_mi_lambda)"""
     )
 

@@ -5,6 +5,7 @@ from lib.datasets.uniform import DataUniformConfig, DataUniform
 from lib.datasets.mnist import DataMNISTConfig, DataMNIST
 from lib.datasets.mnist_2 import DataMNIST2Config, DataMNIST2
 from lib.datasets.cifar import DataCIFARConfig, DataCIFAR
+from lib.datasets.cifar_c import DataCIFAR10CConfig, DataCIFAR10C
 from lib.datasets.cifar_2 import DataCIFAR2Config, DataCIFAR2
 
 
@@ -17,6 +18,7 @@ class _DataFactory:
         self.datasets[DataMNISTConfig] = DataMNIST
         self.datasets[DataMNIST2Config] = DataMNIST2
         self.datasets[DataCIFARConfig] = DataCIFAR
+        self.datasets[DataCIFAR10CConfig] = DataCIFAR10C
         self.datasets[DataCIFAR2Config] = DataCIFAR2
 
     def register(self, config_class, data_class):
