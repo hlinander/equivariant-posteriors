@@ -36,18 +36,18 @@
         pname = "equivariant-transformers";
         version = "1.0";
 
-        propagatedBuildInputs = pkgs.python3.withPackages(p: [#with pkgs.python3Packages; [
-          p.tqdm
-          p.numpy
-          p.pytorch
-          p.torchvision
-          p.torchmetrics
-          p.plotext
-          p.wandb
-          p.pandas
-          p.psycopg
-          p.pytest
-        ]);
+        propagatedBuildInputs = with pkgs.python3Packages; [
+          tqdm
+          numpy
+          pytorch
+          torchvision
+          torchmetrics
+          plotext
+          wandb
+          pandas
+          psycopg
+          pytest
+        ];
 
         src = ./.;
 
