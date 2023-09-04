@@ -68,6 +68,7 @@ class Uncertainty:
     A: torch.Tensor
     mean_pred: torch.Tensor
     sample_ids: torch.Tensor
+    targets: torch.Tensor
 
 
 def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, device):
@@ -76,6 +77,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     HS = []
     AS = []
     mean_preds = []
+    targets = []
     for input, target, sample_id in data_loader:
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
@@ -90,6 +92,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         A = mean_entropy(probs)
         sample_ids.append(sample_id)
         mean_preds.append(torch.argmax(torch.mean(probs, dim=1), dim=-1))
+        targets.append(target)
         MIS.append(MI)
         HS.append(H)
         AS.append(A)
@@ -100,4 +103,5 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         A=torch.concat(AS),
         sample_ids=torch.concat(sample_ids),
         mean_pred=torch.concat(mean_preds),
+        targets=torch.concat(targets)
     )
