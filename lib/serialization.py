@@ -53,6 +53,12 @@ class DeserializeConfig:
     device_id: torch.device
 
 
+def is_serialized(config: TrainRun):
+    train_config = config.train_config
+    checkpoint_path, _ = get_checkpoint_path(train_config)
+    return checkpoint_path.is_file()
+
+
 def deserialize(config: DeserializeConfig):
     train_config = config.train_run.train_config
     checkpoint_path, _ = get_checkpoint_path(train_config)
