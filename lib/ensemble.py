@@ -6,7 +6,7 @@ from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train import load_or_create_state
 from lib.train import do_training, validate
-from lib.serialization import DeserializeConfig, get_checkpoint_path
+from lib.serialization import DeserializeConfig, get_checkpoint_path, is_serialized
 from lib.model_factory import get_factory
 
 
@@ -55,6 +55,20 @@ def symlink_checkpoint_files(ensemble, target_path: Path):
         if link_path.is_symlink():
             link_path.unlink()
         link_path.symlink_to(file)
+
+
+def train_member(ensemble_config: EnsembleConfig, member_idx: int, device_id):
+    if member_idx < 0 or member_idx > len(ensemble_config.members):
+        print(
+            f"Member idx {member_idx} is not in index set for ensemble {ensemble_config}"
+        )
+        return
+    member_config = ensemble_config.members[member_idx]
+    if is_serialized(member_config):
+        print(f"Member {member_idx} already available")
+        return
+    state = load_or_create_state(member_config, device_id)
+    do_training(member_config, state, device_id)
 
 
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
