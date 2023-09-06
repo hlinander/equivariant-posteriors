@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import ssl
+
 ssl._create_default_https_context = ssl._create_unverified_context
 
 import torch
@@ -22,6 +23,7 @@ import lib.slurm as slurm
 # from lib.models.mlp_proj import MLPProjClassConfig
 from lib.models.mlp import MLPClassConfig
 from lib.models.conv import ConvConfig
+from lib.models.swin_transformer_v2 import SwinTinyConfig
 
 # from lib.lyapunov import lambda1
 from lib.ddp import ddp_setup
@@ -71,6 +73,16 @@ def create_config_function(model_config: object, batch_size: int):
 
 if __name__ == "__main__":
     device_id = ddp_setup()
+
+    ensemble_config_swin = create_ensemble_config(
+        create_config_function(model_config=SwinTinyConfig(), batch_size=1000),
+        n_members=10,
+    )
+    if slurm.get_task_id() is not None:
+        train_member(ensemble_config_swin, slurm.get_task_id(), device_id)
+    else:
+        print("Not in an array job so creating whole ensemble...")
+        ensemble_swin = create_ensemble(ensemble_config_swin, device_id)
 
     ensemble_config_mlp = create_ensemble_config(
         create_config_function(

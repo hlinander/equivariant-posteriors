@@ -7,6 +7,7 @@ from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.resnet import Resnet, ResnetConfig
+from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
 
 class _ModelFactory:
@@ -19,6 +20,7 @@ class _ModelFactory:
         self.models[MLPClassConfig] = MLPClass
         self.models[MLPProjClassConfig] = MLPProjClass
         self.models[ResnetConfig] = Resnet
+        self.models[SwinTinyConfig] = SwinTiny
 
     def register(self, config_class, model_class):
         self.models[config_class] = model_class
