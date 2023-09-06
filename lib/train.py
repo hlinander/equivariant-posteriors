@@ -4,6 +4,7 @@ import torch
 import logging
 import time
 
+from lib.lock import FileLock
 from lib.metric import MetricSample
 import lib.data_factory as data_factory
 from lib.data_utils import get_sampler
@@ -20,6 +21,7 @@ from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
 from lib.serialization import deserialize
 from lib.serialization import serialize
+from lib.serialization import get_checkpoint_path
 
 from lib.train_visualization import visualize_progress
 
@@ -194,30 +196,36 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     print("Run epochs...")
-    while state.epoch < train_run.epochs:
-        train(train_run, state, train_epoch_spec)
-        validate(state, train_epoch_spec, train_run)
-        state.epoch += 1
-        serialize(serialize_config)
-        try:
-            now = time.time()
-            if now > next_visualization:
-                next_visualization = now + 1
-                visualize_progress(state, train_run, device_id)
-        except Exception as e:
-            logging.error("Visualization failed")
-            logging.error(str(e))
-            print(traceback.format_exc())
+    checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
+    lock = FileLock(checkpoint_path)
+    with lock as aquired:
+        if not aquired:
+            print(f"Lock file {lock.get_lock_file} already exists, aborting.")
+            exit(1)
+        while state.epoch < train_run.epochs:
+            train(train_run, state, train_epoch_spec)
+            validate(state, train_epoch_spec, train_run)
+            state.epoch += 1
+            serialize(serialize_config)
+            try:
+                now = time.time()
+                if now > next_visualization:
+                    next_visualization = now + 1
+                    visualize_progress(state, train_run, device_id)
+            except Exception as e:
+                logging.error("Visualization failed")
+                logging.error(str(e))
+                print(traceback.format_exc())
 
-    print("Render dataframe...")
-    df = render_dataframe(train_run, state)
+        print("Render dataframe...")
+        df = render_dataframe(train_run, state)
 
-    # print("Render psql...")
-    render_psql(train_run, state)
+        # print("Render psql...")
+        render_psql(train_run, state)
 
-    print("Pickling dataframe...")
-    df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"
-    if not Path(df_path).is_file():
-        df.to_pickle(path=df_path)
+        print("Pickling dataframe...")
+        df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"
+        if not Path(df_path).is_file():
+            df.to_pickle(path=df_path)
 
     print("Done.")
