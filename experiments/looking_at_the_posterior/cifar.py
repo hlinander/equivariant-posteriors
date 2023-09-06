@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 import torch
 from pathlib import Path
 import pandas as pd
