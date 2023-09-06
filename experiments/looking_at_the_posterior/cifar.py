@@ -75,7 +75,7 @@ if __name__ == "__main__":
     device_id = ddp_setup()
 
     ensemble_config_swin = create_ensemble_config(
-        create_config_function(model_config=SwinTinyConfig(), batch_size=1000),
+        create_config_function(model_config=SwinTinyConfig(), batch_size=8000),
         n_members=10,
     )
     if slurm.get_task_id() is not None:
