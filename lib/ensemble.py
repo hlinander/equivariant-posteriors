@@ -64,10 +64,11 @@ def train_member(ensemble_config: EnsembleConfig, member_idx: int, device_id):
         )
         return
     member_config = ensemble_config.members[member_idx]
-    if is_serialized(member_config):
-        print(f"Member {member_idx} already available")
-        return
     state = load_or_create_state(member_config, device_id)
+    # if is_serialized(member_config):
+    #     if state.
+    #     print(f"Member {member_idx} already available")
+    #     return
     do_training(member_config, state, device_id)
 
 

@@ -200,8 +200,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     lock = FileLock(checkpoint_path)
     with lock as aquired:
         if not aquired:
-            print(f"Lock file {lock.get_lock_file} already exists, aborting.")
-            exit(1)
+            raise Exception(f"Lock file {lock.get_lock_file()} already exists, aborting.")
         while state.epoch < train_run.epochs:
             train(train_run, state, train_epoch_spec)
             validate(state, train_epoch_spec, train_run)
