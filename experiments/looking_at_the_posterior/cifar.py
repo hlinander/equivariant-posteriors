@@ -81,6 +81,7 @@ if __name__ == "__main__":
     if slurm.get_task_id() is not None:
         train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
     else:
+        print("Not in an array job so creating whole ensemble...")
         ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
 
     ensemble_config_conv = create_ensemble_config(
