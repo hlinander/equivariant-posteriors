@@ -142,16 +142,22 @@ if __name__ == "__main__":
                     uq.sample_ids[:, None].cpu(),
                     uq.mean_pred[:, None].cpu(),
                     uq.targets[:, None].cpu(),
+                    torch.where(
+                        uq.targets[:, None].cpu() == uq.mean_pred[:, None].cpu(),
+                        1.0,
+                        0.0,
+                    ),
                 ],
                 dim=-1,
             )
             df = pd.DataFrame(
-                columns=["MI", "H", "id", "pred", "target"], data=data.numpy()
+                columns=["MI", "H", "id", "pred", "target", "accuracy"],
+                data=data.numpy(),
             )
 
             df.to_csv(result_path / filename)
 
-        save_uq(ensemble_config, uq_cifar_val, f"{model_name}_uq_cifar_c.csv")
+        save_uq(ensemble_config, uq_cifar_val, f"{model_name}_uq_cifar_val.csv")
         save_uq(ensemble_config, uq_cifar_c, f"{model_name}_uq_cifar_c.csv")
 
     uq_for_ensemble(ensemble_mlp, ensemble_config_mlp, "mlp")
