@@ -53,11 +53,12 @@ class DataSpirals(torch.utils.data.Dataset):
         self.spiral = generate_spiral_points(data_config.N, data_config.angle_factor)
         self.n_classes = 2
 
-    def data_spec(self):
+    @staticmethod
+    def data_spec():
         return DataSpec(
-            input_shape=self.spiral.xs.shape[1:],
-            target_shape=self.spiral.ys.shape[1:],
-            output_shape=torch.Size([self.n_classes]),
+            input_shape=torch.Size([2, 1]),
+            target_shape=torch.Size([1]),
+            output_shape=torch.Size([2]),
         )
 
     def __getitem__(self, idx):

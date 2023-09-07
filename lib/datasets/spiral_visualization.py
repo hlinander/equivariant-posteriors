@@ -9,7 +9,7 @@ def visualize_spiral(plt, state: TrainEpochState, device_id):
     with torch.no_grad():
         for input, target, _ in state.val_dataloader:
             input = input.to(device_id, non_blocking=True)
-            output = state.model(input)[1].cpu()
+            output = state.model(input)["predictions"].cpu()
             outputs.append(output.detach().cpu())
             inputs.append(input.detach().cpu())
 

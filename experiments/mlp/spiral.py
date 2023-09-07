@@ -15,11 +15,16 @@ from lib.generic_ablation import generic_ablation
 
 
 def create_config(mlp_dim, ensemble_id):
+    loss = torch.nn.CrossEntropyLoss()
+
+    def ce_loss(output, target):
+        return loss(output["logits"], target)
+
     train_config = TrainConfig(
-        model_config=MLPClassConfig(width=mlp_dim),
+        model_config=MLPClassConfig(widths=[mlp_dim, mlp_dim]),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
-        loss=torch.nn.CrossEntropyLoss(),
+        loss=ce_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
@@ -28,10 +33,10 @@ def create_config(mlp_dim, ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False),
+        compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=500,
+        epochs=5000,
         save_nth_epoch=20,
         validate_nth_epoch=20,
     )
