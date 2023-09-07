@@ -20,7 +20,10 @@ from lib.uncertainty import uncertainty
 from lib.files import prepare_results
 
 # from .config import create_config_function
-from experiments.looking_at_the_posterior.config import create_config_function
+from experiments.looking_at_the_posterior.config import (
+    create_config_function,
+    create_corrupted_dataset_config,
+)
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -50,7 +53,8 @@ if __name__ == "__main__":
     )
 
     ds_cifar_c = data_factory.get_factory().create(
-        DataCIFAR10CConfig(subset="impulse_noise", severity=1)
+        create_corrupted_dataset_config()
+        # DataCIFAR10CConfig(subset="impulse_noise", severity=1)
     )
     dl_cifar_c = torch.utils.data.DataLoader(
         ds_cifar_c,
