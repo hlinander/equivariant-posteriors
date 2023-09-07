@@ -10,6 +10,7 @@ from lib.metric import Metric
 from lib.paths import get_checkpoint_path
 import lib.model_factory as model_factory
 from lib.data_utils import get_sampler
+from lib.ddp import get_rank
 
 
 @dataclass
@@ -25,6 +26,9 @@ def serialize_metrics(metrics: List[Metric]):
 
 
 def serialize(config: SerializeConfig):
+    if get_rank() != 0:
+        # print("I am not rank 0 so not serializing...")
+        return
     train_config = config.train_run.train_config
     train_epoch_state = config.train_epoch_state
     train_run = config.train_run

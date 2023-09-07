@@ -4,7 +4,7 @@ import torch
 import logging
 import time
 
-from lib.lock import FileLock
+from filelock import FileLock
 from lib.metric import MetricSample
 import lib.data_factory as data_factory
 from lib.data_utils import get_sampler
@@ -15,17 +15,16 @@ from lib.render_psql import render_psql
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train_dataclasses import TrainRun
-from lib.train_dataclasses import TrainConfig
 
 from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
 from lib.serialization import deserialize
 from lib.serialization import serialize
-from lib.serialization import get_checkpoint_path
 
 from lib.train_visualization import visualize_progress
 
 from lib.paths import get_checkpoint_path
+import lib.ddp as ddp
 
 
 def validate(
@@ -197,10 +196,8 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
 
     print("Run epochs...")
     checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
-    lock = FileLock(checkpoint_path)
-    with lock as aquired:
-        if not aquired:
-            raise Exception(f"Lock file {lock.get_lock_file()} already exists, aborting.")
+    lock = FileLock(checkpoint_path, 1)
+    with lock:
         while state.epoch < train_run.epochs:
             train(train_run, state, train_epoch_spec)
             validate(state, train_epoch_spec, train_run)
@@ -210,7 +207,8 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
                 now = time.time()
                 if now > next_visualization:
                     next_visualization = now + 1
-                    visualize_progress(state, train_run, device_id)
+                    if ddp.get_rank() == 0:
+                        visualize_progress(state, train_run, device_id)
             except Exception as e:
                 logging.error("Visualization failed")
                 logging.error(str(e))
