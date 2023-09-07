@@ -1,8 +1,8 @@
 # fmt:off
 import os
 from pathlib import Path
-from typing import Any, Tuple
-from dataclasses import dataclass
+from typing import Any, Tuple, List
+from dataclasses import dataclass, field
 
 import torchvision
 from torchvision.datasets import VisionDataset
@@ -18,10 +18,11 @@ import numpy as np
 @dataclass(frozen=True)
 class DataCIFAR10CConfig:
     subset: str = "all" # The subset to use, one of ``all`` or the keys in ``cifarc_subsets``
-    severity: int = 1 # Between 1 and 5
+    severities: List[int] = field(default_factory=lambda: [1]) # Between 1 and 5
 
     def serialize_human(self):
         return self.__dict__
+
 
 # fmt:on
 class DataCIFAR10C(VisionDataset):
@@ -95,20 +96,19 @@ class DataCIFAR10C(VisionDataset):
     url = "https://zenodo.org/record/2535967/files/CIFAR-10-C.tar"
     filename = "CIFAR-10-C.tar"
 
-    def __init__(
-        self,
-        config: DataCIFAR10CConfig
-    ):
+    def __init__(self, config: DataCIFAR10CConfig):
         root = "datasets"
-        transform = torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize(
-                (0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)
-            ),
-        ])
+        transform = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize(
+                    (0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)
+                ),
+            ]
+        )
         target_transform = None
         subset = config.subset
-        severity = config.severity
+        severities = config.severities
         download = True
 
         if isinstance(root, str):
@@ -130,20 +130,16 @@ class DataCIFAR10C(VisionDataset):
             target_transform=target_transform,
         )
         if not (subset in ["all"] + self.cifarc_subsets):
-            raise ValueError(
-                f"The subset '{subset}' does not exist in CIFAR-C."
-            )
+            raise ValueError(f"The subset '{subset}' does not exist in CIFAR-C.")
         self.subset = subset
-        self.severity = severity
+        self.severities = severities
 
-        if severity not in list(range(1, 6)):
-            raise ValueError(
-                "Corruptions severity should be chosen between 1 and 5 "
-                "included."
-            )
-        samples, labels = self.make_dataset(
-            self.root, self.subset, self.severity
-        )
+        for severity in severities:
+            if severity not in list(range(1, 6)):
+                raise ValueError(
+                    "Corruptions severity should be chosen between 1 and 5 " "included."
+                )
+        samples, labels = self.make_dataset(self.root, self.subset, self.severity)
 
         self.samples = samples
         self.labels = labels
@@ -151,7 +147,7 @@ class DataCIFAR10C(VisionDataset):
         self.config = config
 
     def make_dataset(
-        self, root: Path, subset: str, severity: int
+        self, root: Path, subset: str, severities: List[int]
     ) -> Tuple[np.ndarray, np.ndarray]:
         r"""
         Build the corrupted dataset according to the chosen subset and
@@ -166,28 +162,36 @@ class DataCIFAR10C(VisionDataset):
         Returns:
             Tuple[np.ndarray, np.ndarray]: The samples and labels of the chosen
         """
-        if subset == "all":
-            sample_arrays = []
-            labels: np.ndarray = np.load(root / "labels.npy")[
-                (severity - 1) * 10000 : severity * 10000
-            ]
-            for cifar_subset in self.cifarc_subsets:
-                sample_arrays.append(
-                    np.load(root / (cifar_subset + ".npy"))[
-                        (severity - 1) * 10000 : severity * 10000
-                    ]
-                )
-            samples = np.concatenate(sample_arrays, axis=0)
-            labels = np.tile(labels, len(self.cifarc_subsets))
+        all_samples_list = []
+        all_labels_list = []
+        for severity in severities:
+            if subset == "all":
+                sample_arrays = []
+                labels: np.ndarray = np.load(root / "labels.npy")[
+                    (severity - 1) * 10000 : severity * 10000
+                ]
+                for cifar_subset in self.cifarc_subsets:
+                    sample_arrays.append(
+                        np.load(root / (cifar_subset + ".npy"))[
+                            (severity - 1) * 10000 : severity * 10000
+                        ]
+                    )
+                samples = np.concatenate(sample_arrays, axis=0)
+                labels = np.tile(labels, len(self.cifarc_subsets))
 
-        else:
-            samples: np.ndarray = np.load(root / (subset + ".npy"))[
-                (severity - 1) * 10000 : severity * 10000
-            ]
-            labels: np.ndarray = np.load(root / "labels.npy")[
-                (severity - 1) * 10000 : severity * 10000
-            ]
-        return samples, labels
+            else:
+                samples: np.ndarray = np.load(root / (subset + ".npy"))[
+                    (severity - 1) * 10000 : severity * 10000
+                ]
+                labels: np.ndarray = np.load(root / "labels.npy")[
+                    (severity - 1) * 10000 : severity * 10000
+                ]
+            all_samples_list.append(samples)
+            all_labels_list.append(labels)
+
+        all_samples = np.concatenate(all_samples_list, axis=0)
+        all_labels = np.concatenate(all_labels_list, axis=0)
+        return all_samples, all_labels
 
     def __len__(self) -> int:
         """The number of samples in the dataset."""

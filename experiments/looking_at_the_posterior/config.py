@@ -9,6 +9,11 @@ from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
 from lib.data_factory import DataCIFARConfig
+from lib.data_factory import DataCIFAR10CConfig
+
+
+def create_corrupted_dataset_config():
+    return DataCIFAR10CConfig(subset="impulse_noise", severities=[1, 2, 3, 4, 5])
 
 
 def create_config_function(model_config: object, batch_size: int):
