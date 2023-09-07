@@ -47,6 +47,7 @@
           pandas
           psycopg
           pytest
+          filelock
         ];
 
         src = ./.;
@@ -68,6 +69,7 @@
           (python3.withPackages (p: [
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
             # p.torchUncertainty
+            p.filelock
             p.gitpython
             p.tqdm
             p.python-lsp-server

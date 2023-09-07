@@ -3,6 +3,15 @@ import os
 import torch
 
 
+def get_rank() -> int:
+    try:
+        return int(os.environ["LOCAL_RANK"])
+    except KeyError:
+        return 0
+    except ValueError:
+        return 0
+
+
 def ddp_setup(backend=None) -> str:
     """
     Args:
