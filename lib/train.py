@@ -196,7 +196,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
 
     print("Run epochs...")
     checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
-    lock = FileLock(checkpoint_path, 1)
+    lock = FileLock(f"{checkpoint_path}.lock", 1)
     with lock:
         while state.epoch < train_run.epochs:
             train(train_run, state, train_epoch_spec)
