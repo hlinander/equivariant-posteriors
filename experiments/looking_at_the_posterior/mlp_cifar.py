@@ -11,8 +11,6 @@ import lib.data_factory as data_factory
 import lib.slurm as slurm
 
 from lib.models.mlp import MLPClassConfig
-from lib.models.conv import ConvConfig
-from lib.models.swin_transformer_v2 import SwinTinyConfig
 
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
@@ -21,7 +19,7 @@ from lib.ensemble import train_member
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
 
-from .config import create_config_function
+from experiments.looking_at_the_posterior.config import create_config_function
 
 ssl._create_default_https_context = ssl._create_unverified_context
 

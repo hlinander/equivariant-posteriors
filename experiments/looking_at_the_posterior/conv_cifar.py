@@ -19,7 +19,8 @@ from lib.ensemble import train_member
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
 
-from .config import create_config_function
+# from .config import create_config_function
+from experiments.looking_at_the_posterior.config import create_config_function
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
