@@ -20,20 +20,24 @@ class MLPClass(torch.nn.Module):
         self.mlp_in = torch.nn.Linear(
             data_spec.input_shape.numel(), config.widths[0], bias=True
         )
-        in_out = zip(config.widths[0:], config.widths[1:])
+        in_out = list(zip(config.widths[0:], config.widths[1:]))
         self.mlps = torch.nn.ModuleList(
             [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in in_out]
         )
         self.mlp_out = torch.nn.Linear(
             config.widths[-1], data_spec.output_shape[-1], bias=True
         )
-        for mlp in self.mlps:
-            torch.nn.init.normal_(mlp.weight, 0.0, std=math.sqrt(1.0 / 20.0))
+        for (in_dim, out_dim), mlp in zip(in_out, self.mlps):
+            torch.nn.init.normal_(mlp.weight, 0.0, std=math.sqrt(1.0 / in_dim))
             torch.nn.init.normal_(mlp.bias, 0.0, std=math.sqrt(1e-7))
 
-        torch.nn.init.normal_(self.mlp_in.weight, 0.0, math.sqrt(1.0 / (28 * 28)))
+        torch.nn.init.normal_(
+            self.mlp_in.weight, 0.0, math.sqrt(1.0 / (data_spec.input_shape.numel()))
+        )
         torch.nn.init.normal_(self.mlp_in.bias, 0.0, std=math.sqrt(1e-7))
-        torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / 20.0))
+
+        last_out_dim = in_out[-1][1]
+        torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / last_out_dim))
         torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
 
     def forward(self, x):

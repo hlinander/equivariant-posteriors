@@ -3,10 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import torch
 from lib.train_dataclasses import TrainRun
-from lib.train_dataclasses import TrainEpochSpec
 from lib.train import load_or_create_state
-from lib.train import do_training, validate
-from lib.serialization import DeserializeConfig, get_checkpoint_path, is_serialized
+from lib.train import do_training
+from lib.serialization import get_checkpoint_path, deserialize_model, DeserializeConfig
 from lib.model_factory import get_factory
 
 
@@ -36,10 +35,9 @@ def create_ensemble_config(
 def get_ensemble_checkpoint_files(ensemble: Ensemble) -> List[Tuple[TrainRun, Path]]:
     checkpoint_files = []
     for member_config in ensemble.member_configs:
-        checkpoint_path, _ = get_checkpoint_path(member_config.train_config)
+        checkpoint_path = get_checkpoint_path(member_config.train_config)
         checkpoint_files += [
-            (member_config, path.absolute())
-            for path in checkpoint_path.parent.glob(f"{checkpoint_path.stem}*")
+            (member_config, path.absolute()) for path in checkpoint_path.glob("*")
         ]
     return checkpoint_files
 
@@ -76,14 +74,18 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
     print("Will try to load ensemble checkpoints from:")
     for member_config in ensemble_config.members:
-        print(get_checkpoint_path(member_config.train_config)[0].as_posix())
+        print(get_checkpoint_path(member_config.train_config).as_posix())
     print("Loading or training ensemble...")
     for member_config in ensemble_config.members:
-        state = load_or_create_state(member_config, device_id)
-        print(sum([p.numel() for p in state.model.parameters()]))
-        do_training(member_config, state, device_id)
-        state.model.eval()
-        members.append(state.model)
+        model = deserialize_model(DeserializeConfig(member_config, device_id))
+        if model is None:
+            state = load_or_create_state(member_config, device_id)
+            print(sum([p.numel() for p in state.model.parameters()]))
+            do_training(member_config, state, device_id)
+            model = state.model
+
+        model.eval()
+        members.append(model)
 
     return Ensemble(
         member_configs=ensemble_config.members, members=members, n_members=len(members)

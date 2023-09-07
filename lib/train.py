@@ -82,6 +82,7 @@ def train(
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         output = model(input)
+        # breakpoint()
 
         loss_val = loss(output, target)
         optimizer.zero_grad()
@@ -195,7 +196,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     print("Run epochs...")
-    checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
+    checkpoint_path = get_checkpoint_path(train_run.train_config)
     lock = FileLock(f"{checkpoint_path}.lock", 1)
     with lock:
         while state.epoch < train_run.epochs:
@@ -221,7 +222,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         render_psql(train_run, state)
 
         print("Pickling dataframe...")
-        df_path = f"{get_checkpoint_path(train_run.train_config)[0]}.df.pickle"
+        df_path = get_checkpoint_path(train_run.train_config) / "df.pickle"
         if not Path(df_path).is_file():
             df.to_pickle(path=df_path)
 
