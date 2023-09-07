@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 import io
 import torch
 
-from lib.paths import get_checkpoint_path
+from lib.paths import get_or_create_checkpoint_path
 
 
 def visualize_progress(state, train_run, device):
@@ -74,15 +74,17 @@ def visualize_progress(state, train_run, device):
 
     plt.show()
 
-    checkpoint_path, _ = get_checkpoint_path(train_run.train_config)
+    checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
     f = io.StringIO()
     with redirect_stdout(f):
-        plt.save_fig(f"{checkpoint_path}.tmp.html")
-        plt.save_fig(f"{checkpoint_path}.term_")
-        plt.save_fig(f"{checkpoint_path}.term_color_", keep_colors=True)
-    shutil.move(f"{checkpoint_path}.tmp.html", f"{checkpoint_path}.html")
-    shutil.move(f"{checkpoint_path}.term_", f"{checkpoint_path}.term")
-    shutil.move(f"{checkpoint_path}.term_color_", f"{checkpoint_path}.term_color")
+        plt.save_fig(checkpoint_path / "tmp.html")
+        plt.save_fig(checkpoint_path / "term_")
+        plt.save_fig(checkpoint_path / "term_color_", keep_colors=True)
+    shutil.move(checkpoint_path / "tmp.html", checkpoint_path / "training.html")
+    shutil.move(checkpoint_path / "term_", checkpoint_path / "training.term")
+    shutil.move(
+        checkpoint_path / "term_color_", checkpoint_path / "training.term_color"
+    )
 
 
 def text_config(config, level=0, y=0):
