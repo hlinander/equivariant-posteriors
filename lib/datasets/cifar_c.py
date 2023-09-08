@@ -139,12 +139,16 @@ class DataCIFAR10C(VisionDataset):
                 raise ValueError(
                     "Corruptions severity should be chosen between 1 and 5 " "included."
                 )
-        samples, labels = self.make_dataset(self.root, self.subset, self.severity)
+        samples, labels, ids = self.make_dataset(self.root, self.subset, self.severity)
 
         self.samples = samples
         self.labels = labels
+        self.ids = ids
         self.n_classes = 10
         self.config = config
+
+    def name(self):
+        return f"CIFAR10C_{self.config.subset}_{self.config.severities}"
 
     def make_dataset(
         self, root: Path, subset: str, severities: List[int]
@@ -164,20 +168,35 @@ class DataCIFAR10C(VisionDataset):
         """
         all_samples_list = []
         all_labels_list = []
-        for severity in severities:
+        all_ids_list = []
+        for severity_idx, severity in enumerate(severities):
             if subset == "all":
                 sample_arrays = []
+                id_arrays = []
                 labels: np.ndarray = np.load(root / "labels.npy")[
                     (severity - 1) * 10000 : severity * 10000
                 ]
-                for cifar_subset in self.cifarc_subsets:
+                for subset_idx, cifar_subset in enumerate(self.cifarc_subsets):
+                    start_idx = (
+                        severity_idx * len(self.cifarc_subsets) * 10000
+                        + subset_idx * 10000
+                    )
                     sample_arrays.append(
                         np.load(root / (cifar_subset + ".npy"))[
                             (severity - 1) * 10000 : severity * 10000
                         ]
                     )
+                    id_arrays.append(
+                        np.array(
+                            [idx + start_idx, cifar_subset, severity]
+                            for idx, (cifar_subset, severity) in enumerate(
+                                [(cifar_subset, severity)] * 10000
+                            )
+                        )
+                    )
                 samples = np.concatenate(sample_arrays, axis=0)
                 labels = np.tile(labels, len(self.cifarc_subsets))
+                ids = np.concatenate(id_arrays, axis=0)
 
             else:
                 samples: np.ndarray = np.load(root / (subset + ".npy"))[
@@ -186,28 +205,43 @@ class DataCIFAR10C(VisionDataset):
                 labels: np.ndarray = np.load(root / "labels.npy")[
                     (severity - 1) * 10000 : severity * 10000
                 ]
+                ids = np.array([(subset, severity)] * 10000)
+                start_idx = severity_idx * 10000
+                ids = np.array(
+                    [idx + start_idx, cifar_subset, severity]
+                    for idx, (cifar_subset, severity) in enumerate(
+                        [(cifar_subset, severity)] * 10000
+                    )
+                )
             all_samples_list.append(samples)
             all_labels_list.append(labels)
+            all_ids_list.append(ids)
 
         all_samples = np.concatenate(all_samples_list, axis=0)
         all_labels = np.concatenate(all_labels_list, axis=0)
-        return all_samples, all_labels
+        all_ids = np.concatenate(all_ids_list, axis=0)
+        return all_samples, all_labels, all_ids
 
     def __len__(self) -> int:
         """The number of samples in the dataset."""
         return self.labels.shape[0]
 
     def __getitem__(self, index: int) -> Any:
-        sample, target = (
+        sample, target, sample_id = (
             self.samples[index],
             self.labels[index],
+            self.ids[index],
         )
 
         if self.transform is not None:
             sample = self.transform(sample)
         if self.target_transform is not None:
             target = self.target_transform(target)
-        return sample, target, index
+        return sample, target, sample_id
+
+    @staticmethod
+    def sample_id_spec():
+        return ["idx", "subset", "severity"]
 
     def _check_integrity(self) -> bool:
         """Check the integrity of the dataset."""

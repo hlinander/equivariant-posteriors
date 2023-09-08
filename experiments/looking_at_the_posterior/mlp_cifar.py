@@ -2,8 +2,6 @@
 import ssl
 
 import torch
-from pathlib import Path
-import pandas as pd
 
 from lib.data_factory import DataCIFARConfig
 
@@ -16,13 +14,12 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.ensemble import train_member
-from lib.uncertainty import uncertainty
-from lib.files import prepare_results
 
 from experiments.looking_at_the_posterior.config import (
     create_config_function,
     create_corrupted_dataset_config,
 )
+from experiments.looking_at_the_posterior.uq import uq_for_ensemble
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -48,7 +45,7 @@ if __name__ == "__main__":
     ds_cifar_val = data_factory.get_factory().create(DataCIFARConfig(validation=True))
     dl_cifar_val = torch.utils.data.DataLoader(
         ds_cifar_val,
-        batch_size=8,
+        batch_size=256,
         shuffle=False,
         drop_last=False,
     )
@@ -59,42 +56,10 @@ if __name__ == "__main__":
     )
     dl_cifar_c = torch.utils.data.DataLoader(
         ds_cifar_c,
-        batch_size=8,
+        batch_size=256,
         shuffle=False,
         drop_last=False,
     )
 
-    def uq_for_ensemble(ensemble, ensemble_config, model_name: str):
-        uq_cifar_val = uncertainty(dl_cifar_val, ensemble, device_id)
-        uq_cifar_c = uncertainty(dl_cifar_c, ensemble, device_id)
-
-        def save_uq(config, uq, filename):
-            result_path = prepare_results(
-                Path(__file__).parent, Path(__file__).stem, config
-            )
-            data = torch.concat(
-                [
-                    uq.MI[:, None].cpu(),
-                    uq.H[:, None].cpu(),
-                    uq.sample_ids[:, None].cpu(),
-                    uq.mean_pred[:, None].cpu(),
-                    uq.targets[:, None].cpu(),
-                    torch.where(
-                        uq.targets[:, None].cpu() == uq.mean_pred[:, None].cpu(),
-                        1.0,
-                        0.0,
-                    ),
-                ],
-                dim=-1,
-            )
-            df = pd.DataFrame(
-                columns=["MI", "H", "id", "pred", "target", "accuracy"],
-                data=data.numpy(),
-            )
-
-            df.to_csv(result_path / filename)
-
-        save_uq(ensemble_config, uq_cifar_val, f"{model_name}_uq_cifar_val.csv")
-        save_uq(ensemble_config, uq_cifar_c, f"{model_name}_uq_cifar_c.csv")
-
-    uq_for_ensemble(ensemble_mlp, ensemble_config_mlp, "mlp")
+    uq_for_ensemble(dl_cifar_c, ensemble_mlp, ensemble_config_mlp, "mlp", device_id)
+    uq_for_ensemble(dl_cifar_val, ensemble_mlp, ensemble_config_mlp, "mlp", device_id)

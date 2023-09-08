@@ -88,6 +88,14 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
         self.n_classes = 10
         self.config = data_config
 
+    def name(self):
+        if self.config.validation:
+            subset = "val"
+        else:
+            subset = "train"
+
+        return f"CIFAR10_{subset}"
+
     @staticmethod
     def data_spec():
         return DataSpec(
@@ -95,6 +103,10 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
             target_shape=torch.Size([1]),
             output_shape=torch.Size([10]),
         )
+
+    @staticmethod
+    def sample_id_spec():
+        return ["idx"]
 
     # @functools.cache
     def __getitem__(self, idx):
