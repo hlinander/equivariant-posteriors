@@ -139,7 +139,9 @@ class DataCIFAR10C(VisionDataset):
                 raise ValueError(
                     "Corruptions severity should be chosen between 1 and 5 " "included."
                 )
-        samples, labels, ids = self.make_dataset(self.root, self.subset, self.severities)
+        samples, labels, ids = self.make_dataset(
+            self.root, self.subset, self.severities
+        )
 
         self.samples = samples
         self.labels = labels
@@ -188,10 +190,12 @@ class DataCIFAR10C(VisionDataset):
                     )
                     id_arrays.append(
                         np.array(
-                            [idx + start_idx, cifar_subset, severity]
-                            for idx, (cifar_subset, severity) in enumerate(
-                                [(cifar_subset, severity)] * 10000
-                            )
+                            [
+                                [idx + start_idx, cifar_subset, severity]
+                                for idx, (cifar_subset, severity) in enumerate(
+                                    [(cifar_subset, severity)] * 10000
+                                )
+                            ]
                         )
                     )
                 samples = np.concatenate(sample_arrays, axis=0)
@@ -208,10 +212,12 @@ class DataCIFAR10C(VisionDataset):
                 ids = np.array([(subset, severity)] * 10000)
                 start_idx = severity_idx * 10000
                 ids = np.array(
-                    [idx + start_idx, cifar_subset, severity]
-                    for idx, (cifar_subset, severity) in enumerate(
-                        [(cifar_subset, severity)] * 10000
-                    )
+                    [
+                        [idx + start_idx, cifar_subset, severity]
+                        for idx, (cifar_subset, severity) in enumerate(
+                            [(cifar_subset, severity)] * 10000
+                        )
+                    ]
                 )
             all_samples_list.append(samples)
             all_labels_list.append(labels)
