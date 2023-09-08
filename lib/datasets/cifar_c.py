@@ -139,7 +139,7 @@ class DataCIFAR10C(VisionDataset):
                 raise ValueError(
                     "Corruptions severity should be chosen between 1 and 5 " "included."
                 )
-        samples, labels, ids = self.make_dataset(self.root, self.subset, self.severity)
+        samples, labels, ids = self.make_dataset(self.root, self.subset, self.severities)
 
         self.samples = samples
         self.labels = labels

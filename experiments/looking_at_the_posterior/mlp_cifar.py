@@ -30,7 +30,7 @@ if __name__ == "__main__":
         create_config_function(
             model_config=MLPClassConfig(widths=[128] * 2), batch_size=2**13
         ),
-        n_members=10,
+        n_members=20,
     )
     if slurm.get_task_id() is not None:
         train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)

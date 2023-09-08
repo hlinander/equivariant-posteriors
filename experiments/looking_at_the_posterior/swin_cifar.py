@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     ensemble_config_swin = create_ensemble_config(
         create_config_function(model_config=SwinTinyConfig(), batch_size=8000),
-        n_members=10,
+        n_members=20,
     )
     if slurm.get_task_id() is not None:
         train_member(ensemble_config_swin, slurm.get_task_id(), device_id)
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     ds_cifar_val = data_factory.get_factory().create(DataCIFARConfig(validation=True))
     dl_cifar_val = torch.utils.data.DataLoader(
         ds_cifar_val,
-        batch_size=8,
+        batch_size=256,
         shuffle=False,
         drop_last=False,
     )
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     )
     dl_cifar_c = torch.utils.data.DataLoader(
         ds_cifar_c,
-        batch_size=8,
+        batch_size=256,
         shuffle=False,
         drop_last=False,
     )
