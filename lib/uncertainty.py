@@ -1,6 +1,7 @@
 from typing import List
 from dataclasses import dataclass
 import torch
+from tqdm import tqdm
 
 from lib.ensemble import Ensemble
 
@@ -80,7 +81,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     AS = []
     mean_preds = []
     targets = []
-    for input, target, sample_id in data_loader:
+    for input, target, sample_id in tqdm(data_loader):
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
         )
