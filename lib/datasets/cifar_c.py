@@ -243,7 +243,7 @@ class DataCIFAR10C(VisionDataset):
             sample = self.transform(sample)
         if self.target_transform is not None:
             target = self.target_transform(target)
-        return sample, target, sample_id
+        return sample, target, sample_id.tolist()
 
     @staticmethod
     def sample_id_spec():
