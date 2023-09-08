@@ -1,3 +1,4 @@
+from typing import List
 from dataclasses import dataclass
 import torch
 
@@ -68,6 +69,7 @@ class Uncertainty:
     A: torch.Tensor
     mean_pred: torch.Tensor
     sample_ids: torch.Tensor
+    sample_id_spec: List[str]
     targets: torch.Tensor
 
 
@@ -102,6 +104,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         H=torch.concat(HS),
         A=torch.concat(AS),
         sample_ids=torch.concat(sample_ids),
+        sample_id_spec=data_loader.dataset.sample_id_spec(),
         mean_pred=torch.concat(mean_preds),
-        targets=torch.concat(targets)
+        targets=torch.concat(targets),
     )
