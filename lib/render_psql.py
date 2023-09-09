@@ -3,6 +3,7 @@ import pandas
 import json
 import time
 from threading import Thread
+import os
 import queue
 
 from lib.train_dataclasses import TrainEpochState
@@ -18,10 +19,19 @@ def dict_to_normalized_json(input_dict):
 
 
 def setup_psql():
+    hostname = "localhost"
+    port = 5432
+    if "EP_POSTGRES" in os.environ:
+        hostname = os.environ.get("EP_POSTGRES")
+    if "EP_POSTGRES_PORT" in os.environ:
+        try:
+            port = int(os.environ.get("EP_POSTGRES_PORT"))
+        except ValueError:
+            pass
     with psycopg.connect(
         "dbname=postgres user=postgres password=postgres",
-        host="localhost",
-        port=5432,
+        host=hostname,
+        port=port,
         autocommit=True,
     ) as conn:
         try:
