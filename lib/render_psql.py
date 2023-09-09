@@ -3,6 +3,7 @@ import pandas
 import json
 import time
 from threading import Thread
+import queue
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
@@ -180,31 +181,49 @@ def insert_or_update_train_run(conn, train_run: TrainRun):
 
 
 _threads = []
+_result_queue = queue.Queue()
 
 
 def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
-    _render_psql(train_run, train_epoch_state)
-    return
+    # _render_psql(train_run, train_epoch_state)
+    # return
     if len(_threads) > 3:
         thread = _threads.pop(0)
         thread.join()
 
     thread = Thread(
         target=_render_psql,
-        kwargs=dict(train_run=train_run, train_epoch_state=train_epoch_state),
+        kwargs=dict(
+            train_run=train_run,
+            train_epoch_state=train_epoch_state,
+            result_queue=_result_queue,
+        ),
     )
     thread.start()
     _threads.append(thread)
+    try:
+        return _result_queue.get(block=False)
+    except queue.Empty:
+        return None
 
 
-def _render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
+def _render_psql(
+    train_run: TrainRun, train_epoch_state: TrainEpochState, result_queue: queue.Queue
+):
+    try:
+        result_queue.put(_render_psql_unchecked(train_run, train_epoch_state))
+    except psycopg.errors.OperationalError:
+        result_queue.put(False)
+
+
+def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochState):
     train_run_dict = train_run.serialize_human()
     try:
         setup_psql()
     except psycopg.errors.OperationalError as e:
-        print("Couldn't setup PSQL datasink.")
-        print(str(e))
-        return
+        # print("Couldn't setup PSQL datasink.")
+        # print(str(e))
+        return (False, str(e))
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
@@ -249,4 +268,6 @@ def _render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
         create_metrics_view(conn)
         create_metrics_and_run_info_view(conn)
         conn.commit()
-        print(f"Updated psql {time.time() - start_time}s")
+
+    return (True, "")
+    # print(f"Updated psql {time.time() - start_time}s")
