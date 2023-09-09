@@ -10,6 +10,7 @@ from lib.paths import get_checkpoint_path, get_or_create_checkpoint_path
 import lib.model_factory as model_factory
 from lib.data_utils import get_sampler
 from lib.ddp import get_rank
+import shutil
 
 
 @dataclass
@@ -57,8 +58,8 @@ def serialize(config: SerializeConfig):
 
     checkpoint_path = get_or_create_checkpoint_path(train_config)
     for key, value in file_data.__dict__.items():
-        torch.save(value, checkpoint_path / key)
-    # shutil.move(tmp_checkpoint, checkpoint)
+        torch.save(value, checkpoint_path / f"{key}_tmp")
+        shutil.move(checkpoint_path / f"{key}_tmp", checkpoint_path / key)
 
 
 @dataclass
@@ -120,13 +121,19 @@ def deserialize(config: DeserializeConfig):
 
     file_data = FileStructure()
     for key in list(file_data.__dict__.keys()):
-        setattr(
-            file_data,
-            key,
-            torch.load(
-                checkpoint_path / key, map_location=torch.device(config.device_id)
-            ),
-        )
+        print(checkpoint_path / key)
+        try:
+            setattr(
+                file_data,
+                key,
+                torch.load(
+                    checkpoint_path / key, map_location=torch.device(config.device_id)
+                ),
+            )
+        except RuntimeError:
+            return None
+        except EOFError:
+            return None
     data_dict = file_data.__dict__
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)

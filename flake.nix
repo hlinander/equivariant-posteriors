@@ -59,6 +59,7 @@
         '';
       };
       devinputs = with pkgs; [
+          postgresql
           ruff
           helixmaster
           nixfmt

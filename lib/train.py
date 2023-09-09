@@ -204,12 +204,15 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
             validate(state, train_epoch_spec, train_run)
             state.epoch += 1
             serialize(serialize_config)
+            last_postgres_result = render_psql(train_run, state)
             try:
                 now = time.time()
                 if now > next_visualization:
                     next_visualization = now + 1
                     if ddp.get_rank() == 0:
-                        visualize_progress(state, train_run, device_id)
+                        visualize_progress(
+                            state, train_run, last_postgres_result, device_id
+                        )
             except Exception as e:
                 logging.error("Visualization failed")
                 logging.error(str(e))
