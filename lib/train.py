@@ -23,7 +23,7 @@ from lib.serialization import serialize
 
 from lib.train_visualization import visualize_progress
 
-from lib.paths import get_checkpoint_path
+from lib.paths import get_checkpoint_path, get_lock_path
 import lib.ddp as ddp
 
 
@@ -196,8 +196,8 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     print("Run epochs...")
-    checkpoint_path = get_checkpoint_path(train_run.train_config)
-    lock = FileLock(f"{checkpoint_path}.lock", 1)
+    checkpoint_path = get_lock_path(train_run.train_config)
+    lock = FileLock(f"{checkpoint_path}", 1)
     with lock:
         while state.epoch < train_run.epochs:
             train(train_run, state, train_epoch_spec)
