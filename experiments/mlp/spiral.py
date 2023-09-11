@@ -36,7 +36,7 @@ def create_config(mlp_dim, ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=5000,
+        epochs=200,
         save_nth_epoch=20,
         validate_nth_epoch=20,
     )

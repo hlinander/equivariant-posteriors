@@ -64,8 +64,8 @@
           helixmaster
           nixfmt
           jq
-          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
-          #(rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc]; })
+          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
+          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse]; })
           # cudatoolkit
           (python3.withPackages (p: [
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
@@ -118,11 +118,14 @@
           [ 
             (pkgs.buildEnv {
                   name = "root";
-                  paths = [ pkgs.bashInteractive pkgs.coreutils program devinputs];
+                  paths = [ pkgs.bashInteractive pkgs.coreutils pkgs.findutils pkgs.gnugrep program devinputs];
                   pathsToLink = [ "/bin" ];
                 })          
               program
               devinputs
+              pkgs.gnugrep
+              pkgs.findutils
+              pkgs.vim
           ];
           # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
