@@ -7,7 +7,7 @@ from lib.data_factory import DataCIFARConfig
 import lib.data_factory as data_factory
 import lib.slurm as slurm
 
-from lib.models.conv import ConvConfig
+from lib.models.conv_lap import ConvLAPConfig
 
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     device_id = ddp_setup()
 
     ensemble_config_conv = create_ensemble_config(
-        create_config_function(model_config=ConvConfig(), batch_size=3000),
+        create_config_function(model_config=ConvLAPConfig(), batch_size=100),
         n_members=20,
     )
     if slurm.get_task_id() is not None:
