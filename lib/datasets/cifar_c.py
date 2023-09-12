@@ -193,7 +193,7 @@ class DataCIFAR10C(VisionDataset):
                             [
                                 [idx + start_idx, cifar_subset, severity]
                                 for idx, (cifar_subset, severity) in enumerate(
-                                    [(cifar_subset, severity)] * 10000
+                                    [(subset_idx, severity)] * 10000
                                 )
                             ]
                         )
@@ -203,6 +203,7 @@ class DataCIFAR10C(VisionDataset):
                 ids = np.concatenate(id_arrays, axis=0)
 
             else:
+                subset_idx = self.subset.index(subset)
                 samples: np.ndarray = np.load(root / (subset + ".npy"))[
                     (severity - 1) * 10000 : severity * 10000
                 ]
@@ -215,7 +216,7 @@ class DataCIFAR10C(VisionDataset):
                     [
                         [idx + start_idx, cifar_subset, severity]
                         for idx, (cifar_subset, severity) in enumerate(
-                            [(cifar_subset, severity)] * 10000
+                            [(subset_idx, severity)] * 10000
                         )
                     ]
                 )
@@ -243,7 +244,7 @@ class DataCIFAR10C(VisionDataset):
             sample = self.transform(sample)
         if self.target_transform is not None:
             target = self.target_transform(target)
-        return sample, target, sample_id.tolist()
+        return sample, target, sample_id
 
     @staticmethod
     def sample_id_spec():
