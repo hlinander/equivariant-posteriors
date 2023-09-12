@@ -26,7 +26,7 @@ if __name__ == "__main__":
     device_id = ddp_setup()
 
     ensemble_config_conv = create_ensemble_config(
-        create_config_function(model_config=ConvLAPConfig(), batch_size=100),
+        create_config_function(model_config=ConvLAPConfig(), batch_size=3000),
         n_members=20,
     )
     if slurm.get_task_id() is not None:
