@@ -10,14 +10,12 @@ def uq_for_ensemble(dl, ensemble, ensemble_config, model_name: str, device_id):
     uq = uncertainty(dl, ensemble, device_id)
 
     def save_uq(config, uq, filename):
-        result_path = prepare_results(
-            Path(__file__).parent, Path(__file__).stem, config
-        )
+        result_path = prepare_results(Path(__file__).parent, model_name, config)
         data = torch.concat(
             [
                 uq.MI[:, None].cpu(),
                 uq.H[:, None].cpu(),
-                uq.sample_ids[:, None].cpu(),
+                uq.sample_ids.cpu(),
                 uq.mean_pred[:, None].cpu(),
                 uq.targets[:, None].cpu(),
                 torch.where(

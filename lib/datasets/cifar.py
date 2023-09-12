@@ -1,6 +1,7 @@
 import random
 import functools
 import torch
+import numpy as np
 import torchvision
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
@@ -116,7 +117,7 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
         # image = image.unfold(1, 14, 14)
         # image = image.reshape(2 * 2, 14 * 14)
         # image = image.reshape(-1, 16 * 16)
-        return cifar_sample[0], cifar_sample[1], idx
+        return cifar_sample[0], cifar_sample[1], np.array([idx])
 
     # def __len__(self):
     # return len(self.CIFAR)
