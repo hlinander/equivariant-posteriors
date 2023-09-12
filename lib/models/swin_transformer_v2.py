@@ -905,6 +905,8 @@ class SwinTransformerV2(nn.Module):
 
 @dataclass(frozen=True)
 class SwinTinyConfig:
+    version: int = 0
+
     def serialize_human(self):
         return self.__dict__
 
