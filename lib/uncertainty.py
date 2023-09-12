@@ -93,7 +93,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         MI = mutual_information(probs)
         H = predictive_entropy(probs)
         A = mean_entropy(probs)
-        sample_ids.append(sample_id)
+        sample_ids.append(list(zip(*sample_id)))
         mean_preds.append(torch.argmax(torch.mean(probs, dim=1), dim=-1))
         targets.append(target)
         MIS.append(MI)
