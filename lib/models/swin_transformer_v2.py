@@ -318,6 +318,7 @@ class WindowAttention(nn.Module):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        breakpoint()
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -921,10 +922,10 @@ class SwinTiny(torch.nn.Module):
             depths=[2],
             num_heads=[8],
             window_size=2,
-            mlp_ratio=4.0,
+            mlp_ratio=6.0,
             qkv_bias=True,
-            drop_rate=0.03,
-            attn_drop_rate=0.03,
+            drop_rate=0.05,
+            attn_drop_rate=0.05,
             drop_path_rate=0.0,
             norm_layer=nn.LayerNorm,
             ape=False,
