@@ -8,15 +8,20 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
-from lib.data_factory import DataCIFARConfig
-from lib.data_factory import DataCIFAR10CConfig
+from lib.data_registry import DataCIFARConfig
+from lib.data_registry import DataCIFAR10CConfig
 
 
 def create_corrupted_dataset_config():
-    return DataCIFAR10CConfig(subset="all", severities=[1, 2, 3, 4, 5])
+    return DataCIFAR10CConfig(subsets=["all"], severities=[1, 2, 3, 4, 5])
 
 
-def create_config_function(model_config: object, batch_size: int):
+def create_config_function(
+    model_config: object, batch_size: int, data_config=None, num_workers=16
+):
+    if data_config is None:
+        data_config = DataCIFARConfig()
+
     def create_config(ensemble_id):
         loss = torch.nn.CrossEntropyLoss()
 
@@ -26,7 +31,7 @@ def create_config_function(model_config: object, batch_size: int):
         train_config = TrainConfig(
             # model_config=MLPClassConfig(widths=[50, 50]),
             model_config=model_config,  # MLPClassConfig(widths=[128] * 2),
-            train_data_config=DataCIFARConfig(),
+            train_data_config=data_config,
             val_data_config=DataCIFARConfig(validation=True),
             loss=ce_loss,
             optimizer=OptimizerConfig(
@@ -39,10 +44,10 @@ def create_config_function(model_config: object, batch_size: int):
         )
         train_eval = create_classification_metrics(None, 10)
         train_run = TrainRun(
-            compute_config=ComputeConfig(distributed=False, num_workers=16),
+            compute_config=ComputeConfig(distributed=False, num_workers=num_workers),
             train_config=train_config,
             train_eval=train_eval,
-            epochs=300,
+            epochs=300,  # TODO
             save_nth_epoch=1,
             validate_nth_epoch=5,
         )

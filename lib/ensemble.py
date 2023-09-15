@@ -77,12 +77,19 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
         print(get_checkpoint_path(member_config.train_config).as_posix())
     print("Loading or training ensemble...")
     for member_config in ensemble_config.members:
-        model = deserialize_model(DeserializeConfig(member_config, device_id))
-        if model is None:
+        deserialized_model = deserialize_model(
+            DeserializeConfig(member_config, device_id)
+        )
+        if (
+            deserialized_model is None
+            or deserialized_model.epoch < member_config.epochs
+        ):
             state = load_or_create_state(member_config, device_id)
             print(sum([p.numel() for p in state.model.parameters()]))
             do_training(member_config, state, device_id)
             model = state.model
+        else:
+            model = deserialized_model.model
 
         model.eval()
         members.append(model)

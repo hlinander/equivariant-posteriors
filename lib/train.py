@@ -133,7 +133,8 @@ def create_initial_state(train_run: TrainRun, device_id):
 
     torch.manual_seed(train_config.ensemble_id)
     init_model = model_factory.get_factory().create(
-        train_config.model_config, train_ds.data_spec()
+        train_config.model_config,
+        train_ds.__class__.data_spec(train_config.train_data_config),
     )
 
     if train_config.post_model_create_hook is not None:

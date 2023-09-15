@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Tuple, List
 from dataclasses import dataclass, field
 
+import torch
 import torchvision
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.utils import (
@@ -13,11 +14,13 @@ from torchvision.datasets.utils import (
 
 import numpy as np
 
+from lib.dataspec import DataSpec
+
 # Adapted from https://github.com/ENSTA-U2IS/torch-uncertainty/
 
 @dataclass(frozen=True)
 class DataCIFAR10CConfig:
-    subset: str = "all" # The subset to use, one of ``all`` or the keys in ``cifarc_subsets``
+    subsets: List[str] = field(default_factory=lambda: ["all"]) # The subset to use, one of ``all`` or the keys in ``cifarc_subsets``
     severities: List[int] = field(default_factory=lambda: [1]) # Between 1 and 5
 
     def serialize_human(self):
@@ -107,7 +110,7 @@ class DataCIFAR10C(VisionDataset):
             ]
         )
         target_transform = None
-        subset = config.subset
+        subsets = config.subsets
         severities = config.severities
         download = True
 
@@ -129,9 +132,10 @@ class DataCIFAR10C(VisionDataset):
             transform=transform,
             target_transform=target_transform,
         )
-        if not (subset in ["all"] + self.cifarc_subsets):
-            raise ValueError(f"The subset '{subset}' does not exist in CIFAR-C.")
-        self.subset = subset
+        for subset in subsets:
+            if not (subset in ["all"] + self.cifarc_subsets):
+                raise ValueError(f"The subset '{subset}' does not exist in CIFAR-C.")
+        self.subsets = subsets
         self.severities = severities
 
         for severity in severities:
@@ -140,7 +144,7 @@ class DataCIFAR10C(VisionDataset):
                     "Corruptions severity should be chosen between 1 and 5 " "included."
                 )
         samples, labels, ids = self.make_dataset(
-            self.root, self.subset, self.severities
+            self.root, self.subsets, self.severities
         )
 
         self.samples = samples
@@ -149,11 +153,19 @@ class DataCIFAR10C(VisionDataset):
         self.n_classes = 10
         self.config = config
 
+    @staticmethod
+    def data_spec(config: DataCIFAR10CConfig):
+        return DataSpec(
+            input_shape=torch.Size([3, 32, 32]),
+            target_shape=torch.Size([1]),
+            output_shape=torch.Size([10]),
+        )
+
     def name(self):
         return f"CIFAR10C_{self.config.subset}_{self.config.severities}"
 
     def make_dataset(
-        self, root: Path, subset: str, severities: List[int]
+        self, root: Path, subsets: List[str], severities: List[int]
     ) -> Tuple[np.ndarray, np.ndarray]:
         r"""
         Build the corrupted dataset according to the chosen subset and
@@ -171,58 +183,65 @@ class DataCIFAR10C(VisionDataset):
         all_samples_list = []
         all_labels_list = []
         all_ids_list = []
-        for severity_idx, severity in enumerate(severities):
-            if subset == "all":
-                sample_arrays = []
-                id_arrays = []
-                labels: np.ndarray = np.load(root / "labels.npy")[
-                    (severity - 1) * 10000 : severity * 10000
-                ]
-                for subset_idx, cifar_subset in enumerate(self.cifarc_subsets):
-                    start_idx = (
-                        severity_idx * len(self.cifarc_subsets) * 10000
-                        + subset_idx * 10000
-                    )
-                    sample_arrays.append(
-                        np.load(root / (cifar_subset + ".npy"))[
-                            (severity - 1) * 10000 : severity * 10000
-                        ]
-                    )
-                    id_arrays.append(
-                        np.array(
-                            [
-                                [idx + start_idx, cifar_subset, severity]
-                                for idx, (cifar_subset, severity) in enumerate(
-                                    [(subset_idx, severity)] * 10000
-                                )
+
+        if "all" in subsets:
+            assert len(subsets) == 1
+        for subset_iteration, subset in enumerate(subsets):
+            for severity_idx, severity in enumerate(severities):
+                if subset == "all":
+                    sample_arrays = []
+                    id_arrays = []
+                    labels: np.ndarray = np.load(root / "labels.npy")[
+                        (severity - 1) * 10000 : severity * 10000
+                    ]
+                    for subset_idx, cifar_subset in enumerate(self.cifarc_subsets):
+                        start_idx = (
+                            severity_idx * len(self.cifarc_subsets) * 10000
+                            + subset_idx * 10000
+                        )
+                        sample_arrays.append(
+                            np.load(root / (cifar_subset + ".npy"))[
+                                (severity - 1) * 10000 : severity * 10000
                             ]
                         )
-                    )
-                samples = np.concatenate(sample_arrays, axis=0)
-                labels = np.tile(labels, len(self.cifarc_subsets))
-                ids = np.concatenate(id_arrays, axis=0)
-
-            else:
-                subset_idx = self.subset.index(subset)
-                samples: np.ndarray = np.load(root / (subset + ".npy"))[
-                    (severity - 1) * 10000 : severity * 10000
-                ]
-                labels: np.ndarray = np.load(root / "labels.npy")[
-                    (severity - 1) * 10000 : severity * 10000
-                ]
-                ids = np.array([(subset, severity)] * 10000)
-                start_idx = severity_idx * 10000
-                ids = np.array(
-                    [
-                        [idx + start_idx, cifar_subset, severity]
-                        for idx, (cifar_subset, severity) in enumerate(
-                            [(subset_idx, severity)] * 10000
+                        id_arrays.append(
+                            np.array(
+                                [
+                                    [idx + start_idx, cifar_subset, severity]
+                                    for idx, (cifar_subset, severity) in enumerate(
+                                        [(subset_idx, severity)] * 10000
+                                    )
+                                ]
+                            )
                         )
+                    samples = np.concatenate(sample_arrays, axis=0)
+                    labels = np.tile(labels, len(self.cifarc_subsets))
+                    ids = np.concatenate(id_arrays, axis=0)
+
+                else:
+                    subset_idx = self.cifarc_subsets.index(subset)
+                    samples: np.ndarray = np.load(root / (subset + ".npy"))[
+                        (severity - 1) * 10000 : severity * 10000
                     ]
-                )
-            all_samples_list.append(samples)
-            all_labels_list.append(labels)
-            all_ids_list.append(ids)
+                    labels: np.ndarray = np.load(root / "labels.npy")[
+                        (severity - 1) * 10000 : severity * 10000
+                    ]
+                    ids = np.array([(subset, severity)] * 10000)
+                    start_idx = (
+                        subset_iteration * len(severities) * 10000
+                        + severity_idx * 10000
+                    )
+                    ids = np.array(
+                        [
+                            [idx + start_idx, cifar_subset, severity]
+                            for idx, (cifar_subset, severity) in enumerate(
+                                [(subset_idx, severity)] * 10000
+                            )
+                        ]
+                    )
+                all_samples_list.append(samples)
+                all_labels_list.append(labels)
+                all_ids_list.append(ids)
 
         all_samples = np.concatenate(all_samples_list, axis=0)
         all_labels = np.concatenate(all_labels_list, axis=0)
