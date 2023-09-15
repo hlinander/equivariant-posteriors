@@ -1,25 +1,9 @@
 import torch
-from lib.datasets.sine import DataSineConfig, DataSine
-from lib.datasets.spiral import DataSpiralsConfig, DataSpirals
-from lib.datasets.uniform import DataUniformConfig, DataUniform
-from lib.datasets.mnist import DataMNISTConfig, DataMNIST
-from lib.datasets.mnist_2 import DataMNIST2Config, DataMNIST2
-from lib.datasets.cifar import DataCIFARConfig, DataCIFAR
-from lib.datasets.cifar_c import DataCIFAR10CConfig, DataCIFAR10C
-from lib.datasets.cifar_2 import DataCIFAR2Config, DataCIFAR2
 
 
 class _DataFactory:
     def __init__(self):
-        self.datasets = dict()
-        self.datasets[DataSpiralsConfig] = DataSpirals
-        self.datasets[DataSineConfig] = DataSine
-        self.datasets[DataUniformConfig] = DataUniform
-        self.datasets[DataMNISTConfig] = DataMNIST
-        self.datasets[DataMNIST2Config] = DataMNIST2
-        self.datasets[DataCIFARConfig] = DataCIFAR
-        self.datasets[DataCIFAR10CConfig] = DataCIFAR10C
-        self.datasets[DataCIFAR2Config] = DataCIFAR2
+        self.datasets = dict()  # register_datasets()
 
     def register(self, config_class, data_class):
         self.datasets[config_class] = data_class
@@ -37,6 +21,9 @@ _data_factory = None
 def get_factory():
     global _data_factory
     if _data_factory is None:
+        from lib.data_registry import register_datasets
+
         _data_factory = _DataFactory()
+        _data_factory.datasets = register_datasets()
 
     return _data_factory

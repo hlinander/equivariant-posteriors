@@ -135,6 +135,8 @@ def filter_memory_stats(memory_stats: dict):
 
 
 def plot_device_memory_stats(plt, memory_stats: dict, device):
+    if device == "cpu":
+        return
     device_stats = torch.cuda.get_device_properties(device)
 
     def bytes_to_mb(bytes):

@@ -77,7 +77,9 @@ def is_serialized(config: TrainRun):
 def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
     train_config = config.train_run.train_config
     data_spec = (
-        data_factory.get_factory().get_class(train_config.val_data_config).data_spec()
+        data_factory.get_factory()
+        .get_class(train_config.val_data_config)
+        .data_spec(train_config.val_data_config)
     )
     model = model_factory.get_factory().create(train_config.model_config, data_spec)
     model = model.to(torch.device(config.device_id))
@@ -96,6 +98,12 @@ def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
     return model
 
 
+@dataclass
+class DeserializedModel:
+    model: torch.nn.Module
+    epoch: int
+
+
 def deserialize_model(config: DeserializeConfig):
     train_config = config.train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config)
@@ -108,7 +116,11 @@ def deserialize_model(config: DeserializeConfig):
         checkpoint_path / "model", map_location=torch.device(config.device_id)
     )
 
-    return create_model(config, model_state_dict)
+    model_epoch = torch.load(checkpoint_path / "epoch")
+
+    return DeserializedModel(
+        model=create_model(config, model_state_dict), epoch=model_epoch
+    )
 
 
 def deserialize(config: DeserializeConfig):

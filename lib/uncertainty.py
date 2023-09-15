@@ -81,7 +81,9 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     AS = []
     mean_preds = []
     targets = []
-    for input, target, sample_id in tqdm(data_loader):
+    for iteration, (input, target, sample_id) in enumerate(tqdm(data_loader)):
+        # if iteration > 10:
+        # break
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
         )

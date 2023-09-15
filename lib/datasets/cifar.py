@@ -45,7 +45,7 @@ class DataCIFAROld(torch.utils.data.Dataset):
         self.config = data_config
 
     @staticmethod
-    def data_spec():
+    def data_spec(config: DataCIFARConfig):
         return DataSpec(
             input_shape=torch.Size([3, 32, 32]),
             target_shape=torch.Size([1]),
@@ -98,7 +98,7 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
         return f"CIFAR10_{subset}"
 
     @staticmethod
-    def data_spec():
+    def data_spec(config: DataCIFARConfig):
         return DataSpec(
             input_shape=torch.Size([3, 32, 32]),
             target_shape=torch.Size([1]),
