@@ -1,15 +1,15 @@
 import torch
-from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import ComputeConfig
 
 
 def get_sampler(
-    train_run: TrainRun, ds: torch.utils.data.DataLoader, shuffle: bool
+    compute_config: ComputeConfig, ds: torch.utils.data.DataLoader, shuffle: bool
 ) -> (torch.utils.data.Sampler, bool):
     """Get device compatible sampler.
 
     Distributed data parallell dataloader need distributed sampler,
     """
-    if train_run.compute_config.distributed:
+    if compute_config.distributed:
         sampler = torch.utils.data.distributed.DistributedSampler(ds)
         shuffle = False
     else:

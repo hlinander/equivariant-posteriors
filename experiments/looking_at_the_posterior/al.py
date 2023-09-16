@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 import ssl
-from random import shuffle
+from pathlib import Path
 
 import torch
+import numpy as np
+import pandas as pd
 from scipy.stats import binned_statistic_2d
+from sqlalchemy import create_engine
+from lib.render_psql import get_url
 
 from lib.data_registry import (
     DataCIFARConfig,
@@ -15,6 +19,7 @@ from lib.data_registry import (
 
 import lib.data_factory as data_factory
 import lib.slurm as slurm
+from lib.stable_hash import json_dumps_dataclass
 
 from lib.models.mlp import MLPClassConfig
 
@@ -22,16 +27,23 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.ensemble import train_member
+from lib.train import evaluate_metrics_on_data
+from lib.train_dataclasses import ComputeConfig
+
+from lib.classification_metrics import create_classification_metric_dict
 
 from experiments.looking_at_the_posterior.config import (
     create_config_function,
-    create_corrupted_dataset_config,
+    # create_corrupted_dataset_config,
 )
-from experiments.looking_at_the_posterior.uq import uq_for_ensemble
+
+# from experiments.looking_at_the_posterior.uq import uq_for_ensemble
 from lib.uncertainty import uncertainty
-from lib.render_psql import dict_to_normalized_json
+
+# from lib.render_psql import dict_to_normalized_json
 
 ssl._create_default_https_context = ssl._create_unverified_context
+rng = np.random.default_rng(42)
 
 if __name__ == "__main__":
     device_id = ddp_setup()
@@ -40,7 +52,7 @@ if __name__ == "__main__":
         create_config_function(
             model_config=MLPClassConfig(widths=[128] * 2), batch_size=2**13
         ),
-        n_members=10,
+        n_members=5,
     )
     if slurm.get_task_id() is not None:
         train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
@@ -144,55 +156,127 @@ if __name__ == "__main__":
     ]
 
     inferred_accs = mean_acc_frost[just_coords_x, just_coords_y]
-    accs_and_coords_and_ids = zip(
-        inferred_accs, just_coords_x, just_coords_y, just_sample_ids
+    accs_and_coords_and_ids = list(
+        zip(inferred_accs, just_coords_x, just_coords_y, just_sample_ids)
     )
 
-    sorted_acc = sorted(accs_and_coords_and_ids, key=lambda x: x[0])
+    # accs_and_coords_and_ids_no_nan = filter(
+    # lambda x: not np.isnan(x[0]), accs_and_coords_and_ids
+    # )
+    def nans_last_in_sort(x):
+        new_acc = x[0]
+        if np.isnan(new_acc):
+            new_acc = 2.0
+        return new_acc, x[1], x[2], x[3]
+
+    accs_and_coords_and_ids_no_nan = list(
+        map(nans_last_in_sort, accs_and_coords_and_ids)
+    )
+
+    sorted_acc = sorted(accs_and_coords_and_ids_no_nan, key=lambda x: x[0])
 
     sorted_ids = [int(sample_idx) for _, _, _, (sample_idx, _, _) in sorted_acc]
-    n_ten_percent = int(len(sorted_ids) * 0.1)
-    ten_percent = sorted_ids[:n_ten_percent]
+    random_ids = rng.permutation(len(ds_cifar_c_pixelate))
+    n_samples = len(sorted_ids)
 
-    all_idx = list(range(len(ds_cifar_c_pixelate)))
-    shuffle(all_idx)
-    random_ten_percent = all_idx[:n_ten_percent]
-
-    # ds_subset = data_factory.get_factory().create(
-    al_subset_config = DataSubsetConfig(data_config=pixelate_config, subset=ten_percent)
-    random_subset_config = DataSubsetConfig(
-        data_config=pixelate_config, subset=random_ten_percent
-    )
+    # al_subset_config = DataSubsetConfig(
+    #     data_config=pixelate_config, subset=sorted_ids[:200]
     # )
-    al_extended_ds_config = DataJoinConfig(
-        data_configs=[DataCIFARConfig(), al_subset_config]
-    )
-    random_extended_ds_config = DataJoinConfig(
-        data_configs=[DataCIFARConfig(), random_subset_config]
-    )
+    # metrics = create_classification_metric_dict(10)
+    # evaluate_metrics_on_data(
+    #     ensemble_mlp.members[0],
+    #     metrics,
+    #     al_subset_config,
+    #     2000,
+    #     ComputeConfig(distributed=False, num_workers=8),
+    #     device_id,
+    # )
+    # breakpoint()
 
-    al_ensemble_config = create_ensemble_config(
-        create_config_function(
-            model_config=MLPClassConfig(widths=[128] * 2),
-            batch_size=2**13,
-            data_config=al_extended_ds_config,
-            # num_workers=2,
-        ),
-        n_members=1,
-    )
-    al_ensemble = create_ensemble(al_ensemble_config, device_id)
+    def train_on_fraction(f):
+        n_al_samples = int(n_samples * f)
+        # n_ten_percent = int(len(sorted_ids) * 0.1)
 
-    random_ensemble_config = create_ensemble_config(
-        create_config_function(
-            model_config=MLPClassConfig(widths=[128] * 2),
-            batch_size=2**13,
-            data_config=random_extended_ds_config,
-            # num_workers=2,
-        ),
-        n_members=1,
-    )
-    random_ensemble = create_ensemble(random_ensemble_config, device_id)
+        al_sample_ids = sorted_ids[:n_al_samples]
+        al_random_ids = random_ids[:n_al_samples]
+        overlap = set(al_sample_ids).intersection(set(al_random_ids))
+        print(f"Aquisition overlap: {len(overlap) / len(al_sample_ids)}")
+
+        al_subset_config = DataSubsetConfig(
+            data_config=pixelate_config, subset=al_sample_ids
+        )
+        random_subset_config = DataSubsetConfig(
+            data_config=pixelate_config, subset=al_random_ids
+        )
+        # )
+        # breakpoint()
+        al_extended_ds_config = DataJoinConfig(
+            data_configs=[DataCIFARConfig(), al_subset_config]
+        )
+        random_extended_ds_config = DataJoinConfig(
+            data_configs=[DataCIFARConfig(), random_subset_config]
+        )
+
+        al_ensemble_config = create_ensemble_config(
+            create_config_function(
+                model_config=MLPClassConfig(widths=[128] * 2),
+                batch_size=2**13,
+                data_config=al_extended_ds_config,
+                # num_workers=2,
+            ),
+            n_members=1,
+        )
+        al_ensemble = create_ensemble(al_ensemble_config, device_id)
+
+        random_ensemble_config = create_ensemble_config(
+            create_config_function(
+                model_config=MLPClassConfig(widths=[128] * 2),
+                batch_size=2**13,
+                data_config=random_extended_ds_config,
+                # num_workers=2,
+            ),
+            n_members=1,
+        )
+        with open("json_ser_check.json", "a") as sf:
+            sf.write(f"frac: {frac}\nal ensemble\n")
+            sf.write(json_dumps_dataclass(al_ensemble_config).decode("utf-8"))
+            sf.write("\nrandom ensemble\n")
+            sf.write(json_dumps_dataclass(random_ensemble_config).decode("utf-8"))
+        print(f"Random ensemble frac {frac}:")
+        random_ensemble = create_ensemble(random_ensemble_config, device_id)
+        print("Random done")
+        return al_ensemble, random_ensemble
+
     # small_acc = list(filter(lambda x: x[0] < 0.5, accs_and_coords))
+    df_rows = []
+    for frac in np.linspace(0.1, 1.0, 10):
+        al_ensemble, random_ensemble = train_on_fraction(frac)
+
+        for ensemble_name, ensemble in [("al", al_ensemble), ("rnd", random_ensemble)]:
+            metrics = create_classification_metric_dict(10)
+            ensemble.members[0].eval()
+            evaluate_metrics_on_data(
+                ensemble.members[0],
+                metrics,
+                pixelate_config,
+                2000,
+                ComputeConfig(distributed=False, num_workers=8),
+                device_id,
+            )
+            for metric_name, metric in metrics.items():
+                df_rows.append(
+                    dict(
+                        model=ensemble_name,
+                        fraction=frac,
+                        metric=metric_name,
+                        value=metric.mean(),
+                    )
+                )
+
+    df = pd.DataFrame(columns=["model", "fraction", "metric", "value"], data=df_rows)
+    df.to_csv(Path(__file__).parent / "active_learning.csv")
+    psql = create_engine(get_url())
+    df.to_sql("active_learning", psql, if_exists="replace")
 
     # mean_acc_frost[]
 
