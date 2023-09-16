@@ -9,7 +9,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import Metric
 from lib.models.dense import DenseConfig
-from lib.data_factory import DataSineConfig
+from lib.data_registry import DataSineConfig
 
 from lib.train import load_or_create_state
 from lib.train import do_training
@@ -20,6 +20,7 @@ def main():
     device_id = ddp_setup("gloo")
     print(f"Using device {device_id}")
     loss = torch.nn.MSELoss()
+
     def mse_loss(outputs, targets):
         return loss(outputs["logits"], targets)
 
