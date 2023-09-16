@@ -217,6 +217,10 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
         return None
 
 
+def get_url():
+    return "postgresql://postgres:postgres@localhost:5432/equiv"
+
+
 def _render_psql(
     train_run: TrainRun, train_epoch_state: TrainEpochState, result_queue: queue.Queue
 ):

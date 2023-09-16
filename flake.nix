@@ -93,7 +93,9 @@
             p.matplotlib
             p.plotnine
             p.psycopg
+            p.psycopg2
             p.pytest
+            p.sqlalchemy
           ]))
         ];
     in {

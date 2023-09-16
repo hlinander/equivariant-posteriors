@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import hashlib
+import numpy as np
 
 
 def json_default(data):
@@ -20,6 +21,8 @@ def serialize_dataclass(instance) -> dict:
         }
     elif isinstance(instance, list):
         return [serialize_dataclass(i) for i in instance]
+    elif isinstance(instance, np.ndarray):
+        return serialize_dataclass(instance.tolist())
     elif isinstance(instance, dict):
         return {k: serialize_dataclass(v) for k, v in instance.items()}
     else:

@@ -19,7 +19,6 @@ class MetricSampleKey:
 
 
 class Metric:
-    # TODO: This should be tracked together with state and serialized/deserialized
     def __init__(
         self,
         metric_fn: Callable[[torch.Tensor, torch.Tensor], object],
@@ -55,9 +54,11 @@ class Metric:
             del self.mean_mem[metric_sample.epoch]
         self.values[key] = values.mean()
 
-    def mean(self, epoch):
+    def mean(self, epoch=None):
         if epoch not in self.mean_mem:
-            keys = list(filter(lambda key: key.epoch == epoch, self.values.keys()))
+            keys = self.values.keys()
+            if epoch is not None:
+                keys = list(filter(lambda key: key.epoch == epoch, keys))
             mean = None
             if len(keys) > 0:
                 vals = torch.tensor([self.values[key] for key in keys])

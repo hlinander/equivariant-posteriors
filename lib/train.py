@@ -3,9 +3,10 @@ from pathlib import Path
 import torch
 import logging
 import time
+from typing import Dict
 
 from filelock import FileLock
-from lib.metric import MetricSample
+from lib.metric import MetricSample, Metric
 import lib.data_factory as data_factory
 from lib.data_utils import get_sampler
 import lib.model_factory as model_factory
@@ -15,6 +16,7 @@ from lib.render_psql import render_psql
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainEpochSpec
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import ComputeConfig
 
 from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
@@ -25,6 +27,34 @@ from lib.train_visualization import visualize_progress
 
 from lib.paths import get_checkpoint_path, get_lock_path
 import lib.ddp as ddp
+
+
+def evaluate_metrics_on_data(
+    model,
+    metrics: Dict[str, Metric],
+    data_config,
+    batch_size: int,
+    compute_config: ComputeConfig,
+    device,
+):
+    dataloader = create_dataloader(
+        data_config, batch_size, shuffle=False, compute_config=compute_config
+    )
+    with torch.no_grad():
+        for i, (input, target, sample_id) in enumerate(dataloader):
+            input = input.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            output = model(input)
+
+            metric_sample = MetricSample(
+                output=output["logits"],
+                prediction=output["predictions"],
+                target=target,
+                sample_id=sample_id,
+                epoch=-1,
+            )
+            for metric_name, metric in metrics.items():
+                metric(metric_sample)
 
 
 def validate(
@@ -105,14 +135,34 @@ def train(
             metric(metric_sample)
 
 
+def create_dataloader(
+    data_config, batch_size: int, shuffle: bool, compute_config: ComputeConfig
+):
+    ds = data_factory.get_factory().create(data_config)
+    sampler, shuffle = get_sampler(compute_config, ds, shuffle=shuffle)
+    dataloader = torch.utils.data.DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=False,
+        sampler=sampler,
+        num_workers=compute_config.num_workers,
+    )
+    return dataloader
+
+
 def create_initial_state(train_run: TrainRun, device_id):
     train_config = train_run.train_config
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
     val_ds = data_factory.get_factory().create(train_config.val_data_config)
 
-    train_sampler, train_shuffle = get_sampler(train_run, train_ds, shuffle=True)
-    val_sampler, val_shuffle = get_sampler(train_run, val_ds, shuffle=False)
+    train_sampler, train_shuffle = get_sampler(
+        train_run.compute_config, train_ds, shuffle=True
+    )
+    val_sampler, val_shuffle = get_sampler(
+        train_run.compute_config, val_ds, shuffle=False
+    )
 
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
@@ -122,11 +172,12 @@ def create_initial_state(train_run: TrainRun, device_id):
         shuffle=train_shuffle,
         num_workers=train_run.compute_config.num_workers,
     )
+    assert val_shuffle is False
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
-        shuffle=False,
-        drop_last=True,
+        shuffle=val_shuffle,
+        drop_last=False,
         sampler=val_sampler,
         num_workers=train_run.compute_config.num_workers,
     )

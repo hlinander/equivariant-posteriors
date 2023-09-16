@@ -151,8 +151,12 @@ def deserialize(config: DeserializeConfig):
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
     val_ds = data_factory.get_factory().create(train_config.val_data_config)
 
-    train_sampler, train_shuffle = get_sampler(config.train_run, train_ds, shuffle=True)
-    val_sampler, val_shuffle = get_sampler(config.train_run, val_ds, shuffle=False)
+    train_sampler, train_shuffle = get_sampler(
+        config.train_run.compute_config, train_ds, shuffle=True
+    )
+    val_sampler, val_shuffle = get_sampler(
+        config.train_run.compute_config, val_ds, shuffle=False
+    )
 
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
