@@ -20,11 +20,18 @@ class DataSine(torch.utils.data.Dataset):
         self.y = torch.sin(self.x)
         self.sample_ids = torch.range(start=0, end=self.n_samples)
 
-    def data_spec(self):
+    @staticmethod
+    def data_spec(config: DataSineConfig):
         return DataSpec(
-            input_shape=self.x.shape[1:],
-            output_shape=self.y.shape[1:],
-            target_shape=self.y.shape[1:],
+            input_shape=torch.Size(config.input_shape),
+            output_shape=torch.Size(
+                config.input_shape
+            ),  # input_shape=self.x.shape[1:],
+            target_shape=torch.Size(
+                config.input_shape
+            ),  # input_shape=self.x.shape[1:],
+            # output_shape=self.y.shape[1:],
+            # target_shape=self.y.shape[1:],
         )
 
     def __getitem__(self, idx):
