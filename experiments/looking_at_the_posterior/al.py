@@ -200,6 +200,12 @@ def al(al_config: ALConfig, device):
                 random_subset_config,
             ]
         )
+        open(output_path / f"frac_{f}_{len(al_sample_ids)}_al_dataset.json").write(
+            json.dumps(al_subset_config.serialize_human(), indent=2)
+        )
+        open(output_path / f"frac_{f}_{len(al_random_ids)}_rnd_dataset.json").write(
+            json.dumps(random_subset_config.serialize_human(), indent=2)
+        )
 
         al_ensemble_config = create_ensemble_config(
             create_config_function(
@@ -279,6 +285,8 @@ if __name__ == "__main__":
         initial_ids = initial_ids + [
             class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:2]
         ]
+    # Pick out the sample_idx
+    initial_ids = [int(sample[1]) for sample in initial_ids]
 
     initial_train_data_config = DataSubsetConfig(
         data_config=DataCIFARConfig(), subset=initial_ids
@@ -323,6 +331,8 @@ if __name__ == "__main__":
     pool_ids = pool_ids + [
         class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
     ]
+    # Pick out the sample_idx
+    pool_ids = [int(sample[1]) for sample in pool_ids]
 
     data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=pool_ids)
     al(
