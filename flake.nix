@@ -1,5 +1,5 @@
 {
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs";
   inputs.helix-pkg.url = "github:helix-editor/helix";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
@@ -64,6 +64,9 @@
           helixmaster
           nixfmt
           jq
+          yazi
+          poppler
+          fzf
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
           (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse matlab]; })
           # cudatoolkit
