@@ -112,7 +112,6 @@ def train(
         input = input.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         output = model(input)
-        # breakpoint()
 
         loss_val = loss(output, target)
         optimizer.zero_grad()
@@ -167,7 +166,7 @@ def create_initial_state(train_run: TrainRun, device_id):
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
-        drop_last=True,
+        drop_last=False,
         sampler=train_sampler,
         shuffle=train_shuffle,
         num_workers=train_run.compute_config.num_workers,
