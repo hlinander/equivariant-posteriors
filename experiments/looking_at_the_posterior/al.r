@@ -18,9 +18,10 @@ df <- dbGetQuery(con, query)
 
 # Close the database connection
 dbDisconnect(con)
-
+df <- read.csv("./experiments/looking_at_the_posterior/active_learning.csv")
 p <- (ggplot(df, aes(x = fraction, y = value, group = model, color=model)) + 
         geom_line() + 
         facet_wrap( ~metric, scales="free_y") + 
-        theme_minimal(base_size = 24))
+        theme_minimal(base_size = 24) +
+        xlim(0, 10^(-3)))
 print(p)
