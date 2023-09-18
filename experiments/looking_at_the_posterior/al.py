@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import ssl
 from pathlib import Path
+from dataclasses import dataclass
+import json
 
 import torch
 import numpy as np
@@ -27,8 +29,10 @@ from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.ensemble import train_member
+from lib.ensemble import EnsembleConfig
 from lib.train import evaluate_metrics_on_data
 from lib.train_dataclasses import ComputeConfig
+from lib.stable_hash import stable_hash_small
 
 from lib.classification_metrics import create_classification_metric_dict
 
@@ -44,69 +48,63 @@ from lib.uncertainty import uncertainty
 
 ssl._create_default_https_context = ssl._create_unverified_context
 rng = np.random.default_rng(42)
+rng_initial_data = np.random.default_rng(42)
 
-if __name__ == "__main__":
-    device_id = ddp_setup()
 
-    ensemble_config_mlp = create_ensemble_config(
-        create_config_function(
-            model_config=MLPClassConfig(widths=[128] * 2), batch_size=2**13
-        ),
-        n_members=5,
+@dataclass
+class ALConfig:
+    ensemble_config: EnsembleConfig
+    uq_calibration_data_config: object
+    data_validation_config: object
+    data_pool_config: object
+
+    def serialize_human(self):
+        return {key: value.serialize_human() for key, value in self.__dict__.items()}
+
+
+def al(al_config: ALConfig, device):
+    ensemble = create_ensemble(al_config.ensemble_config, device)
+
+    hash = stable_hash_small(al_config)
+    output_path = Path(__file__).parent / f"al_{hash}"
+    output_path.mkdir(exist_ok=True, parents=True)
+    open(output_path / "al_config.json").write(
+        json.dumps(al_config.serialize_human(), indent=2)
     )
-    if slurm.get_task_id() is not None:
-        train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
-    else:
-        print("Not in an array job so creating whole ensemble...")
-        ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
-
-    if slurm.get_task_id() is not None:
-        print("Exiting early since this is a SLURM array job used for training only")
-        exit(0)
-
-    ds_cifar_val = data_factory.get_factory().create(DataCIFARConfig(validation=True))
-    dl_cifar_val = torch.utils.data.DataLoader(
-        ds_cifar_val,
+    ds_uq_calibration = data_factory.get_factory().create(
+        al_config.uq_calibration_data_config
+    )
+    dl_uq_calibration = torch.utils.data.DataLoader(
+        ds_uq_calibration,
+        batch_size=256,
+        shuffle=False,
+        drop_last=False,
+    )
+    # pixelate_config = DataCIFAR10CConfig(
+    # subsets=all_subsets[1::2], severities=[1, 2, 3, 4, 5]
+    # )
+    ds_pool = data_factory.get_factory().create(al_config.data_pool_config)
+    dl_pool = torch.utils.data.DataLoader(
+        ds_pool,
         batch_size=256,
         shuffle=False,
         drop_last=False,
     )
 
-    all_subsets = DataCIFAR10C.cifarc_subsets[:]
-    frost_config = DataCIFAR10CConfig(
-        subsets=all_subsets[::2], severities=[1, 2, 3, 4, 5]
-    )
-    ds_cifar_c_frost = data_factory.get_factory().create(frost_config)
-    dl_cifar_c_frost = torch.utils.data.DataLoader(
-        ds_cifar_c_frost,
-        batch_size=256,
-        shuffle=False,
-        drop_last=False,
-    )
-    pixelate_config = DataCIFAR10CConfig(
-        subsets=all_subsets[1::2], severities=[1, 2, 3, 4, 5]
-    )
-    ds_cifar_c_pixelate = data_factory.get_factory().create(pixelate_config)
-    dl_cifar_c_pixelate = torch.utils.data.DataLoader(
-        ds_cifar_c_pixelate,
-        batch_size=256,
-        shuffle=False,
-        drop_last=False,
-    )
-
-    uq_frost = uncertainty(dl_cifar_c_frost, ensemble_mlp, device_id)
+    uq_calibration = uncertainty(dl_uq_calibration, ensemble, device_id)
     acc = (
         torch.where(
-            uq_frost.targets[:, None].cpu() == uq_frost.mean_pred[:, None].cpu(),
+            uq_calibration.targets[:, None].cpu()
+            == uq_calibration.mean_pred[:, None].cpu(),
             1.0,
             0.0,
         )
         .numpy()
         .squeeze()
     )
-    log_H = torch.log(uq_frost.H)
-    log_MI = torch.log(uq_frost.MI)
-    mean_acc_frost, x_bins, y_bins, bin_number = binned_statistic_2d(
+    log_H = torch.log(uq_calibration.H)
+    log_MI = torch.log(uq_calibration.MI)
+    mean_acc_calibration, x_bins, y_bins, bin_number = binned_statistic_2d(
         log_H.cpu().numpy(),
         log_MI.cpu().numpy(),
         acc,
@@ -115,19 +113,19 @@ if __name__ == "__main__":
         expand_binnumbers=True,
     )
 
-    uq_pixelate = uncertainty(dl_cifar_c_pixelate, ensemble_mlp, device_id)
+    uq_pool = uncertainty(dl_pool, ensemble, device_id)
     acc = (
         torch.where(
-            uq_pixelate.targets[:, None].cpu() == uq_pixelate.mean_pred[:, None].cpu(),
+            uq_pool.targets[:, None].cpu() == uq_pool.mean_pred[:, None].cpu(),
             1.0,
             0.0,
         )
         .numpy()
         .squeeze()
     )
-    log_H = torch.log(uq_pixelate.H)
-    log_MI = torch.log(uq_pixelate.MI)
-    mean_acc_pixelate, x_bins, y_bins, bin_number_pixelate = binned_statistic_2d(
+    log_H = torch.log(uq_pool.H)
+    log_MI = torch.log(uq_pool.MI)
+    mean_acc_pool, x_bins, y_bins, bin_number_pool = binned_statistic_2d(
         log_H.cpu().numpy(),
         log_MI.cpu().numpy(),
         acc,
@@ -136,8 +134,8 @@ if __name__ == "__main__":
         expand_binnumbers=True,
     )
 
-    bin_coords = list(zip(bin_number_pixelate[0] - 1, bin_number_pixelate[1] - 1))
-    bin_coords_and_sample_ids = list(zip(bin_coords, uq_pixelate.sample_ids))
+    bin_coords = list(zip(bin_number_pool[0] - 1, bin_number_pool[1] - 1))
+    bin_coords_and_sample_ids = list(zip(bin_coords, uq_pool.sample_ids))
     bin_coords_and_sample_ids_with_values = [
         (coord, sample_id)
         for (coord, sample_id) in bin_coords_and_sample_ids
@@ -155,14 +153,11 @@ if __name__ == "__main__":
         sample_id for _, sample_id in bin_coords_and_sample_ids_with_values
     ]
 
-    inferred_accs = mean_acc_frost[just_coords_x, just_coords_y]
+    inferred_accs = mean_acc_calibration[just_coords_x, just_coords_y]
     accs_and_coords_and_ids = list(
         zip(inferred_accs, just_coords_x, just_coords_y, just_sample_ids)
     )
 
-    # accs_and_coords_and_ids_no_nan = filter(
-    # lambda x: not np.isnan(x[0]), accs_and_coords_and_ids
-    # )
     def nans_last_in_sort(x):
         new_acc = x[0]
         if np.isnan(new_acc):
@@ -176,26 +171,11 @@ if __name__ == "__main__":
     sorted_acc = sorted(accs_and_coords_and_ids_no_nan, key=lambda x: x[0])
 
     sorted_ids = [int(sample_idx) for _, _, _, (sample_idx, _, _) in sorted_acc]
-    random_ids = rng.permutation(len(ds_cifar_c_pixelate))
+    random_ids = rng.permutation(len(ds_pool))
     n_samples = len(sorted_ids)
-
-    # al_subset_config = DataSubsetConfig(
-    #     data_config=pixelate_config, subset=sorted_ids[:200]
-    # )
-    # metrics = create_classification_metric_dict(10)
-    # evaluate_metrics_on_data(
-    #     ensemble_mlp.members[0],
-    #     metrics,
-    #     al_subset_config,
-    #     2000,
-    #     ComputeConfig(distributed=False, num_workers=8),
-    #     device_id,
-    # )
-    # breakpoint()
 
     def train_on_fraction(f):
         n_al_samples = int(n_samples * f)
-        # n_ten_percent = int(len(sorted_ids) * 0.1)
 
         al_sample_ids = sorted_ids[:n_al_samples]
         al_random_ids = random_ids[:n_al_samples]
@@ -203,18 +183,22 @@ if __name__ == "__main__":
         print(f"Aquisition overlap: {len(overlap) / len(al_sample_ids)}")
 
         al_subset_config = DataSubsetConfig(
-            data_config=pixelate_config, subset=al_sample_ids
+            data_config=al_config.data_pool_config, subset=al_sample_ids
         )
         random_subset_config = DataSubsetConfig(
-            data_config=pixelate_config, subset=al_random_ids
+            data_config=al_config.data_pool_config, subset=al_random_ids
         )
-        # )
-        # breakpoint()
         al_extended_ds_config = DataJoinConfig(
-            data_configs=[DataCIFARConfig(), al_subset_config]
+            data_configs=[
+                al_config.ensemble_config.members[0].train_config.train_data_config,
+                al_subset_config,
+            ]
         )
         random_extended_ds_config = DataJoinConfig(
-            data_configs=[DataCIFARConfig(), random_subset_config]
+            data_configs=[
+                al_config.ensemble_config.members[0].train_config.train_data_config,
+                random_subset_config,
+            ]
         )
 
         al_ensemble_config = create_ensemble_config(
@@ -222,7 +206,6 @@ if __name__ == "__main__":
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=al_extended_ds_config,
-                # num_workers=2,
             ),
             n_members=1,
         )
@@ -233,7 +216,6 @@ if __name__ == "__main__":
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=random_extended_ds_config,
-                # num_workers=2,
             ),
             n_members=1,
         )
@@ -250,7 +232,11 @@ if __name__ == "__main__":
     # small_acc = list(filter(lambda x: x[0] < 0.5, accs_and_coords))
     df_rows = []
     # Evenly spaced log in interval [10^-4, 10^0]
-    for frac in np.logspace(start=-4, stop=0, num=15, base=10):
+    n_pool_samples = len(ds_pool)
+    # n_pool_samples * 10^fracstart = 10^2 => frac_start = log10(10^2/n_pool_samples)
+    frac_start = np.log10(10**2 / n_pool_samples)
+    frac_end = np.log10(10**3 / n_pool_samples)
+    for frac in np.logspace(start=frac_start, stop=frac_end, num=10, base=10):
         # for frac in np.linspace(0.1, 1.0, 10):
         al_ensemble, random_ensemble = train_on_fraction(frac)
 
@@ -260,7 +246,7 @@ if __name__ == "__main__":
             evaluate_metrics_on_data(
                 ensemble.members[0],
                 metrics,
-                pixelate_config,
+                al_config.data_validation_config,
                 2000,
                 ComputeConfig(distributed=False, num_workers=8),
                 device_id,
@@ -276,14 +262,85 @@ if __name__ == "__main__":
                 )
 
     df = pd.DataFrame(columns=["model", "fraction", "metric", "value"], data=df_rows)
-    df.to_csv(Path(__file__).parent / "active_learning.csv")
-    psql = create_engine(get_url())
-    df.to_sql("active_learning", psql, if_exists="replace")
+    df.to_csv(output_path / "active_learning.csv")
+
+
+if __name__ == "__main__":
+    device_id = ddp_setup()
+
+    ds_cifar_train = data_factory.get_factory().create(
+        DataCIFARConfig(validation=False)
+    )
+    class_and_id = [(x[1], x[2]) for x in ds_cifar_train]
+    initial_ids = []
+    for class_id in range(5):
+        class_ids = [x for x in class_and_id if x[0] == class_id]
+        # Pick two samples per class randomly
+        initial_ids = initial_ids + [
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:2]
+        ]
+
+    initial_train_data_config = DataSubsetConfig(
+        data_config=DataCIFARConfig(), subset=initial_ids
+    )
+    ensemble_config_mlp = create_ensemble_config(
+        create_config_function(
+            model_config=MLPClassConfig(widths=[128] * 2),
+            batch_size=2**13,
+            data_config=initial_train_data_config,
+        ),
+        n_members=10,
+    )
+    if slurm.get_task_id() is not None:
+        train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
+    else:
+        print("Not in an array job so creating whole ensemble...")
+        ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
+
+    if slurm.get_task_id() is not None:
+        print("Exiting early since this is a SLURM array job used for training only")
+        exit(0)
+
+    all_subsets = DataCIFAR10C.cifarc_subsets[:]
+    uq_calibration_data_config = DataCIFAR10CConfig(
+        subsets=all_subsets[::2], severities=[1, 2, 3, 4, 5]
+    )
+    pool_ids = []
+    for class_id in range(5):
+        class_ids = [x for x in class_and_id if x[0] == class_id]
+        # Pick two samples per class randomly
+        pool_ids = pool_ids + [
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:200]
+        ]
+    for class_id in range(6, 10):
+        class_ids = [x for x in class_and_id if x[0] == class_id]
+        # Pick two samples per class randomly
+        pool_ids = pool_ids + [
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:100]
+        ]
+    class_ids = [x for x in class_and_id if x[0] == 5]
+    # Pick two samples per class randomly
+    pool_ids = pool_ids + [
+        class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
+    ]
+
+    data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=pool_ids)
+    al(
+        ALConfig(
+            ensemble_config=ensemble_config_mlp,
+            uq_calibration_data_config=uq_calibration_data_config,
+            data_validation_config=DataCIFARConfig(validation=True),
+            data_pool_config=data_pool_config,
+        )
+    )
+
+    # psql = create_engine(get_url())
+    # df.to_sql("active_learning", psql, if_exists="replace")
 
     # mean_acc_frost[]
 
-    import matplotlib.pyplot as plt
-    from pathlib import Path
+    # import matplotlib.pyplot as plt
+    # from pathlib import Path
 
     # fig, ax = plt.subplots(1, 1)
     # x = [cx for _, cx, cy in small_acc]
@@ -291,9 +348,9 @@ if __name__ == "__main__":
     # ax.scatter(x, y)
     # fig.savefig(Path(__file__).parent / "small_acc_scatter.pdf")
 
-    fig, ax = plt.subplots(1, 1)
-    ax.scatter(mean_acc_frost.flatten(), mean_acc_pixelate.flatten())
-    fig.savefig(Path(__file__).parent / "acc_scatter.pdf")
+    # fig, ax = plt.subplots(1, 1)
+    # ax.scatter(mean_acc_frost.flatten(), mean_acc_pixelate.flatten())
+    # fig.savefig(Path(__file__).parent / "acc_scatter.pdf")
 
     # torch.histogramdd(uq.)
     # uq_for_ensemble(dl_cifar_c, ensemble_mlp, ensemble_config_mlp, "mlp", device_id)

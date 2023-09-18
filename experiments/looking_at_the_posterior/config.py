@@ -47,7 +47,7 @@ def create_config_function(
             compute_config=ComputeConfig(distributed=False, num_workers=num_workers),
             train_config=train_config,
             train_eval=train_eval,
-            epochs=20,  # TODO
+            epochs=200,  # TODO
             save_nth_epoch=1,
             validate_nth_epoch=5,
         )
