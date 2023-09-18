@@ -1,4 +1,5 @@
-from typing import List
+import torch
+from typing import List, Optional
 from lib.data_factory import get_factory
 from dataclasses import dataclass, field
 from lib.data_factory import get_factory
@@ -11,7 +12,7 @@ class DataSubsetConfig:
     subset: List[int] = field(
         default_factory=lambda: []
     )  # The subset to use, one of ``all`` or the keys in ``cifarc_subsets``
-    minimum_epoch_length: int = 10000
+    minimum_epoch_length: Optional[int] = None
 
     def serialize_human(self):
         return dict(data_config=self.data_config.serialize_human(), subset=self.subset)
@@ -20,18 +21,29 @@ class DataSubsetConfig:
 # fmt:on
 class DataSubset:
     def __init__(self, config: DataSubsetConfig):
-        self.ds = get_factory().create(config.data_config)
-        n_cycles = math.ceil(config.minimum_epoch_length / len(config.subset))
         assert isinstance(config.subset, list)
-        self.subset = config.subset * n_cycles
+        self.ds = get_factory().create(config.data_config)
+        if config.minimum_epoch_length is not None:
+            n_cycles = math.ceil(config.minimum_epoch_length / len(config.subset))
+            self.subset = list(config.subset * n_cycles)
+        else:
+            self.subset = list(config.subset)
+        self.n_classes = self.ds.n_classes
+        self.config = config
 
     @staticmethod
     def data_spec(config: DataSubsetConfig):
         return get_factory().get_class(config.data_config).data_spec(config.data_config)
 
+    @staticmethod
+    def sample_id_spec(config: DataSubsetConfig):
+        return ["idx"]
+        #return get_factory().get_class(config.data_config).sample_id_spec(config.data_config)
+
     def __getitem__(self, idx):
         # breakpoint()
-        return self.ds[self.subset[idx]]
+        x, y, sample_id = self.ds[self.subset[idx]] 
+        return x, y, torch.tensor([idx])
 
     def __len__(self):
         return len(self.subset)

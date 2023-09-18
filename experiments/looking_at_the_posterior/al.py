@@ -21,7 +21,7 @@ from lib.data_registry import (
 
 import lib.data_factory as data_factory
 import lib.slurm as slurm
-from lib.stable_hash import json_dumps_dataclass
+from lib.stable_hash import json_dumps_dataclass_str
 
 from lib.models.mlp import MLPClassConfig
 
@@ -57,9 +57,20 @@ class ALConfig:
     uq_calibration_data_config: object
     data_validation_config: object
     data_pool_config: object
+    n_start: int = 100
+    n_end: int = 10000
+    n_steps: int = 20
 
     def serialize_human(self):
-        return {key: value.serialize_human() for key, value in self.__dict__.items()}
+        return {
+                "ensemble_config": ensemble_config.serialize_human(),
+                "uq_calibration_data_config": ensemble_config.serialize_human(),
+                "data_validation_config": ensemble_config.serialize_human(),
+                "data_pool_config": ensemble_config.serialize_human(),
+                "n_start": n_start,
+                "n_end": n_end,
+                "n_steps": n_steps,
+            }
 
 
 def al(al_config: ALConfig, device):
@@ -68,8 +79,8 @@ def al(al_config: ALConfig, device):
     hash = stable_hash_small(al_config)
     output_path = Path(__file__).parent / f"al_{hash}"
     output_path.mkdir(exist_ok=True, parents=True)
-    open(output_path / "al_config.json").write(
-        json.dumps(al_config.serialize_human(), indent=2)
+    open(output_path / "al_config.json", "w").write(
+            json_dumps_dataclass_str(al_config, indent=2)
     )
     ds_uq_calibration = data_factory.get_factory().create(
         al_config.uq_calibration_data_config
@@ -170,8 +181,8 @@ def al(al_config: ALConfig, device):
 
     sorted_acc = sorted(accs_and_coords_and_ids_no_nan, key=lambda x: x[0])
 
-    sorted_ids = [int(sample_idx) for _, _, _, (sample_idx, _, _) in sorted_acc]
-    random_ids = rng.permutation(len(ds_pool))
+    sorted_ids = [int(sample_idx) for _, _, _, sample_idx in sorted_acc]
+    random_ids = rng.permutation(len(ds_pool)).tolist()
     n_samples = len(sorted_ids)
 
     def train_on_fraction(f):
@@ -183,10 +194,10 @@ def al(al_config: ALConfig, device):
         print(f"Aquisition overlap: {len(overlap) / len(al_sample_ids)}")
 
         al_subset_config = DataSubsetConfig(
-            data_config=al_config.data_pool_config, subset=al_sample_ids
+            data_config=al_config.data_pool_config, subset=al_sample_ids, minimum_epoch_length=10000
         )
         random_subset_config = DataSubsetConfig(
-            data_config=al_config.data_pool_config, subset=al_random_ids
+            data_config=al_config.data_pool_config, subset=al_random_ids, minimum_epoch_length=10000
         )
         al_extended_ds_config = DataJoinConfig(
             data_configs=[
@@ -200,11 +211,11 @@ def al(al_config: ALConfig, device):
                 random_subset_config,
             ]
         )
-        open(output_path / f"frac_{f}_{len(al_sample_ids)}_al_dataset.json").write(
-            json.dumps(al_subset_config.serialize_human(), indent=2)
+        open(output_path / f"frac_{f}_{len(al_sample_ids)}_al_dataset.json", "w").write(
+            json_dumps_dataclass_str(al_subset_config, indent=2)
         )
-        open(output_path / f"frac_{f}_{len(al_random_ids)}_rnd_dataset.json").write(
-            json.dumps(random_subset_config.serialize_human(), indent=2)
+        open(output_path / f"frac_{f}_{len(al_random_ids)}_rnd_dataset.json", "w").write(
+            json_dumps_dataclass_str(random_subset_config, indent=2)
         )
 
         al_ensemble_config = create_ensemble_config(
@@ -212,6 +223,7 @@ def al(al_config: ALConfig, device):
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=al_extended_ds_config,
+                epochs=50
             ),
             n_members=1,
         )
@@ -222,14 +234,15 @@ def al(al_config: ALConfig, device):
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=random_extended_ds_config,
+                epochs=50
             ),
             n_members=1,
         )
-        with open("json_ser_check.json", "a") as sf:
-            sf.write(f"frac: {frac}\nal ensemble\n")
-            sf.write(json_dumps_dataclass(al_ensemble_config).decode("utf-8"))
-            sf.write("\nrandom ensemble\n")
-            sf.write(json_dumps_dataclass(random_ensemble_config).decode("utf-8"))
+        # with open("n_ser_check.json", "a") as sf:
+        #     sf.write(f"frac: {frac}\nal ensemble\n")
+        #     sf.write(json_dumps_dataclass(al_ensemble_config).decode("utf-8"))
+        #     sf.write("\nrandom ensemble\n")
+        #     sf.write(json_dumps_dataclass(random_ensemble_config).decode("utf-8"))
         print(f"Random ensemble frac {frac}:")
         random_ensemble = create_ensemble(random_ensemble_config, device_id)
         print("Random done")
@@ -240,9 +253,9 @@ def al(al_config: ALConfig, device):
     # Evenly spaced log in interval [10^-4, 10^0]
     n_pool_samples = len(ds_pool)
     # n_pool_samples * 10^fracstart = 10^2 => frac_start = log10(10^2/n_pool_samples)
-    frac_start = np.log10(10**2 / n_pool_samples)
-    frac_end = np.log10(10**3 / n_pool_samples)
-    for frac in np.logspace(start=frac_start, stop=frac_end, num=10, base=10):
+    frac_start = np.log10(al_config.n_start / n_pool_samples)
+    frac_end = np.log10(al_config.n_end / n_pool_samples)
+    for frac in np.logspace(start=frac_start, stop=frac_end, num=al_config.n_steps, base=10):
         # for frac in np.linspace(0.1, 1.0, 10):
         al_ensemble, random_ensemble = train_on_fraction(frac)
 
@@ -289,7 +302,7 @@ if __name__ == "__main__":
     initial_ids = [int(sample[1]) for sample in initial_ids]
 
     initial_train_data_config = DataSubsetConfig(
-        data_config=DataCIFARConfig(), subset=initial_ids
+        data_config=DataCIFARConfig(), subset=initial_ids, minimum_epoch_length=10000
     )
     ensemble_config_mlp = create_ensemble_config(
         create_config_function(
@@ -341,8 +354,8 @@ if __name__ == "__main__":
             uq_calibration_data_config=uq_calibration_data_config,
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
-        )
-    )
+        ),
+    device_id)
 
     # psql = create_engine(get_url())
     # df.to_sql("active_learning", psql, if_exists="replace")

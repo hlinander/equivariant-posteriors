@@ -25,6 +25,7 @@ class DataJoin:
             local_idxs = list(range(len(ds)))
             global_idxs = [(ds_idx, local_idx) for local_idx in local_idxs]
             self.index = self.index + global_idxs
+        self.config = config
 
     @staticmethod
     def data_spec(config: DataJoinConfig):
@@ -33,6 +34,10 @@ class DataJoin:
             .get_class(config.data_configs[0])
             .data_spec(config.data_configs[0])
         )
+
+    @staticmethod
+    def sample_id_spec(_config):
+        return ["idx"]
 
     def __getitem__(self, idx):
         ds_idx, sample_idx = self.index[idx]

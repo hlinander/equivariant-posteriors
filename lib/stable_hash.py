@@ -29,15 +29,18 @@ def serialize_dataclass(instance) -> dict:
         return instance
 
 
-def json_dumps_dataclass(data_class):
+def json_dumps_dataclass_str(data_class, indent=None):
     return json.dumps(
         serialize_dataclass(data_class),
         default=json_default,
         ensure_ascii=False,
         sort_keys=True,
-        indent=None,
+        indent=indent,
         separators=(",", ":"),
-    ).encode("utf-8")
+    )
+    
+def json_dumps_dataclass(data_class):
+    return json_dumps_dataclass_str(data_class).encode("utf-8")
 
 
 def stable_hash(data_class):
