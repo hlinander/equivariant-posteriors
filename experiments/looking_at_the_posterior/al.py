@@ -249,7 +249,9 @@ if __name__ == "__main__":
 
     # small_acc = list(filter(lambda x: x[0] < 0.5, accs_and_coords))
     df_rows = []
-    for frac in np.linspace(0.1, 1.0, 10):
+    # Evenly spaced log in interval [10^-4, 10^0]
+    for frac in np.logspace(start=-4, stop=0, num=15, base=10):
+        # for frac in np.linspace(0.1, 1.0, 10):
         al_ensemble, random_ensemble = train_on_fraction(frac)
 
         for ensemble_name, ensemble in [("al", al_ensemble), ("rnd", random_ensemble)]:

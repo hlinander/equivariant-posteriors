@@ -115,7 +115,7 @@
 
       sing = pkgs.singularity-tools.buildImage {
         name = "equivariant-posteriors";
-        diskSize = 1024 * 60;
+        diskSize = 1024 * 80;
         memSize = 1024 * 8;
         contents = 
           [ 
