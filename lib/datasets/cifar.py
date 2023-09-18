@@ -106,7 +106,7 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
         )
 
     @staticmethod
-    def sample_id_spec():
+    def sample_id_spec(config):
         return ["idx"]
 
     # @functools.cache

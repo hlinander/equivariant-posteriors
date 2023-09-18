@@ -82,8 +82,8 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     mean_preds = []
     targets = []
     for iteration, (input, target, sample_id) in enumerate(tqdm(data_loader)):
-        # if iteration > 10:
-        # break
+        #if iteration > 10:
+        #    break
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
         )
@@ -107,7 +107,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         H=torch.concat(HS),
         A=torch.concat(AS),
         sample_ids=torch.concat(sample_ids),
-        sample_id_spec=data_loader.dataset.sample_id_spec(),
+        sample_id_spec=data_loader.dataset.sample_id_spec(data_loader.dataset.config),
         mean_pred=torch.concat(mean_preds),
         targets=torch.concat(targets),
     )

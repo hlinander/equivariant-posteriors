@@ -266,7 +266,7 @@ class DataCIFAR10C(VisionDataset):
         return sample, target, sample_id
 
     @staticmethod
-    def sample_id_spec():
+    def sample_id_spec(config):
         return ["idx", "subset", "severity"]
 
     def _check_integrity(self) -> bool:

@@ -17,7 +17,7 @@ def create_corrupted_dataset_config():
 
 
 def create_config_function(
-    model_config: object, batch_size: int, data_config=None, num_workers=16
+    model_config: object, batch_size: int, data_config=None, num_workers=16, epochs=200
 ):
     if data_config is None:
         data_config = DataCIFARConfig()
@@ -47,7 +47,7 @@ def create_config_function(
             compute_config=ComputeConfig(distributed=False, num_workers=num_workers),
             train_config=train_config,
             train_eval=train_eval,
-            epochs=200,  # TODO
+            epochs=epochs,  # TODO
             save_nth_epoch=1,
             validate_nth_epoch=5,
         )
