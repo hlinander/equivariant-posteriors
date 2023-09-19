@@ -42,7 +42,7 @@ from experiments.looking_at_the_posterior.config import (
 )
 
 # from experiments.looking_at_the_posterior.uq import uq_for_ensemble
-from lib.uncertainty import uncertainty
+from lib.uncertainty import uncertainty, uq_to_dataframe
 
 # from lib.render_psql import dict_to_normalized_json
 
@@ -103,6 +103,7 @@ def al(al_config: ALConfig, device):
     )
 
     uq_calibration = uncertainty(dl_uq_calibration, ensemble, device_id)
+    uq_to_dataframe(uq_calibration).to_csv(output_path / "uq_calibration.csv")
     acc = (
         torch.where(
             uq_calibration.targets[:, None].cpu()

@@ -1,6 +1,7 @@
 from typing import List
 from dataclasses import dataclass
 import torch
+import pandas as pd
 from tqdm import tqdm
 
 from lib.ensemble import Ensemble
@@ -82,7 +83,7 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     mean_preds = []
     targets = []
     for iteration, (input, target, sample_id) in enumerate(tqdm(data_loader)):
-        #if iteration > 10:
+        # if iteration > 10:
         #    break
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
@@ -110,4 +111,26 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
         sample_id_spec=data_loader.dataset.sample_id_spec(data_loader.dataset.config),
         mean_pred=torch.concat(mean_preds),
         targets=torch.concat(targets),
+    )
+
+
+def uq_to_dataframe(uq: Uncertainty) -> pd.DataFrame:
+    data = torch.concat(
+        [
+            uq.MI[:, None].cpu(),
+            uq.H[:, None].cpu(),
+            uq.sample_ids.cpu(),
+            uq.mean_pred[:, None].cpu(),
+            uq.targets[:, None].cpu(),
+            torch.where(
+                uq.targets[:, None].cpu() == uq.mean_pred[:, None].cpu(),
+                1.0,
+                0.0,
+            ),
+        ],
+        dim=-1,
+    )
+    return pd.DataFrame(
+        columns=["MI", "H"] + uq.sample_id_spec + ["pred", "target", "accuracy"],
+        data=data.numpy(),
     )
