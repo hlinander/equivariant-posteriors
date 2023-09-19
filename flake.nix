@@ -65,8 +65,10 @@
           nixfmt
           jq
           yazi
+          nerdfonts
           poppler
           fzf
+          (ueberzugpp.override { enableWayland=false; enableOpencv=false; })
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
           (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse matlab]; })
           # cudatoolkit

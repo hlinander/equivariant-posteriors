@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import ssl
+import json
 from pathlib import Path
 from dataclasses import dataclass
-import json
 
 import torch
 import numpy as np
@@ -63,14 +63,14 @@ class ALConfig:
 
     def serialize_human(self):
         return {
-                "ensemble_config": ensemble_config.serialize_human(),
-                "uq_calibration_data_config": ensemble_config.serialize_human(),
-                "data_validation_config": ensemble_config.serialize_human(),
-                "data_pool_config": ensemble_config.serialize_human(),
-                "n_start": n_start,
-                "n_end": n_end,
-                "n_steps": n_steps,
-            }
+            "ensemble_config": self.ensemble_config.serialize_human(),
+            "uq_calibration_data_config": self.ensemble_config.serialize_human(),
+            "data_validation_config": self.ensemble_config.serialize_human(),
+            "data_pool_config": self.ensemble_config.serialize_human(),
+            "n_start": self.n_start,
+            "n_end": self.n_end,
+            "n_steps": self.n_steps,
+        }
 
 
 def al(al_config: ALConfig, device):
@@ -80,7 +80,7 @@ def al(al_config: ALConfig, device):
     output_path = Path(__file__).parent / f"al_{hash}"
     output_path.mkdir(exist_ok=True, parents=True)
     open(output_path / "al_config.json", "w").write(
-            json_dumps_dataclass_str(al_config, indent=2)
+        json_dumps_dataclass_str(al_config, indent=2)
     )
     ds_uq_calibration = data_factory.get_factory().create(
         al_config.uq_calibration_data_config
@@ -194,10 +194,14 @@ def al(al_config: ALConfig, device):
         print(f"Aquisition overlap: {len(overlap) / len(al_sample_ids)}")
 
         al_subset_config = DataSubsetConfig(
-            data_config=al_config.data_pool_config, subset=al_sample_ids, minimum_epoch_length=10000
+            data_config=al_config.data_pool_config,
+            subset=al_sample_ids,
+            minimum_epoch_length=10000,
         )
         random_subset_config = DataSubsetConfig(
-            data_config=al_config.data_pool_config, subset=al_random_ids, minimum_epoch_length=10000
+            data_config=al_config.data_pool_config,
+            subset=al_random_ids,
+            minimum_epoch_length=10000,
         )
         al_extended_ds_config = DataJoinConfig(
             data_configs=[
@@ -211,19 +215,26 @@ def al(al_config: ALConfig, device):
                 random_subset_config,
             ]
         )
+        open(
+            output_path / f"frac_{f}_{len(al_sample_ids)}_al_dataset_classes.json", "w"
+        ).write(json.dumps([ds_pool[idx][1] for idx in al_sample_ids]))
+        open(
+            output_path / f"frac_{f}_{len(al_sample_ids)}_random_dataset_classes.json",
+            "w",
+        ).write(json.dumps([ds_pool[idx][1] for idx in al_random_ids]))
         open(output_path / f"frac_{f}_{len(al_sample_ids)}_al_dataset.json", "w").write(
             json_dumps_dataclass_str(al_subset_config, indent=2)
         )
-        open(output_path / f"frac_{f}_{len(al_random_ids)}_rnd_dataset.json", "w").write(
-            json_dumps_dataclass_str(random_subset_config, indent=2)
-        )
+        open(
+            output_path / f"frac_{f}_{len(al_random_ids)}_rnd_dataset.json", "w"
+        ).write(json_dumps_dataclass_str(random_subset_config, indent=2))
 
         al_ensemble_config = create_ensemble_config(
             create_config_function(
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=al_extended_ds_config,
-                epochs=50
+                epochs=50,
             ),
             n_members=1,
         )
@@ -234,7 +245,7 @@ def al(al_config: ALConfig, device):
                 model_config=MLPClassConfig(widths=[128] * 2),
                 batch_size=2**13,
                 data_config=random_extended_ds_config,
-                epochs=50
+                epochs=50,
             ),
             n_members=1,
         )
@@ -255,7 +266,9 @@ def al(al_config: ALConfig, device):
     # n_pool_samples * 10^fracstart = 10^2 => frac_start = log10(10^2/n_pool_samples)
     frac_start = np.log10(al_config.n_start / n_pool_samples)
     frac_end = np.log10(al_config.n_end / n_pool_samples)
-    for frac in np.logspace(start=frac_start, stop=frac_end, num=al_config.n_steps, base=10):
+    for frac in np.logspace(
+        start=frac_start, stop=frac_end, num=al_config.n_steps, base=10
+    ):
         # for frac in np.linspace(0.1, 1.0, 10):
         al_ensemble, random_ensemble = train_on_fraction(frac)
 
@@ -327,23 +340,24 @@ if __name__ == "__main__":
         subsets=all_subsets[::2], severities=[1, 2, 3, 4, 5]
     )
     pool_ids = []
-    for class_id in range(5):
+    # for class_id in range(5):
+    #     class_ids = [x for x in class_and_id if x[0] == class_id]
+    #     # Pick two samples per class randomly
+    #     pool_ids = pool_ids + [
+    #         class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:300]
+    #     ]
+    pool_ids = pool_ids + list(initial_ids * 200)
+    for class_id in range(5, 10):
         class_ids = [x for x in class_and_id if x[0] == class_id]
         # Pick two samples per class randomly
         pool_ids = pool_ids + [
-            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:200]
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
         ]
-    for class_id in range(6, 10):
-        class_ids = [x for x in class_and_id if x[0] == class_id]
-        # Pick two samples per class randomly
-        pool_ids = pool_ids + [
-            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:100]
-        ]
-    class_ids = [x for x in class_and_id if x[0] == 5]
+    # class_ids = [x for x in class_and_id if x[0] == 5]
     # Pick two samples per class randomly
-    pool_ids = pool_ids + [
-        class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
-    ]
+    # pool_ids = pool_ids + [
+    # class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
+    # ]
     # Pick out the sample_idx
     pool_ids = [int(sample[1]) for sample in pool_ids]
 
@@ -355,7 +369,8 @@ if __name__ == "__main__":
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
         ),
-    device_id)
+        device_id,
+    )
 
     # psql = create_engine(get_url())
     # df.to_sql("active_learning", psql, if_exists="replace")
