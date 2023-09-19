@@ -58,7 +58,7 @@ class ALConfig:
     data_validation_config: object
     data_pool_config: object
     n_start: int = 100
-    n_end: int = 10000
+    n_end: int = 3000
     n_steps: int = 20
 
     def serialize_human(self):
