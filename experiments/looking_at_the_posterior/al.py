@@ -346,7 +346,6 @@ if __name__ == "__main__":
     #     pool_ids = pool_ids + [
     #         class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:300]
     #     ]
-    pool_ids = pool_ids + list(initial_ids * 200)
     for class_id in range(5, 10):
         class_ids = [x for x in class_and_id if x[0] == class_id]
         # Pick two samples per class randomly
@@ -360,6 +359,7 @@ if __name__ == "__main__":
     # ]
     # Pick out the sample_idx
     pool_ids = [int(sample[1]) for sample in pool_ids]
+    pool_ids = pool_ids + list(initial_ids * 200)
 
     data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=pool_ids)
     al(
