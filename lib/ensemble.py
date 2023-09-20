@@ -97,3 +97,16 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     return Ensemble(
         member_configs=ensemble_config.members, members=members, n_members=len(members)
     )
+
+
+def ensemble_mean_prediction(ensemble: Ensemble, x: torch.Tensor):
+    outputs = []
+    for member in ensemble.members:
+        output = member(x)
+        outputs.append(output["predictions"])
+    all_outputs = torch.stack(outputs, dim=0)
+    predictions = torch.mean(all_outputs, dim=0)
+    return dict(
+        predictions=predictions,
+        logits=torch.log(predictions + torch.finfo(torch.float32).eps),
+    )
