@@ -35,6 +35,7 @@ class ALConfig:
 class ALStep:
     al_config: ALConfig
     ensemble: object
+    aquired_ids: List[int]
     pool_ids: List[int]
     rng: np.random.Generator
     step: int
