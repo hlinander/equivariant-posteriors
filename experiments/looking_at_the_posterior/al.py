@@ -33,6 +33,7 @@ from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.ensemble import train_member
 from lib.ensemble import ensemble_mean_prediction
+from lib.ensemble import is_ensemble_serialized
 from lib.train import evaluate_metrics_on_data
 from lib.train_dataclasses import ComputeConfig
 from lib.stable_hash import stable_hash_small
@@ -216,13 +217,14 @@ if __name__ == "__main__":
     )
     if slurm.get_task_id() is not None:
         train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
-    else:
-        print("Not in an array job so creating whole ensemble...")
-        ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
 
-    if slurm.get_task_id() is not None:
+    if slurm.get_task_id() is not None and not is_ensemble_serialized(
+        ensemble_config_mlp
+    ):
         print("Exiting early since this is a SLURM array job used for training only")
         exit(0)
+
+    ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
 
     all_subsets = DataCIFAR10C.cifarc_subsets[:]
     uq_calibration_data_config = DataCIFAR10CConfig(
@@ -259,7 +261,7 @@ if __name__ == "__main__":
             n_epochs_per_step=50,
             n_members=5,
             n_start=50,
-            n_stop=1000,
+            n_end=1000,
             n_steps=10,
         )
         al_configs.append(al_config)

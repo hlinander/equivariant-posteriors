@@ -5,7 +5,12 @@ import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
-from lib.serialization import get_checkpoint_path, deserialize_model, DeserializeConfig
+from lib.serialization import (
+    get_checkpoint_path,
+    deserialize_model,
+    DeserializeConfig,
+    is_serialized,
+)
 from lib.model_factory import get_factory
 
 
@@ -97,6 +102,14 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     return Ensemble(
         member_configs=ensemble_config.members, members=members, n_members=len(members)
     )
+
+
+def is_ensemble_serialized(ensemble_config: EnsembleConfig):
+    for member_config in ensemble_config.members:
+        if not is_serialized(member_config):
+            return False
+
+    return True
 
 
 def ensemble_mean_prediction(ensemble: Ensemble, x: torch.Tensor):
