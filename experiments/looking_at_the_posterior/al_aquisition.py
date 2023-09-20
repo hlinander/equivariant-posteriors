@@ -25,7 +25,8 @@ def al_aquisition_random(
     )
 
     # breakpoint()
-    return [al_step.pool_ids[idx] for idx in random_idxs[:n_samples]]
+    new_ids = [al_step.pool_ids[idx] for idx in random_idxs[:n_samples]]
+    return al_step.aquired_ids + new_ids
 
 
 def al_aquisition_calibrated_uncertainty(
@@ -145,9 +146,10 @@ def al_aquisition_calibrated_uncertainty(
 
     # breakpoint()
 
-    return sorted_ids[
+    new_ids = sorted_ids[
         : int(
             (al_step.al_config.n_end - al_step.al_config.n_start)
             / al_step.al_config.n_steps
         )
     ]
+    return al_step.aquired_ids + new_ids

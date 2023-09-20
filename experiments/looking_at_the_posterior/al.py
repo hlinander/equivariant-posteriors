@@ -121,6 +121,7 @@ def al_do_step(al_step: ALStep, device, output_path):
         ensemble=al_ensemble,
         step=al_step.step + 1,
         pool_ids=new_pool_ids,
+        aquired_ids=al_sample_ids,
         rng=al_step.rng,
     )
 
@@ -276,6 +277,7 @@ if __name__ == "__main__":
             ensemble=ensemble,
             step=0,
             pool_ids=pool_ids,
+            aquired_ids=[],
             rng=np.random.default_rng(al_config.seed),
         )
         do_al_steps(al_config, al_initial_step, output_path)
