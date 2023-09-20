@@ -34,6 +34,7 @@ from lib.ensemble import create_ensemble
 from lib.ensemble import train_member
 from lib.ensemble import ensemble_mean_prediction
 from lib.ensemble import is_ensemble_serialized
+from lib.serialization import is_serialized
 from lib.train import evaluate_metrics_on_data
 from lib.train_dataclasses import ComputeConfig
 from lib.stable_hash import stable_hash_small
@@ -216,7 +217,9 @@ if __name__ == "__main__":
         ),
         n_members=5,
     )
-    if slurm.get_task_id() is not None:
+    if slurm.get_task_id() is not None and not is_serialized(
+        ensemble_config_mlp.members[slurm.get_task_id()]
+    ):
         train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
 
     if slurm.get_task_id() is not None and not is_ensemble_serialized(
