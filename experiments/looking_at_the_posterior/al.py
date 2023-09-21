@@ -234,15 +234,18 @@ if __name__ == "__main__":
     uq_calibration_data_config = DataCIFAR10CConfig(
         subsets=all_subsets[::2], severities=[1, 2, 3, 4, 5]
     )
-    _pool_ids = []
-    for class_id in range(5, 10):
-        class_ids = [x for x in class_and_id if x[0] == class_id]
-        # Pick two samples per class randomly
-        _pool_ids = _pool_ids + [
-            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
-        ]
-    _pool_ids = [int(sample[1]) for sample in _pool_ids]
-    _pool_ids = _pool_ids + list(initial_ids * 200)
+    class_and_id = [(x[1], x[2]) for x in ds_cifar_train]
+    pool_perm = rng_initial_data.permutation(len(ds_cifar_train))
+    _pool_ids = pool_perm[:1000].tolist()
+    # for class_id in range(5, 10):
+    #     class_ids = [x for x in class_and_id if x[0] == class_id]
+    #     # Pick two samples per class randomly
+    #     _pool_ids = _pool_ids + [
+    #         class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
+    #     ]
+    # _pool_ids = [int(sample[1]) for sample in _pool_ids]
+    # # breakpoint()
+    # _pool_ids = _pool_ids + list(initial_ids * 200)
 
     data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=_pool_ids)
     pool_ids = list(range(len(_pool_ids)))
@@ -258,15 +261,17 @@ if __name__ == "__main__":
     for aquisition_method in AQUISITION_FUNCTIONS.keys():
         al_config = ALConfig(
             ensemble_config=ensemble_config_mlp,
-            uq_calibration_data_config=uq_calibration_c10,
+            uq_calibration_data_config=DataCIFARConfig(
+                validation=True
+            ),  # uq_calibration_c10,
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
             aquisition_method=aquisition_method,
-            n_epochs_per_step=50,
+            n_epochs_per_step=25,
             n_members=5,
             n_start=50,
             n_end=1000,
-            n_steps=10,
+            n_steps=100,
         )
         al_configs.append(al_config)
 
