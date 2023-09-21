@@ -1,6 +1,7 @@
 import torch
 from dataclasses import dataclass
 from typing import List
+import json
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
@@ -10,6 +11,7 @@ from lib.paths import get_checkpoint_path, get_or_create_checkpoint_path
 import lib.model_factory as model_factory
 from lib.data_utils import get_sampler
 from lib.ddp import get_rank
+from lib.stable_hash import json_dumps_dataclass_str
 import shutil
 
 
@@ -61,6 +63,12 @@ def serialize(config: SerializeConfig):
         torch.save(value, checkpoint_path / f"{key}_tmp")
         shutil.move(checkpoint_path / f"{key}_tmp", checkpoint_path / key)
 
+    with open(checkpoint_path / "train_run.json_tmp", "w") as train_run_json_file:
+        train_run_json_file.write(json_dumps_dataclass_str(config.train_run, indent=2))
+    shutil.move(
+        checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
+    )
+
 
 @dataclass
 class DeserializeConfig:
@@ -68,8 +76,8 @@ class DeserializeConfig:
     device_id: torch.device
 
 
-def is_serialized(config: TrainRun):
-    train_config = config.train_config
+def is_serialized(train_run: TrainRun):
+    train_config = train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config) / "model"
     return checkpoint_path.is_file()
 

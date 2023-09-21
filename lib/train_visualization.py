@@ -7,6 +7,7 @@ import io
 import torch
 
 from lib.paths import get_or_create_checkpoint_path
+from lib.stable_hash import stable_hash_small
 
 
 def visualize_progress(state, train_run, last_postgres_result, device):
@@ -89,7 +90,12 @@ def visualize_progress(state, train_run, last_postgres_result, device):
     plt.subplot(1, 3)
     plt.title("Config")
     # tc = "\n".join(text_config(asdict(train_run)))
-    tc = "\n".join(text_config(train_run.serialize_human()))
+    tc_config = text_config(train_run.serialize_human())
+    tc_header = [
+        f"train_run: {stable_hash_small(train_run)}",
+        f"train_config: {stable_hash_small(train_run.train_config)}",
+    ]
+    tc = "\n".join(tc_header + tc_config)
     plt.xlim(0, 1)
     plt.ylim(0, 1)
     plt.text(tc, 0, 1, color="black")
