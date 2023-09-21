@@ -38,6 +38,7 @@ from lib.serialization import is_serialized
 from lib.train import evaluate_metrics_on_data
 from lib.train_dataclasses import ComputeConfig
 from lib.stable_hash import stable_hash_small
+from lib.train_distributed import request_train_run
 
 from lib.classification_metrics import create_classification_metric_dict
 
@@ -214,19 +215,23 @@ if __name__ == "__main__":
             model_config=MLPClassConfig(widths=[128] * 2),
             batch_size=2**13,
             data_config=initial_train_data_config,
+            epochs=50,
         ),
-        n_members=5,
+        n_members=10,
     )
-    if slurm.get_task_id() is not None and not is_serialized(
-        ensemble_config_mlp.members[slurm.get_task_id()]
-    ):
-        train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
+    # for member in ensemble_config_mlp.members:
+    #     request_train_run(member)
+    # exit(0)
+    # if slurm.get_task_id() is not None and not is_serialized(
+    #     ensemble_config_mlp.members[slurm.get_task_id()]
+    # ):
+    #     train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
 
-    if slurm.get_task_id() is not None and not is_ensemble_serialized(
-        ensemble_config_mlp
-    ):
-        print("Exiting early since this is a SLURM array job used for training only")
-        exit(0)
+    # if slurm.get_task_id() is not None and not is_ensemble_serialized(
+    #     ensemble_config_mlp
+    # ):
+    #     print("Exiting early since this is a SLURM array job used for training only")
+    #     exit(0)
 
     ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
 

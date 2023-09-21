@@ -1,3 +1,4 @@
+import time
 from typing import Callable, List, Tuple
 from dataclasses import dataclass
 from pathlib import Path
@@ -5,6 +6,7 @@ import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
+from lib.train_distributed import request_train_run, fetch_requested_hash
 from lib.serialization import (
     get_checkpoint_path,
     deserialize_model,
@@ -12,6 +14,7 @@ from lib.serialization import (
     is_serialized,
 )
 from lib.model_factory import get_factory
+from lib.stable_hash import stable_hash
 
 
 @dataclass
@@ -77,27 +80,46 @@ def train_member(ensemble_config: EnsembleConfig, member_idx: int, device_id):
 
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
+    all_member_hashes = set(
+        [stable_hash(member_config) for member_config in ensemble_config.members]
+    )
+    trained_members = set()
     print("Will try to load ensemble checkpoints from:")
     for member_config in ensemble_config.members:
+        if not is_serialized(member_config):
+            request_train_run(member_config)
         print(get_checkpoint_path(member_config.train_config).as_posix())
     print("Loading or training ensemble...")
-    for member_config in ensemble_config.members:
-        deserialized_model = deserialize_model(
-            DeserializeConfig(member_config, device_id)
-        )
-        if (
-            deserialized_model is None
-            or deserialized_model.epoch < member_config.epochs
-        ):
-            state = load_or_create_state(member_config, device_id)
-            print(sum([p.numel() for p in state.model.parameters()]))
-            do_training(member_config, state, device_id)
-            model = state.model
-        else:
-            model = deserialized_model.model
+    while len(trained_members) < len(ensemble_config.members):
+        for member_config in ensemble_config.members:
+            if stable_hash(member_config) in trained_members:
+                continue
 
-        model.eval()
-        members.append(model)
+            deserialized_model = deserialize_model(
+                DeserializeConfig(member_config, device_id)
+            )
+            if (
+                deserialized_model is None
+                or deserialized_model.epoch < member_config.epochs
+            ):
+                distributed_train_run = fetch_requested_hash(stable_hash(member_config))
+                if distributed_train_run is None:
+                    continue
+                state = load_or_create_state(member_config, device_id)
+                # print(sum([p.numel() for p in state.model.parameters()]))
+                do_training(member_config, state, device_id)
+                model = state.model
+            else:
+                model = deserialized_model.model
+
+            trained_members.add(stable_hash(member_config))
+
+            model.eval()
+            members.append(model)
+        if len(trained_members) < len(ensemble_config.members):
+            print("Waiting for members that are probably being trained elsewhere:")
+            print(all_member_hashes.difference(trained_members))
+            time.sleep(1)
 
     return Ensemble(
         member_configs=ensemble_config.members, members=members, n_members=len(members)

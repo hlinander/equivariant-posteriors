@@ -76,6 +76,7 @@
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
             # p.torchUncertainty
             p.ipdb
+            p.dill
             p.filelock
             p.gitpython
             p.tqdm
