@@ -3,6 +3,7 @@ import time
 from typing import Callable, List, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+import filelock
 import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
@@ -132,7 +133,11 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     )
                     state = load_or_create_state(member_config, device_id)
                     # print(sum([p.numel() for p in state.model.parameters()]))
-                    do_training(member_config, state, device_id)
+                    try:
+                        do_training(member_config, state, device_id)
+                    except filelock.Timeout:
+                        print(f"do_training failed to lock for {hash}. Continuing.")
+                        continue
                     model = state.model
                 else:
                     print(
