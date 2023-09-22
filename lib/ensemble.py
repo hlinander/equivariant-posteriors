@@ -95,22 +95,26 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
             if stable_hash(member_config) in trained_members:
                 continue
 
-            deserialized_model = deserialize_model(
-                DeserializeConfig(member_config, device_id)
-            )
-            if (
-                deserialized_model is None
-                or deserialized_model.epoch < member_config.epochs
-            ):
-                distributed_train_run = fetch_requested_hash(stable_hash(member_config))
-                if distributed_train_run is None:
-                    continue
-                state = load_or_create_state(member_config, device_id)
-                # print(sum([p.numel() for p in state.model.parameters()]))
-                do_training(member_config, state, device_id)
-                model = state.model
-            else:
-                model = deserialized_model.model
+            distributed_train_run = fetch_requested_hash(stable_hash(member_config))
+            if distributed_train_run is None:
+                continue
+
+            try:
+                deserialized_model = deserialize_model(
+                    DeserializeConfig(member_config, device_id)
+                )
+                if (
+                    deserialized_model is None
+                    or deserialized_model.epoch < member_config.epochs
+                ):
+                    state = load_or_create_state(member_config, device_id)
+                    # print(sum([p.numel() for p in state.model.parameters()]))
+                    do_training(member_config, state, device_id)
+                    model = state.model
+                else:
+                    model = deserialized_model.model
+            finally:
+                distributed_train_run.lock.release()
 
             trained_members.add(stable_hash(member_config))
 
