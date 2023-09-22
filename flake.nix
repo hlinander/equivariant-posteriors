@@ -112,6 +112,7 @@
         nativeBuildInputs = [pkgs.cudatoolkit];
         shellHook = '' 
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
+          export EDITOR=hx
           # export CUDA_PATH=${pkgs.cudatoolkit}
         '';
          };

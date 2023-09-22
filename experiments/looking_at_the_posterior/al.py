@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 import ssl
 import json
 from pathlib import Path
@@ -295,12 +296,8 @@ if __name__ == "__main__":
         )
         do_al_steps(al_config, al_initial_step, output_path)
 
-    if slurm.get_task_id() is not None:
-        # train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
-        if slurm.get_task_id() > len(al_configs):
-            print(f"No al config available for this id: {slurm.get_task_id()}")
-            exit(0)
-        do_al_for_config(al_configs[slurm.get_task_id()])
+    if os.getenv("AL_TASK") is not None:
+        do_al_for_config(al_configs[int(os.getenv("AL_TASK"))])
     else:
         print("Not in an array job so creating whole ensemble...")
         ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
