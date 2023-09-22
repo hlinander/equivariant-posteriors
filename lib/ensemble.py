@@ -12,6 +12,7 @@ from lib.serialization import (
     deserialize_model,
     DeserializeConfig,
     is_serialized,
+    get_train_run_status,
 )
 from lib.model_factory import get_factory
 from lib.stable_hash import stable_hash
@@ -84,14 +85,19 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
         [stable_hash(member_config) for member_config in ensemble_config.members]
     )
     train_config_hash_dict = {
-        stable_hash(member_config): stable_hash(member_config.train_config)
+        stable_hash(member_config): dict(
+            train_config_hash=stable_hash(member_config.train_config),
+            train_run=member_config,
+        )
         for member_config in ensemble_config.members
     }
     trained_members = set()
-    print("Will try to load ensemble checkpoints from:")
+    print(
+        "Requesting all ensemble members to make sure we can get help if multiple members are not trained until completion."
+    )
     for member_config in ensemble_config.members:
-        if not is_serialized(member_config):
-            request_train_run(member_config)
+        # if not is_serialized(member_config):
+        request_train_run(member_config)
         print(get_checkpoint_path(member_config.train_config).as_posix())
     print("Loading or training ensemble...")
     while len(trained_members) < len(ensemble_config.members):
@@ -118,6 +124,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     deserialized_model is None
                     or deserialized_model.epoch < member_config.epochs
                 ):
+                    continue
                     print(
                         f"Could not deserialize {hash} or epochs are not enough, I will continue training myself."
                     )
@@ -144,7 +151,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
             print("With train config hashes:")
             print(
                 [
-                    train_config_hash_dict[hash]
+                    f"{train_config_hash_dict[hash]['train_config_hash']}: {get_train_run_status(train_config_hash_dict[hash]['train_run'])}"
                     for hash in all_member_hashes.difference(trained_members)
                 ]
             )

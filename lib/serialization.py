@@ -2,6 +2,7 @@ import torch
 from dataclasses import dataclass
 from typing import List
 import json
+from datetime import datetime
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
@@ -68,6 +69,22 @@ def serialize(config: SerializeConfig):
     shutil.move(
         checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
     )
+    with open(checkpoint_path / "status_tmp", "w") as status_file:
+        status_file.write(
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: Epoch {train_epoch_state.epoch} / {train_run.epochs}"
+        )
+    shutil.move(checkpoint_path / "status_tmp", checkpoint_path / "status")
+
+
+def get_train_run_status(train_run: TrainRun):
+    status_file = get_checkpoint_path(train_run.train_config) / "status"
+    if status_file.is_file():
+        try:
+            return open(status_file).read()
+        except:
+            return "Couldn't read status..."
+    else:
+        return "No status file."
 
 
 @dataclass
