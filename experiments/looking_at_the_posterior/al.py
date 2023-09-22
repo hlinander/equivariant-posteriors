@@ -264,7 +264,7 @@ if __name__ == "__main__":
     )
 
     al_configs = []
-    for aquisition_method in AQUISITION_FUNCTIONS.keys():
+    if os.getenv("AL_TASK") is not None:
         al_config = ALConfig(
             ensemble_config=ensemble_config_mlp,
             uq_calibration_data_config=DataCIFARConfig(
@@ -272,7 +272,7 @@ if __name__ == "__main__":
             ),  # uq_calibration_c10,
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
-            aquisition_method=aquisition_method,
+            aquisition_method=os.getenv("AL_TASK"),
             n_epochs_per_step=25,
             n_members=5,
             n_start=50,
@@ -280,6 +280,23 @@ if __name__ == "__main__":
             n_steps=100,
         )
         al_configs.append(al_config)
+    else:
+        for aquisition_method in AQUISITION_FUNCTIONS.keys():
+            al_config = ALConfig(
+                ensemble_config=ensemble_config_mlp,
+                uq_calibration_data_config=DataCIFARConfig(
+                    validation=True
+                ),  # uq_calibration_c10,
+                data_validation_config=DataCIFARConfig(validation=True),
+                data_pool_config=data_pool_config,
+                aquisition_method=aquisition_method,
+                n_epochs_per_step=25,
+                n_members=5,
+                n_start=50,
+                n_end=1000,
+                n_steps=100,
+            )
+            al_configs.append(al_config)
 
     output_path = create_output_path_and_write_config(al_configs)
     print(f"Saving results to {output_path}")
@@ -297,12 +314,12 @@ if __name__ == "__main__":
         )
         do_al_steps(al_config, al_initial_step, output_path)
 
-    if os.getenv("AL_TASK") is not None:
         do_al_for_config(al_configs[int(os.getenv("AL_TASK"))])
-    else:
-        print("Not in an array job so creating whole ensemble...")
-        ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
-        for al_config in al_configs:
-            do_al_for_config(al_config)
+
+    # else:
+    #     print("Not in an array job so creating whole ensemble...")
+    # ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
+    for al_config in al_configs:
+        do_al_for_config(al_config)
 
     print(f"Wrote results to {output_path}")
