@@ -65,6 +65,18 @@ class DistributedTrainRun:
     lock: FileLock
 
 
+def lock_requested_hash(hash):
+    lock = FileLock(get_lock_from_hash(hash))
+    try:
+        lock.acquire(timeout=1)
+        print(f"Aquired lock {get_lock_from_hash(hash)}")
+        return lock
+    except Timeout:
+        print(f"Probably being trained [{hash}]")
+
+    return None
+
+
 def fetch_requested_hash(hash):
     lock = FileLock(get_lock_from_hash(hash))
     try:
@@ -74,6 +86,9 @@ def fetch_requested_hash(hash):
             train_run = get_train_run_from_hash(hash)
             return DistributedTrainRun(train_run=train_run, lock=lock)
         else:
+            print(
+                f"No requested train run file present at {get_request_path_from_hash(hash)}. Releasing lock."
+            )
             lock.release()
     except Timeout:
         print(f"Probably being trained [{hash}]")
