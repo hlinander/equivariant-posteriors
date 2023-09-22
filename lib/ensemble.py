@@ -99,7 +99,12 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     )
     for member_config in ensemble_config.members:
         # if not is_serialized(member_config):
-        request_train_run(member_config)
+        try:
+            request_train_run(member_config)
+        except filelock.Timeout:
+            print(
+                "Could not request train run...Dropping request but will do training myself if needed."
+            )
         print(get_checkpoint_path(member_config.train_config).as_posix())
     print("Loading or training ensemble...")
     while len(trained_members) < len(ensemble_config.members):
