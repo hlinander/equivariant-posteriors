@@ -6,7 +6,7 @@ import torch
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
-from lib.train_distributed import request_train_run, fetch_requested_hash
+from lib.train_distributed import request_train_run, lock_requested_hash
 from lib.serialization import (
     get_checkpoint_path,
     deserialize_model,
@@ -83,6 +83,10 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     all_member_hashes = set(
         [stable_hash(member_config) for member_config in ensemble_config.members]
     )
+    train_config_hash_dict = {
+        stable_hash(member_config): stable_hash(member_config.train_config)
+        for member_config in ensemble_config.members
+    }
     trained_members = set()
     print("Will try to load ensemble checkpoints from:")
     for member_config in ensemble_config.members:
@@ -92,14 +96,21 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     print("Loading or training ensemble...")
     while len(trained_members) < len(ensemble_config.members):
         for member_config in ensemble_config.members:
+            hash = stable_hash(member_config)
+            print(f"Checking if {hash} has already been trained...")
             if stable_hash(member_config) in trained_members:
+                print(f"{hash} has already been trained. Continuing.")
                 continue
 
-            distributed_train_run = fetch_requested_hash(stable_hash(member_config))
-            if distributed_train_run is None:
+            print(f"Trying to aquire distributed lock for train run {hash}")
+            distributed_train_run_lock = lock_requested_hash(hash)
+            if distributed_train_run_lock is None:
+                print(f"Could not aquire distributed lock for {hash}. Continuing.")
                 continue
+            print(f"Aquired lock for {hash}.")
 
             try:
+                print(f"Deserializing {hash}")
                 deserialized_model = deserialize_model(
                     DeserializeConfig(member_config, device_id)
                 )
@@ -107,14 +118,21 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     deserialized_model is None
                     or deserialized_model.epoch < member_config.epochs
                 ):
+                    print(
+                        f"Could not deserialize {hash} or epochs are not enough, I will continue training myself."
+                    )
                     state = load_or_create_state(member_config, device_id)
                     # print(sum([p.numel() for p in state.model.parameters()]))
                     do_training(member_config, state, device_id)
                     model = state.model
                 else:
+                    print(
+                        f"Model for {hash} successfully deserialized, using its state dict."
+                    )
                     model = deserialized_model.model
             finally:
-                distributed_train_run.lock.release()
+                print("Releasing distributed lock explicitly.")
+                distributed_train_run_lock.release()
 
             trained_members.add(stable_hash(member_config))
 
@@ -123,6 +141,13 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
         if len(trained_members) < len(ensemble_config.members):
             print("Waiting for members that are probably being trained elsewhere:")
             print(all_member_hashes.difference(trained_members))
+            print("With train config hashes:")
+            print(
+                [
+                    train_config_hash_dict[hash]
+                    for hash in all_member_hashes.difference(trained_members)
+                ]
+            )
             time.sleep(1)
 
     return Ensemble(
