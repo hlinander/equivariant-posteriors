@@ -98,7 +98,14 @@ def fetch_requested_hash(hash):
 
 def fetch_requested_train_run():
     pool = DISTRIBUTED_TRAINING_REQUEST_PATH.glob("*.dill")
-    sorted_pool = sorted(pool, key=os.path.getctime)
+    pool_with_ctime = []
+    for pool_file in pool:
+        try:
+            ctime = os.path.getctime(pool_file)
+            pool_with_ctime.append((ctime, pool_file))
+        except:
+            pass
+    sorted_pool = [x[1] for x in sorted(pool_with_ctime)]
     for request_file in sorted_pool:
         hash = request_file.stem
         lock = FileLock(get_lock_from_hash(hash))

@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Callable, List, Tuple
 from dataclasses import dataclass
@@ -124,7 +125,8 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     deserialized_model is None
                     or deserialized_model.epoch < member_config.epochs
                 ):
-                    continue
+                    if os.getenv("EV_MAIN_NO_TRAIN") is not None:
+                        continue
                     print(
                         f"Could not deserialize {hash} or epochs are not enough, I will continue training myself."
                     )
