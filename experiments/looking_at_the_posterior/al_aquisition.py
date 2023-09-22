@@ -81,6 +81,10 @@ def al_aquisition_calibrated_uncertainty(
     )
 
     uq_pool = uncertainty(dl_pool, al_step.ensemble, device_id)
+    uq_to_dataframe(uq_pool).to_csv(
+        output_path
+        / f"uq_pool_step_{al_step.step:03d}_{al_step.al_config.aquisition_method}.csv"
+    )
     acc = (
         torch.where(
             uq_pool.targets[:, None].cpu() == uq_pool.mean_pred[:, None].cpu(),
@@ -152,4 +156,9 @@ def al_aquisition_calibrated_uncertainty(
             / al_step.al_config.n_steps
         )
     ]
+    df_uq_pool = uq_to_dataframe(uq_pool)
+    df_uq_pool[df_uq_pool["idx"].isin(new_ids)].to_csv(
+        output_path
+        / f"uq_aquired_step_{al_step.step:03d}_{al_step.al_config.aquisition_method}.csv"
+    )
     return al_step.aquired_ids + new_ids
