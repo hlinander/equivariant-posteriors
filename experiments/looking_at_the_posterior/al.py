@@ -282,6 +282,7 @@ if __name__ == "__main__":
         al_configs.append(al_config)
 
     output_path = create_output_path_and_write_config(al_configs)
+    print(f"Saving results to {output_path}")
 
     def do_al_for_config(al_config):
         ensemble = create_ensemble(al_config.ensemble_config, device_id)
