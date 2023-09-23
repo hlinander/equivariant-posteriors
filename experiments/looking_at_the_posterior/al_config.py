@@ -12,6 +12,7 @@ class ALConfig:
     uq_calibration_data_config: object
     data_validation_config: object
     data_pool_config: object
+    model_name: str
     aquisition_method: str
     aquisition_config: object
     seed: int = 42

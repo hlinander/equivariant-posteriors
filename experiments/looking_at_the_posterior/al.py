@@ -28,6 +28,7 @@ import lib.slurm as slurm
 from lib.stable_hash import json_dumps_dataclass_str
 
 from lib.models.mlp import MLPClassConfig
+from lib.models.conv_lap import ConvLAPConfig
 
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
@@ -76,6 +77,8 @@ AQUISITION_FUNCTIONS = dict(
     mutual_information=al_aquisition_mutual_information,
 )
 
+MODELS = dict(conv=ConvLAPConfig(), mlp=MLPClassConfig(widths=[128] * 2))
+
 
 def create_output_path_and_write_config(al_config: object) -> Path:
     hash = stable_hash_small(al_config)
@@ -118,8 +121,10 @@ def al_do_step(al_step: ALStep, device, output_path):
 
     al_ensemble_config = create_ensemble_config(
         create_config_function(
-            model_config=MLPClassConfig(widths=[128] * 2),
-            batch_size=2**13,
+            model_config=MODELS[
+                al_config.model_name
+            ],  # MLPClassConfig(widths=[128] * 2),
+            batch_size=int(os.getenv("AL_BS", 2**13)),
             data_config=al_extended_ds_config,
             epochs=al_step.al_config.n_epochs_per_step,
         ),
@@ -202,6 +207,8 @@ def do_al_steps(al_config: ALConfig, al_initial: ALStep, output_path: Path):
 if __name__ == "__main__":
     device_id = ddp_setup()
 
+    model_name = os.getenv("AL_MODEL", "mlp")
+
     ds_cifar_train = data_factory.get_factory().create(
         DataCIFARConfig(validation=False)
     )
@@ -221,26 +228,13 @@ if __name__ == "__main__":
     )
     ensemble_config_mlp = create_ensemble_config(
         create_config_function(
-            model_config=MLPClassConfig(widths=[128] * 2),
-            batch_size=2**13,
+            model_config=MODELS[model_name],  # MLPClassConfig(widths=[128] * 2),
+            batch_size=int(os.getenv("AL_BS", 2**13)),
             data_config=initial_train_data_config,
             epochs=50,
         ),
-        n_members=10,
+        n_members=5,
     )
-    # for member in ensemble_config_mlp.members:
-    #     request_train_run(member)
-    # exit(0)
-    # if slurm.get_task_id() is not None and not is_serialized(
-    #     ensemble_config_mlp.members[slurm.get_task_id()]
-    # ):
-    #     train_member(ensemble_config_mlp, slurm.get_task_id(), device_id)
-
-    # if slurm.get_task_id() is not None and not is_ensemble_serialized(
-    #     ensemble_config_mlp
-    # ):
-    #     print("Exiting early since this is a SLURM array job used for training only")
-    #     exit(0)
 
     ensemble_mlp = create_ensemble(ensemble_config_mlp, device_id)
 
@@ -271,7 +265,7 @@ if __name__ == "__main__":
         data_config=DataCIFARConfig(), subset=cifar_10_not_in_initial
     )
 
-    def create_al_config(aquisition_method, aquisition_config):
+    def create_al_config(aquisition_method, aquisition_config, model_name):
         return ALConfig(
             ensemble_config=ensemble_config_mlp,
             uq_calibration_data_config=DataCIFARConfig(
@@ -279,6 +273,7 @@ if __name__ == "__main__":
             ),  # uq_calibration_c10,
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
+            model_name=model_name,
             aquisition_method=aquisition_method,
             aquisition_config=aquisition_config,
             n_epochs_per_step=25,
@@ -289,16 +284,17 @@ if __name__ == "__main__":
         )
 
     al_types = dict(
-        random=create_al_config("random", RandomConfig()),
+        random=create_al_config("random", RandomConfig(), model_name),
         predictive_entropy=create_al_config(
-            "predictive_entropy", PredictiveEntropyConfig()
+            "predictive_entropy", PredictiveEntropyConfig(), model_name
         ),
         mutual_information=create_al_config(
-            "mutual_information", MutualInformationConfig()
+            "mutual_information", MutualInformationConfig(), model_name
         ),
         calibrated_uq=create_al_config(
             "calibrated_uq",
             CalibratedUncertaintyConfig(bins=int(os.getenv("AL_UQ_BINS", 15))),
+            model_name,
         ),
     )
     al_configs = []
@@ -313,6 +309,7 @@ if __name__ == "__main__":
                 ),  # uq_calibration_c10,
                 data_validation_config=DataCIFARConfig(validation=True),
                 data_pool_config=data_pool_config,
+                model_name=model_name,
                 aquisition_method=aquisition_method,
                 n_epochs_per_step=25,
                 n_members=5,
