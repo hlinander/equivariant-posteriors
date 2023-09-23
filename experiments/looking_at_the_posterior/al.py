@@ -179,14 +179,15 @@ def evaluate(al_config: ALConfig, al_step: ALStep):
     for metric_name, metric in metrics.items():
         df_rows.append(
             dict(
-                model=al_config.aquisition_method,
+                model=al_config.model_name,
+                aquisition=al_config.aquisition_method,
                 fraction=n_aquired / len(ds_pool),
                 n_aquired=n_aquired,
                 metric=metric_name,
                 value=metric.mean(),
             )
         )
-    return df_rows, ["model", "fraction", "n_aquired", "metric", "value"]
+    return df_rows, ["model", "aquisition", "fraction", "n_aquired", "metric", "value"]
 
 
 def do_al_steps(al_config: ALConfig, al_initial: ALStep, output_path: Path):
@@ -200,8 +201,9 @@ def do_al_steps(al_config: ALConfig, al_initial: ALStep, output_path: Path):
         al_step = next_step
 
     df = pd.DataFrame(columns=df_columns, data=df_rows)
-    df.to_csv(output_path / f"{al_config.aquisition_method}.csv")
-    print(f"Wrote {output_path / al_config.aquisition_method}.csv")
+    df_path = output_path / f"{al_config.model_name}_{al_config.aquisition_method}.csv"
+    df.to_csv(df_path)
+    print(f"Wrote {df_path}")
 
 
 if __name__ == "__main__":
