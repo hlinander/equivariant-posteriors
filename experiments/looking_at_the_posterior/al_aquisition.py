@@ -80,6 +80,13 @@ def al_aquisition_calibrated_uncertainty(
         expand_binnumbers=True,
     )
 
+    np.save(
+        output_path
+        / f"uq_mean_acc_step_{al_step.step:03d}_{al_step.al_config.aquisition_method}.npy",
+        mean_acc_calibration,
+    )
+    # breakpoint()
+
     uq_pool = uncertainty(dl_pool, al_step.ensemble, device_id)
     uq_to_dataframe(uq_pool).to_csv(
         output_path
@@ -125,6 +132,11 @@ def al_aquisition_calibrated_uncertainty(
     ]
 
     inferred_accs = mean_acc_calibration[just_coords_x, just_coords_y]
+    np.save(
+        output_path
+        / f"uq_inferred_acc_step_{al_step.step:03d}_{al_step.al_config.aquisition_method}.npy",
+        inferred_accs,
+    )
     accs_and_coords_and_ids = list(
         zip(inferred_accs, just_coords_x, just_coords_y, just_sample_ids)
     )
