@@ -11,6 +11,76 @@ from experiments.looking_at_the_posterior.al_config import ALStep
 
 
 @dataclass
+class PredictiveEntropyConfig:
+    pass
+
+
+@dataclass
+class MutualInformationConfig:
+    pass
+
+
+def al_aquisition_predictive_entropy(
+    al_step: ALStep,
+    config: PredictiveEntropyConfig,
+    output_path: Path,
+    device_id,
+):
+    ds_pool = data_factory.get_factory().create(al_step.al_config.data_pool_config)
+    dl_pool = torch.utils.data.DataLoader(
+        ds_pool,
+        batch_size=256,
+        shuffle=False,
+        drop_last=False,
+    )
+    uq_pool = uncertainty(dl_pool, al_step.ensemble, device_id)
+    minus_predictive_entropy = -uq_pool.H
+    H_and_idx = zip(
+        minus_predictive_entropy.numpy().tolist(),
+        uq_pool.sample_ids.squeeze().numpy().tolist(),
+    )
+    sorted_H_and_idx = sorted(H_and_idx)
+    sorted_idx = [x[1] for x in sorted_H_and_idx]
+    n_samples = int(
+        (al_step.al_config.n_end - al_step.al_config.n_start)
+        / al_step.al_config.n_steps
+    )
+
+    new_ids = [al_step.pool_ids[idx] for idx in sorted_idx[:n_samples]]
+    return al_step.aquired_ids + new_ids
+
+
+def al_aquisition_mutual_information(
+    al_step: ALStep,
+    config: PredictiveEntropyConfig,
+    output_path: Path,
+    device_id,
+):
+    ds_pool = data_factory.get_factory().create(al_step.al_config.data_pool_config)
+    dl_pool = torch.utils.data.DataLoader(
+        ds_pool,
+        batch_size=256,
+        shuffle=False,
+        drop_last=False,
+    )
+    uq_pool = uncertainty(dl_pool, al_step.ensemble, device_id)
+    minus_mutual_information = -uq_pool.MI
+    H_and_idx = zip(
+        minus_mutual_information.numpy().tolist(),
+        uq_pool.sample_ids.squeeze().numpy().tolist(),
+    )
+    sorted_H_and_idx = sorted(H_and_idx)
+    sorted_idx = [x[1] for x in sorted_H_and_idx]
+    n_samples = int(
+        (al_step.al_config.n_end - al_step.al_config.n_start)
+        / al_step.al_config.n_steps
+    )
+
+    new_ids = [al_step.pool_ids[idx] for idx in sorted_idx[:n_samples]]
+    return al_step.aquired_ids + new_ids
+
+
+@dataclass
 class RandomConfig:
     pass
 

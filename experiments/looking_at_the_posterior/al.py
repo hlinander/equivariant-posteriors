@@ -52,6 +52,10 @@ from experiments.looking_at_the_posterior.al_config import ALStep, ALConfig
 from experiments.looking_at_the_posterior.al_aquisition import (
     al_aquisition_calibrated_uncertainty,
     al_aquisition_random,
+    al_aquisition_predictive_entropy,
+    al_aquisition_mutual_information,
+    MutualInformationConfig,
+    PredictiveEntropyConfig,
     CalibratedUncertaintyConfig,
     RandomConfig,
 )
@@ -68,6 +72,7 @@ rng_initial_data = np.random.default_rng(42)
 AQUISITION_FUNCTIONS = dict(
     calibrated_uq=al_aquisition_calibrated_uncertainty,
     random=al_aquisition_random,
+    predictive_entropy=al_aquisition_predictive_entropy,
 )
 
 
@@ -284,6 +289,12 @@ if __name__ == "__main__":
 
     al_types = dict(
         random=create_al_config("random", RandomConfig()),
+        predictive_entropy=create_al_config(
+            "predictive_entropy", PredictiveEntropyConfig()
+        ),
+        mutual_information=create_al_config(
+            "mutual_information", MutualInformationConfig()
+        ),
         calibrated_uq=create_al_config(
             "calibrated_uq",
             CalibratedUncertaintyConfig(bins=int(os.getenv("AL_UQ_BINS", 15))),
@@ -306,7 +317,7 @@ if __name__ == "__main__":
                 n_members=5,
                 n_start=50,
                 n_end=1000,
-                n_steps=100,
+                n_steps=20,
             )
             al_configs.append(al_config)
 
@@ -326,7 +337,7 @@ if __name__ == "__main__":
         )
         do_al_steps(al_config, al_initial_step, output_path)
 
-        do_al_for_config(al_configs[int(os.getenv("AL_TASK"))])
+        # do_al_for_config(al_configs[int(os.getenv("AL_TASK"))])
 
     # else:
     #     print("Not in an array job so creating whole ensemble...")
