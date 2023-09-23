@@ -55,9 +55,11 @@ from experiments.looking_at_the_posterior.al_aquisition import (
     al_aquisition_random,
     al_aquisition_predictive_entropy,
     al_aquisition_mutual_information,
+    al_aquisition_calibrated_uncertainty_true_negative,
     MutualInformationConfig,
     PredictiveEntropyConfig,
     CalibratedUncertaintyConfig,
+    CalibratedUncertaintyTrueNegativeConfig,
     RandomConfig,
 )
 
@@ -72,6 +74,7 @@ rng_initial_data = np.random.default_rng(42)
 
 AQUISITION_FUNCTIONS = dict(
     calibrated_uq=al_aquisition_calibrated_uncertainty,
+    calibrated_uq_tn=al_aquisition_calibrated_uncertainty_true_negative,
     random=al_aquisition_random,
     predictive_entropy=al_aquisition_predictive_entropy,
     mutual_information=al_aquisition_mutual_information,
@@ -296,6 +299,13 @@ if __name__ == "__main__":
         calibrated_uq=create_al_config(
             "calibrated_uq",
             CalibratedUncertaintyConfig(bins=int(os.getenv("AL_UQ_BINS", 15))),
+            model_name,
+        ),
+        calibrated_uq_tn=create_al_config(
+            "calibrated_uq_tn",
+            CalibratedUncertaintyTrueNegativeConfig(
+                bins=int(os.getenv("AL_UQ_BINS", 15))
+            ),
             model_name,
         ),
     )
