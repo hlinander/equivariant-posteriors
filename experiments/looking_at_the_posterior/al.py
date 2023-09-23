@@ -73,6 +73,7 @@ AQUISITION_FUNCTIONS = dict(
     calibrated_uq=al_aquisition_calibrated_uncertainty,
     random=al_aquisition_random,
     predictive_entropy=al_aquisition_predictive_entropy,
+    mutual_information=al_aquisition_mutual_information,
 )
 
 
@@ -284,7 +285,7 @@ if __name__ == "__main__":
             n_members=5,
             n_start=50,
             n_end=1000,
-            n_steps=100,
+            n_steps=20,
         )
 
     al_types = dict(
