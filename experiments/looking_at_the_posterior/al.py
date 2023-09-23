@@ -249,7 +249,7 @@ if __name__ == "__main__":
     )
     class_and_id = [(x[1], x[2]) for x in ds_cifar_train]
     pool_perm = rng_initial_data.permutation(len(ds_cifar_train))
-    _pool_ids = pool_perm[:1000].tolist()
+    _pool_ids = pool_perm[:].tolist()
     # for class_id in range(5, 10):
     #     class_ids = [x for x in class_and_id if x[0] == class_id]
     #     # Pick two samples per class randomly
