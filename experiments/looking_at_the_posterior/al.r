@@ -1,5 +1,8 @@
 library(ggplot2)
+library(reticulate)
 library(RPostgreSQL)
+library(tidyr)
+library(scales)
 
 drv <- dbDriver("PostgreSQL")
 con <-
@@ -30,9 +33,12 @@ p <- (ggplot(df, aes(x = fraction, y = value, group = model, color=model)) +
         xlim(0, 1)
 print(p)
 
-df_cal<-read.csv("./alvis/al_28ba7eb/uq_calibration_step_006_calibrated_uncertainty.csv")
-df_aq <-read.csv("./alvis/al_28ba7eb/uq_aquired_step_006_calibrated_uncertainty.csv")
-df_pool <-read.csv("./alvis/al_28ba7eb/uq_pool_step_006_calibrated_uncertainty.csv")
+df_cal<-read.csv("./alvis/al_28ba7eb/uq_calibration_step_002_calibrated_uncertainty.csv")
+df_aq <-read.csv("./alvis/al_28ba7eb/uq_aquired_step_002_calibrated_uncertainty.csv")
+df_pool <-read.csv("./alvis/al_28ba7eb/uq_pool_step_002_calibrated_uncertainty.csv")
+np <- import("numpy")
+mean_accs <- np$load("./alvis/al_28ba7eb/uq_mean_acc_step_002_calibrated_uncertainty.npy")
+mean_accs <- pivot_longer()
 min_samples_mean <- function(z) {
   if (length(z) >= 10) {
     return(mean(z))
@@ -46,7 +52,9 @@ stat_summary_2d(data=df_cal, aes(x=H, y=MI, z=accuracy, fill=..value..), fun="me
    geom_point(data=df_aq, aes(x=H, y=MI), color="red", fill="green", shape=19, size=5) +
     geom_point(data=df_pool, aes(x=H, y=MI), color="red", shape=2) +
     scale_fill_viridis_c() +
-    theme_minimal(base_size=40)
+    theme_minimal(base_size=40) + 
+    scale_x_continuous(trans = log_trans()) +
+    scale_y_continuous(trans = log_trans())
   )
 
 

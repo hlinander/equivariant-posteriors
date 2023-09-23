@@ -52,6 +52,8 @@ from experiments.looking_at_the_posterior.al_config import ALStep, ALConfig
 from experiments.looking_at_the_posterior.al_aquisition import (
     al_aquisition_calibrated_uncertainty,
     al_aquisition_random,
+    CalibratedUncertaintyConfig,
+    RandomConfig,
 )
 
 # from experiments.looking_at_the_posterior.uq import uq_for_ensemble
@@ -64,7 +66,7 @@ rng_initial_data = np.random.default_rng(42)
 
 
 AQUISITION_FUNCTIONS = dict(
-    calibrated_uncertainty=al_aquisition_calibrated_uncertainty,
+    calibrated_uq=al_aquisition_calibrated_uncertainty,
     random=al_aquisition_random,
 )
 
@@ -82,7 +84,7 @@ def create_output_path_and_write_config(al_config: object) -> Path:
 
 def al_do_step(al_step: ALStep, device, output_path):
     al_sample_ids = AQUISITION_FUNCTIONS[al_config.aquisition_method](
-        al_step, output_path, device
+        al_step, al_step.al_config.aquisition_config, output_path, device
     )
     new_pool_ids = list(set(al_step.pool_ids).difference(set(al_sample_ids)))
     al_subset_config = DataSubsetConfig(
@@ -263,23 +265,33 @@ if __name__ == "__main__":
         data_config=DataCIFARConfig(), subset=cifar_10_not_in_initial
     )
 
-    al_configs = []
-    if os.getenv("AL_TASK") is not None:
-        al_config = ALConfig(
+    def create_al_config(aquisition_method, aquisition_config):
+        return ALConfig(
             ensemble_config=ensemble_config_mlp,
             uq_calibration_data_config=DataCIFARConfig(
                 validation=True
             ),  # uq_calibration_c10,
             data_validation_config=DataCIFARConfig(validation=True),
             data_pool_config=data_pool_config,
-            aquisition_method=os.getenv("AL_TASK"),
+            aquisition_method=aquisition_method,
+            aquisition_config=aquisition_config,
             n_epochs_per_step=25,
             n_members=5,
             n_start=50,
             n_end=1000,
             n_steps=100,
         )
-        al_configs.append(al_config)
+
+    al_types = dict(
+        random=create_al_config("random", RandomConfig()),
+        calibrated_uq=create_al_config(
+            "calibrated_uq",
+            CalibratedUncertaintyConfig(bins=int(os.getenv("AL_UQ_BINS", 15))),
+        ),
+    )
+    al_configs = []
+    if os.getenv("AL_TASK") is not None:
+        al_configs.append(al_types[os.getenv("AL_TASK")])
     else:
         for aquisition_method in AQUISITION_FUNCTIONS.keys():
             al_config = ALConfig(

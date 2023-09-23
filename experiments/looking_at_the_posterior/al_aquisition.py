@@ -1,5 +1,6 @@
 import torch
 from pathlib import Path
+from dataclasses import dataclass
 import numpy as np
 from scipy.stats import binned_statistic_2d
 
@@ -9,11 +10,17 @@ from lib.uncertainty import uncertainty, uq_to_dataframe
 from experiments.looking_at_the_posterior.al_config import ALStep
 
 
+@dataclass
+class RandomConfig:
+    pass
+
+
 def al_aquisition_random(
     # al_config: ALConfig,
     # ensemble: object,
     # rng: np.random.Generator,
     al_step: ALStep,
+    config: RandomConfig,
     output_path: Path,
     device_id,
 ):
@@ -29,11 +36,17 @@ def al_aquisition_random(
     return al_step.aquired_ids + new_ids
 
 
+@dataclass
+class CalibratedUncertaintyConfig:
+    bins: int = 20
+
+
 def al_aquisition_calibrated_uncertainty(
     # al_step.al_config: ALConfig,
     # ensemble: object,
     # rng: np.random.Generator,
     al_step: ALStep,
+    config: CalibratedUncertaintyConfig,
     output_path: Path,
     device_id,
 ):
@@ -69,17 +82,18 @@ def al_aquisition_calibrated_uncertainty(
         .numpy()
         .squeeze()
     )
-    log_H = torch.log(uq_calibration.H)
-    log_MI = torch.log(uq_calibration.MI)
+    # log_H = torch.log(uq_calibration.H)
+    # log_MI = torch.log(uq_calibration.MI)
     mean_acc_calibration, x_bins, y_bins, bin_number = binned_statistic_2d(
-        log_H.cpu().numpy(),
-        log_MI.cpu().numpy(),
+        uq_calibration.H.cpu().numpy(),
+        uq_calibration.MI.cpu().numpy(),
         acc,
         statistic="mean",
-        bins=50,
+        bins=config.bins,
         expand_binnumbers=True,
     )
 
+    # breakpoint()
     np.save(
         output_path
         / f"uq_mean_acc_step_{al_step.step:03d}_{al_step.al_config.aquisition_method}.npy",
@@ -101,11 +115,11 @@ def al_aquisition_calibrated_uncertainty(
         .numpy()
         .squeeze()
     )
-    log_H = torch.log(uq_pool.H)
-    log_MI = torch.log(uq_pool.MI)
+    # log_H = torch.log(uq_pool.H)
+    # log_MI = torch.log(uq_pool.MI)
     mean_acc_pool, x_bins, y_bins, bin_number_pool = binned_statistic_2d(
-        log_H.cpu().numpy(),
-        log_MI.cpu().numpy(),
+        uq_pool.H.cpu().numpy(),
+        uq_pool.MI.cpu().numpy(),
         acc,
         statistic="mean",
         bins=[x_bins, y_bins],
