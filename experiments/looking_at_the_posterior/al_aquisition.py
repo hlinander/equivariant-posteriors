@@ -41,12 +41,14 @@ def al_aquisition_predictive_entropy(
     )
     sorted_H_and_idx = sorted(H_and_idx)
     sorted_idx = [x[1] for x in sorted_H_and_idx]
+    sorted_idx = [idx for idx in sorted_idx if idx in al_step.pool_ids]
     n_samples = int(
         (al_step.al_config.n_end - al_step.al_config.n_start)
         / al_step.al_config.n_steps
     )
+    n_samples = min(n_samples, len(sorted_idx))
 
-    new_ids = [al_step.pool_ids[idx] for idx in sorted_idx[:n_samples]]
+    new_ids = sorted_idx[:n_samples]
     return al_step.aquired_ids + new_ids
 
 
@@ -71,12 +73,14 @@ def al_aquisition_mutual_information(
     )
     sorted_H_and_idx = sorted(H_and_idx)
     sorted_idx = [x[1] for x in sorted_H_and_idx]
+    sorted_idx = [idx for idx in sorted_idx if idx in al_step.pool_ids]
     n_samples = int(
         (al_step.al_config.n_end - al_step.al_config.n_start)
         / al_step.al_config.n_steps
     )
+    n_samples = min(n_samples, len(sorted_idx))
 
-    new_ids = [al_step.pool_ids[idx] for idx in sorted_idx[:n_samples]]
+    new_ids = sorted_idx[:n_samples]
     return al_step.aquired_ids + new_ids
 
 
