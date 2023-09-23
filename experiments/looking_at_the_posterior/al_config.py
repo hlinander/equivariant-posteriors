@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from lib.ensemble import EnsembleConfig
+from lib.serialization import serialize_human
 
 
 @dataclass
@@ -12,6 +13,7 @@ class ALConfig:
     data_validation_config: object
     data_pool_config: object
     aquisition_method: str
+    aquisition_config: object
     seed: int = 42
     n_start: int = 100
     n_end: int = 3000
@@ -20,15 +22,16 @@ class ALConfig:
     n_members: int = 5
 
     def serialize_human(self):
-        return {
-            "ensemble_config": self.ensemble_config.serialize_human(),
-            "uq_calibration_data_config": self.ensemble_config.serialize_human(),
-            "data_validation_config": self.ensemble_config.serialize_human(),
-            "data_pool_config": self.ensemble_config.serialize_human(),
-            "n_start": self.n_start,
-            "n_end": self.n_end,
-            "n_steps": self.n_steps,
-        }
+        return serialize_human(self.__dict__)
+        # return {
+        #     "ensemble_config": self.ensemble_config.serialize_human(),
+        #     "uq_calibration_data_config": self.ensemble_config.serialize_human(),
+        #     "data_validation_config": self.ensemble_config.serialize_human(),
+        #     "data_pool_config": self.ensemble_config.serialize_human(),
+        #     "n_start": self.n_start,
+        #     "n_end": self.n_end,
+        #     "n_steps": self.n_steps,
+        # }
 
 
 @dataclass
