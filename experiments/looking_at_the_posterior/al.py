@@ -281,7 +281,7 @@ if __name__ == "__main__":
 
     def create_al_config(aquisition_method, aquisition_config, model_name):
         return ALConfig(
-            name="unbalanced_data",
+            name="balanced_data_lower_aq",
             ensemble_config=ensemble_config_mlp,
             uq_calibration_data_config=DataCIFARConfig(
                 validation=True
