@@ -5,14 +5,16 @@ import numpy as np
 import torchvision
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.serialization import serialize_human
 
 
 @dataclass(frozen=True)
 class DataCIFARConfig:
     validation: bool = False
+    augment: bool = True
 
     def serialize_human(self):
-        return dict(validation=self.validation)
+        return serialize_human(self.__dict__)  # dict(validation=self.validation)
 
 
 def cutout(x, c):
@@ -29,7 +31,7 @@ class DataCIFAROld(torch.utils.data.Dataset):
                 (0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)
             ),
         ]
-        if not data_config.validation:
+        if not data_config.validation and data_config.augment:
             transform_stack.append(
                 torchvision.transforms.RandomCrop(32, padding=4, padding_mode="reflect")
             )
@@ -74,7 +76,7 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
                 (0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)
             ),
         ]
-        if not data_config.validation:
+        if not data_config.validation and data_config.augment:
             transform_stack.append(
                 torchvision.transforms.RandomCrop(32, padding=4, padding_mode="reflect")
             )
