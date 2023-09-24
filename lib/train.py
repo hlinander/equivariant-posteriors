@@ -224,7 +224,12 @@ def load_or_create_state(train_run: TrainRun, device_id):
         device_id=device_id,
     )
 
-    state = deserialize(config)
+    state = None
+    try:
+        state = deserialize(config)
+    except Exception as e:
+        print("ERROR: Failed to load checkpoint, creating a new initial state.")
+        print(str(e))
 
     if state is None:
         state = create_initial_state(
