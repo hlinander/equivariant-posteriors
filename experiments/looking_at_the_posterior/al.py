@@ -267,7 +267,9 @@ if __name__ == "__main__":
     # breakpoint()
     # _pool_ids = _pool_ids + list(initial_ids * 200)
 
-    data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=_pool_ids)
+    data_pool_config = DataSubsetConfig(
+        data_config=DataCIFARConfig(validation=False, augment=False), subset=_pool_ids
+    )
     pool_ids = list(range(len(_pool_ids)))
 
     cifar_10_not_in_initial = list(
