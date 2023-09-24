@@ -159,11 +159,15 @@ def deserialize_model(config: DeserializeConfig):
     else:
         print(f"{checkpoint_path}")
 
-    model_state_dict = torch.load(
-        checkpoint_path / "model", map_location=torch.device(config.device_id)
-    )
+    try:
+        model_state_dict = torch.load(
+            checkpoint_path / "model", map_location=torch.device(config.device_id)
+        )
 
-    model_epoch = torch.load(checkpoint_path / "epoch")
+        model_epoch = torch.load(checkpoint_path / "epoch")
+    except Exception as e:
+        print(f"Failed to deserialize_model: {e}")
+        return None
 
     return DeserializedModel(
         model=create_model(config, model_state_dict), epoch=model_epoch
@@ -189,9 +193,17 @@ def deserialize(config: DeserializeConfig):
                     checkpoint_path / key, map_location=torch.device(config.device_id)
                 ),
             )
-        except RuntimeError:
+        except RuntimeError as e:
+            print(f"Deserialize failed: {e}")
             return None
-        except EOFError:
+        except EOFError as e:
+            print(f"Deserialize failed: {e}")
+            return None
+        except KeyError as e:
+            print(f"Deserialize failed: {e}")
+            return None
+        except Exception as e:
+            print(f"Deserialize failed: {e}")
             return None
     data_dict = file_data.__dict__
 
