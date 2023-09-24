@@ -247,17 +247,24 @@ if __name__ == "__main__":
     uq_calibration_data_config = DataCIFAR10CConfig(
         subsets=all_subsets[::2], severities=[1, 2, 3, 4, 5]
     )
-    class_and_id = [(x[1], x[2]) for x in ds_cifar_train]
+    class_and_id = [(x[1], x[2].item()) for x in ds_cifar_train]
     pool_perm = rng_initial_data.permutation(len(ds_cifar_train))
-    _pool_ids = pool_perm[:].tolist()
-    # for class_id in range(5, 10):
-    #     class_ids = [x for x in class_and_id if x[0] == class_id]
-    #     # Pick two samples per class randomly
-    #     _pool_ids = _pool_ids + [
-    #         class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:10]
-    #     ]
+    # _pool_ids = pool_perm[:].tolist()
+    _pool_ids = []
+    for class_id in range(5, 10):
+        class_ids = [x[1] for x in class_and_id if x[0] == class_id]
+        # Pick two samples per class randomly
+        _pool_ids = _pool_ids + [
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))[:2]
+        ] * (len(class_ids) // 2)
+    for class_id in range(0, 5):
+        class_ids = [x[1] for x in class_and_id if x[0] == class_id]
+        # Pick two samples per class randomly
+        _pool_ids = _pool_ids + [
+            class_ids[idx] for idx in rng_initial_data.permutation(len(class_ids))
+        ]
     # _pool_ids = [int(sample[1]) for sample in _pool_ids]
-    # # breakpoint()
+    # breakpoint()
     # _pool_ids = _pool_ids + list(initial_ids * 200)
 
     data_pool_config = DataSubsetConfig(data_config=DataCIFARConfig(), subset=_pool_ids)
@@ -272,6 +279,7 @@ if __name__ == "__main__":
 
     def create_al_config(aquisition_method, aquisition_config, model_name):
         return ALConfig(
+            name="unbalanced_data",
             ensemble_config=ensemble_config_mlp,
             uq_calibration_data_config=DataCIFARConfig(
                 validation=True
@@ -315,6 +323,7 @@ if __name__ == "__main__":
     else:
         for aquisition_method in AQUISITION_FUNCTIONS.keys():
             al_config = ALConfig(
+                name="unbalanced_data",
                 ensemble_config=ensemble_config_mlp,
                 uq_calibration_data_config=DataCIFARConfig(
                     validation=True
