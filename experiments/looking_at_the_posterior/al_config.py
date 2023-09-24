@@ -8,6 +8,7 @@ from lib.serialization import serialize_human
 
 @dataclass
 class ALConfig:
+    name: str
     ensemble_config: EnsembleConfig
     uq_calibration_data_config: object
     data_validation_config: object
