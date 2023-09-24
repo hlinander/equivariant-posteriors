@@ -292,10 +292,10 @@ if __name__ == "__main__":
             aquisition_method=aquisition_method,
             aquisition_config=aquisition_config,
             n_epochs_per_step=25,
-            n_members=5,
-            n_start=50,
-            n_end=1000,
-            n_steps=20,
+            n_members=10,
+            n_start=0,
+            n_end=100,
+            n_steps=50,
         )
 
     al_types = dict(
@@ -323,6 +323,7 @@ if __name__ == "__main__":
     if os.getenv("AL_TASK") is not None:
         al_configs.append(al_types[os.getenv("AL_TASK")])
     else:
+        raise Exception("Probably didn't want this")
         for aquisition_method in AQUISITION_FUNCTIONS.keys():
             al_config = ALConfig(
                 name="unbalanced_data",
