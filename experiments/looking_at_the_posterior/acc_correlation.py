@@ -2,7 +2,9 @@
 import ssl
 
 import torch
+import pandas as pd
 import numpy as np
+from pathlib import Path
 from scipy.stats import binned_statistic_2d
 
 from lib.data_registry import DataCIFARConfig
@@ -156,7 +158,15 @@ if __name__ == "__main__":
     mean_acc_pool, inferred_accs = accs_and_inferred_accs(
         dl_cifar_c_even, dl_cifar_c_odd, ensemble_conv, 15, device_id
     )
-    breakpoint()
+
+    df = pd.DataFrame(
+        data=list(
+            zip(mean_acc_pool.flatten().tolist(), inferred_accs.flatten().tolist())
+        ),
+        columns=["pool_acc", "inferred_acc"],
+    )
+    df.to_csv(Path(__file__).parent / "inferred_accs_cifar10c.csv")
+    # breakpoint()
 
     # uq_for_ensemble(dl_cifar_c, ensemble_conv, ensemble_config_conv, "conv", device_id)
     # uq_for_ensemble(
