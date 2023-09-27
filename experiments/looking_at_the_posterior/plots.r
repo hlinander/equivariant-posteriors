@@ -49,17 +49,17 @@ df <- bind_rows(d1, d2, d3, d4, d5, d6);
 df$subsetname <- factor(df$subset, levels = 0:(length(subsets)-1), labels = subsets)
 
 make_plot <- function(model_name) {
-small_df <- df %>% filter(model == "swin") #df[sample(nrow(df), 5000), ]
-num_levels <- 2
+small_df <- df %>% filter(model == model_name) #df[sample(nrow(df), 5000), ]
+#num_levels <- 2
 p<-(ggplot(small_df, aes(x=H, y=MI, z=accuracy)) + 
        stat_summary_2d(fun="mean", bins=50, aes(fill=..value..)) + 
-       geom_density2d(contour_var = "ndensity", bins=num_levels) +
+       #geom_density2d(contour_var = "ndensity", bins=num_levels) +
        geom_tile() +
        #scale_fill_viridis_c(name="Avg. Accuracy", direction = 1) + 
     scale_fill_viridis_c(name="Avg. Accuracy", direction = 1,option = "H", alpha=1) + 
        scale_x_log10(limits=c(1e-3, 3)) +
        scale_y_log10(limits=c(1e-3, 3)) +
-       theme_minimal() +
+       theme_minimal(base_size = 7) +
        labs(x="H", y="MI"))
    #facet_grid(model ~ subsetname));
 
@@ -67,12 +67,13 @@ densx <- (ggplot(small_df, aes(x=H, y=accuracy)) +
   stat_summary_bin(fun=mean, geom="bar", bins=50, alpha=0.5, aes(fill=..y..), color="black") +
     scale_fill_viridis_c(name="Avg. Accuracy", direction = 1,option = "H", alpha=1) +
     scale_x_log10(limits=c(1e-3, 3)) +
-  theme_minimal() + 
+  theme_minimal(base_size=7) + 
   theme(legend.position = "none"))
 densy <- (ggplot(small_df, aes(x=MI, y=accuracy)) + 
-            stat_summary_bin(fun=mean, geom="bar", bins=50, alpha=0.5, fill="grey", color="black") +
+            stat_summary_bin(fun=mean, geom="bar", bins=50, alpha=0.5, aes(fill=..y..), color="black") +
+            scale_fill_viridis_c(name="Avg. Accuracy", direction = 1,option = "H", alpha=1) +
             scale_x_log10(limits=c(1e-3, 3)) +
-            theme_minimal() + 
+            theme_minimal(base_size=7) + 
             theme(legend.position = "none") +
             coord_flip() + scale_y_reverse())
             #coord_trans(x="reverse", y="reverse"))
@@ -84,7 +85,31 @@ fp<-plot_spacer() + densx + densy + p +
   plot_layout(ncol = 2, nrow = 2, widths = c(1, 6), heights = c(1, 6))
 fp
 }
-#make_plot("mlp") + make_plot("conv") + make_plot("swin")
+pmlp <- make_plot("mlp")
+ggsave("experiments/looking_at_the_posterior/cifar10c_mlp.pdf", pmlp, width=3 * 6.17*0.9*0.45, height=3 * 6.17*0.9*0.6*2.5/4)
+pconv <- make_plot("conv")
+ggsave("experiments/looking_at_the_posterior/cifar10c_conv.pdf", pconv, width=3 * 6.17*0.9*0.45, height= 3* 6.17*0.9*0.6*2.5/4)
+pswin <- make_plot("swin")
+ggsave("experiments/looking_at_the_posterior/cifar10c_swin.pdf", pswin, width=3*6.17*0.9*0.45, height=3*6.17*0.9*0.6*2.5/4)
+
+
+grid <- (ggplot(df, aes(x=H, y=MI, z=accuracy)) + 
+  stat_summary_2d(fun="mean", bins=50, aes(fill=..value..)) + 
+  #geom_density2d(contour_var = "ndensity", bins=num_levels) +
+  geom_tile() +
+  #scale_fill_viridis_c(name="Avg. Accuracy", direction = 1) + 
+  scale_fill_viridis_c(name="Avg. Accuracy", direction = 1,option = "H", alpha=1) + 
+  scale_x_log10(limits=c(1e-3, 3)) +
+  scale_y_log10(limits=c(1e-3, 3)) +
+  theme_minimal() +
+  labs(x="H", y="MI") +
+  facet_grid(model ~ subsetname))
+
+print(grid)
+ggsave("experiments/looking_at_the_posterior/")
+
+print(pmlp)
+
 print(fp)
 #fp + facet_grid(model ~ subsetname)
 print(densx)
