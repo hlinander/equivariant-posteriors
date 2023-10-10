@@ -24,23 +24,19 @@ from lib.data_registry import (
 )
 
 import lib.data_factory as data_factory
-import lib.slurm as slurm
 from lib.stable_hash import json_dumps_dataclass_str
 
 from lib.models.mlp import MLPClassConfig
 from lib.models.conv_lap import ConvLAPConfig
+from lib.models.swin_transformer_v2 import SwinTinyConfig
 
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
-from lib.ensemble import train_member
 from lib.ensemble import ensemble_mean_prediction
-from lib.ensemble import is_ensemble_serialized
-from lib.serialization import is_serialized
 from lib.train import evaluate_metrics_on_data
 from lib.train_dataclasses import ComputeConfig
 from lib.stable_hash import stable_hash_small
-from lib.train_distributed import request_train_run
 
 from lib.classification_metrics import create_classification_metric_dict
 
@@ -80,7 +76,11 @@ AQUISITION_FUNCTIONS = dict(
     mutual_information=al_aquisition_mutual_information,
 )
 
-MODELS = dict(conv=ConvLAPConfig(), mlp=MLPClassConfig(widths=[128] * 2))
+MODELS = dict(
+    conv=ConvLAPConfig(),
+    mlp=MLPClassConfig(widths=[128] * 2),
+    swin=SwinTinyConfig(version=1),
+)
 
 
 def create_output_path_and_write_config(al_config: object) -> Path:
@@ -294,8 +294,8 @@ if __name__ == "__main__":
             n_epochs_per_step=25,
             n_members=10,
             n_start=0,
-            n_end=100,
-            n_steps=50,
+            n_end=1000,
+            n_steps=20,
         )
 
     al_types = dict(

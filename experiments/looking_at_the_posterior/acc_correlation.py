@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import ssl
 
+from dataclasses import dataclass
+import math
 import torch
 import pandas as pd
 import numpy as np
@@ -29,7 +31,20 @@ from experiments.looking_at_the_posterior.uq import uq_for_ensemble, uncertainty
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-def accs_and_inferred_accs(dl_uq_calibration, dl_pool, ensemble, bins: int, device_id):
+@dataclass
+class AccsAndCounts:
+    mean_cal_accs: object
+    mean_pool_accs: object
+    inferred_accs: object
+    cal_counts: object
+    pool_counts: object
+
+
+def accs_and_inferred_accs(
+    dl_uq_calibration, dl_pool, ensemble, bins: int, device_id, transform=None
+):
+    if transform is None:
+        transform = lambda x: x
     uq_calibration = uncertainty(dl_uq_calibration, ensemble, device_id)
     acc = (
         torch.where(
@@ -44,16 +59,16 @@ def accs_and_inferred_accs(dl_uq_calibration, dl_pool, ensemble, bins: int, devi
     # log_H = torch.log(uq_calibration.H)
     # log_MI = torch.log(uq_calibration.MI)
     mean_acc_calibration, x_bins, y_bins, bin_number = binned_statistic_2d(
-        uq_calibration.H.cpu().numpy(),
-        uq_calibration.MI.cpu().numpy(),
+        transform(uq_calibration.H).cpu().numpy(),
+        transform(uq_calibration.MI).cpu().numpy(),
         acc,
         statistic="mean",
         bins=bins,
         expand_binnumbers=True,
     )
     cal_counts, _, _, _ = binned_statistic_2d(
-        uq_calibration.H.cpu().numpy(),
-        uq_calibration.MI.cpu().numpy(),
+        transform(uq_calibration.H).cpu().numpy(),
+        transform(uq_calibration.MI).cpu().numpy(),
         acc,
         statistic="count",
         bins=[x_bins, y_bins],
@@ -72,11 +87,19 @@ def accs_and_inferred_accs(dl_uq_calibration, dl_pool, ensemble, bins: int, devi
     )
     # log_H = torch.log(uq_pool.H)
     # log_MI = torch.log(uq_pool.MI)
-    mean_acc_pool, x_bins, y_bins, bin_number_pool = binned_statistic_2d(
-        uq_pool.H.cpu().numpy(),
-        uq_pool.MI.cpu().numpy(),
+    mean_acc_pool, x_bins2, y_bins2, bin_number_pool = binned_statistic_2d(
+        transform(uq_pool.H).cpu().numpy(),
+        transform(uq_pool.MI).cpu().numpy(),
         acc,
         statistic="mean",
+        bins=[x_bins, y_bins],
+        expand_binnumbers=True,
+    )
+    pool_counts, _, _, _ = binned_statistic_2d(
+        transform(uq_pool.H).cpu().numpy(),
+        transform(uq_pool.MI).cpu().numpy(),
+        None,
+        statistic="count",
         bins=[x_bins, y_bins],
         expand_binnumbers=True,
     )
@@ -102,7 +125,14 @@ def accs_and_inferred_accs(dl_uq_calibration, dl_pool, ensemble, bins: int, devi
 
     inferred_accs = mean_acc_calibration[just_coords_x, just_coords_y]
 
-    return mean_acc_pool, inferred_accs
+    return AccsAndCounts(
+        mean_cal_accs=mean_acc_calibration,
+        mean_pool_accs=mean_acc_pool,
+        inferred_accs=inferred_accs,
+        cal_counts=cal_counts,
+        pool_counts=pool_counts,
+    )
+    # return mean_acc_pool, mean_acc_calibration, inferred_accs
 
 
 if __name__ == "__main__":
@@ -155,15 +185,28 @@ if __name__ == "__main__":
         drop_last=False,
     )
 
-    mean_acc_pool, inferred_accs = accs_and_inferred_accs(
-        dl_cifar_c_even, dl_cifar_c_odd, ensemble_conv, 15, device_id
+    accs_and_counts = accs_and_inferred_accs(
+        dl_cifar_c_even,
+        dl_cifar_c_odd,
+        ensemble_conv,
+        20,
+        device_id,
+        # transform=lambda x: torch.clamp(
+        #     torch.log(x + torch.finfo(torch.float32).eps),
+        #     min=-3 * math.log(10.0),
+        # ),
     )
 
     df = pd.DataFrame(
         data=list(
-            zip(mean_acc_pool.flatten().tolist(), inferred_accs.flatten().tolist())
+            zip(
+                accs_and_counts.mean_cal_accs.flatten().tolist(),
+                accs_and_counts.cal_counts.flatten().tolist(),
+                accs_and_counts.mean_pool_accs.flatten().tolist(),
+                accs_and_counts.pool_counts.flatten().tolist(),
+            )
         ),
-        columns=["pool_acc", "inferred_acc"],
+        columns=["cal_acc", "cal_counts", "pool_acc", "pool_counts"],
     )
     df.to_csv(Path(__file__).parent / "inferred_accs_cifar10c.csv")
     # breakpoint()

@@ -162,7 +162,7 @@ class DataCIFAR10C(VisionDataset):
         )
 
     def name(self):
-        return f"CIFAR10C_{self.config.subset}_{self.config.severities}"
+        return f"CIFAR10C_{self.config.subsets}_{self.config.severities}"
 
     def make_dataset(
         self, root: Path, subsets: List[str], severities: List[int]
