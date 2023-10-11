@@ -27,6 +27,7 @@ from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
+from lib.serialization import deserialize_model, DeserializeConfig
 
 import lib.stable_hash as stable_hash
 import rplot
@@ -64,11 +65,13 @@ def create_config(ensemble_id):
     return train_run
 
 
-def load_model(model: torch.nn.Module, train_run: TrainRun):
-    state = torch.load("model.pt")
-    model.model.load_state_dict(state, strict=False)
+def load_model(model: torch.nn.Module, train_run: TrainRun, device_id):
+    base_model_train_run = create_config(0)
+    deserialized_model = deserialize_model(
+        DeserializeConfig(base_model_train_run, device_id)
+    )
+    model.model.load_state_dict(deserialized_model.model.state_dict(), strict=False)
     model.model.eval()
-    print("Loaded model.pt")
     return model
 
 

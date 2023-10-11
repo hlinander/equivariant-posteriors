@@ -17,7 +17,7 @@ from lib.data_registry import DataCIFARConfig
 
 import lib.data_factory as data_factory
 from lib.models.mlp_proj import MLPProjClassConfig
-from lib.models.mlp import MLPConfig
+from lib.models.conv_small import ConvSmallConfig
 from lib.lyapunov import lambda1
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
@@ -25,6 +25,8 @@ from lib.ensemble import create_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
+from lib.serialization import deserialize_model, DeserializeConfig
+
 
 import rplot
 
@@ -37,7 +39,7 @@ def create_config(ensemble_id, width=1):
 
     train_config = TrainConfig(
         # model_config=MLPClassConfig(widths=[50, 50]),
-        model_config=ConvConfig(width=width),
+        model_config=ConvSmallConfig(),
         train_data_config=DataCIFARConfig(),
         val_data_config=DataCIFARConfig(validation=True),
         loss=ce_loss,
@@ -61,11 +63,12 @@ def create_config(ensemble_id, width=1):
     return train_run
 
 
-def load_model(model: torch.nn.Module, train_run: TrainRun):
-    import torch
-
-    state = torch.load("model.pt")
-    model.model.load_state_dict(state, strict=False)
+def load_model(model: torch.nn.Module, train_run: TrainRun, device_id):
+    base_model_train_run = create_config(0)
+    deserialized_model = deserialize_model(
+        DeserializeConfig(base_model_train_run, device_id)
+    )
+    model.model.load_state_dict(deserialized_model.model.state_dict(), strict=False)
     return model
 
 

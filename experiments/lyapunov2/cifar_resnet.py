@@ -10,7 +10,6 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
-from lib.train_dataclasses import TrainEpochSpec
 from lib.metric import MetricSample, Metric
 
 from lib.classification_metrics import create_classification_metrics
@@ -32,7 +31,8 @@ from lib.ensemble import create_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
-from lib.train import load_or_create_state, validate
+from lib.serialization import deserialize_model, DeserializeConfig
+
 
 import rplot
 
@@ -69,11 +69,13 @@ def create_config(ensemble_id):
     return train_run
 
 
-def load_model(model: torch.nn.Module, train_run: TrainRun):
-    state = torch.load("model.pt")
-    model.model.load_state_dict(state, strict=False)
+def load_model(model: torch.nn.Module, train_run: TrainRun, device_id):
+    base_model_train_run = create_config(0)
+    deserialized_model = deserialize_model(
+        DeserializeConfig(base_model_train_run, device_id)
+    )
+    model.model.load_state_dict(deserialized_model.model.state_dict(), strict=False)
     model.model.eval()
-    print("Loaded model.pt")
     return model
 
 
