@@ -25,6 +25,7 @@ from lib.ensemble import create_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.uncertainty import uncertainty
 from lib.files import prepare_results
+from lib.serialization import deserialize_model, DeserializeConfig
 
 import rplot
 
@@ -61,11 +62,14 @@ def create_config(ensemble_id, width=1):
     return train_run
 
 
-def load_model(model: torch.nn.Module, train_run: TrainRun):
-    import torch
-
-    state = torch.load("model.pt")
-    model.model.load_state_dict(state, strict=False)
+def load_model(model: torch.nn.Module, train_run: TrainRun, device_id):
+    base_model_train_run = create_config(
+        0, train_run.train_config.model_config.model_config.width
+    )
+    deserialized_model = deserialize_model(
+        DeserializeConfig(base_model_train_run, device_id)
+    )
+    model.model.load_state_dict(deserialized_model.model.state_dict(), strict=False)
     return model
 
 

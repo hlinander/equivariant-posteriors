@@ -189,7 +189,7 @@ def create_initial_state(train_run: TrainRun, device_id):
 
     if train_config.post_model_create_hook is not None:
         init_model = train_config.post_model_create_hook(
-            init_model, train_run=train_run
+            init_model, train_run=train_run, device_id=device_id
         )
 
     init_model = init_model.to(torch.device(device_id))
