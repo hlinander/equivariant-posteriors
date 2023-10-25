@@ -16,6 +16,72 @@
         };
       });
       helixmaster = helix-pkg.packages.${system}.default;
+      healpix = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "healpix";
+        version = "2023.1.13";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-JU8AUgck7F8X2+0zk+O/F8iSt+laxt9S75p/a2jjhOE="; # TODO
+        };
+        propagatedBuildInputs = [pkgs.python3Packages.numpy];
+        doCheck = false;
+      };
+       cdsapi = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "cdsapi";
+        version = "0.6.1";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
+        };
+        propagatedBuildInputs = [ 
+         pkgs.python3Packages.requests
+         pkgs.python3Packages.tqdm
+         
+        ];
+        doCheck = false;
+      };
+      eccodes3 = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "eccodes";
+        version = "1.6.0";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-WTkwQLz4nYBIEnQQkmWCqv/GiOF0vr1GRxkwe7xdnhU="; # TODO
+        };
+        propagatedBuildInputs = [ 
+         pkgs.python3Packages.numpy
+         pkgs.eccodes
+         pkgs.python3Packages.cffi
+         pkgs.python3Packages.attrs
+         findlibs
+        ];
+        doCheck = false;
+      };
+      cfgrib = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "cfgrib";
+        version = "0.9.10.3";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-wQgGBYyAxIYQwgG/BespJAGAeAarlCOrSWWuI9u2tSE="; # TODO
+        };
+        propagatedBuildInputs = [ 
+         pkgs.python3Packages.numpy
+         eccodes3
+         pkgs.python3Packages.click
+         pkgs.python3Packages.attrs
+         pkgs.python3Packages.xarray
+        ];
+        doCheck = false;
+      };
+      findlibs = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "findlibs";
+        version = "0.0.5";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-eoAVcemZ0O6D+bksu1mMIfhh7ibKnbp0zqiVi6QzXn4="; # TODO
+        };
+        propagatedBuildInputs = [  ];
+        doCheck = false;
+      };
       # myPython3 = pkgs.python3.override {
       #   packageOverrides = pyself: pysuper: {
       #     torchUncertainty = pysuper.buildPythonPackage rec {
@@ -74,7 +140,16 @@
           # cudatoolkit
           (python3.withPackages (p: [
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+            healpix
             # p.torchUncertainty
+            cdsapi
+            cfgrib
+            p.netcdf4
+            p.eccodes
+            eccodes3
+            p.xarray
+            p.einops
+            p.timm
             p.ipdb
             p.dill
             p.filelock
@@ -136,6 +211,7 @@
               pkgs.gnugrep
               pkgs.findutils
               pkgs.vim
+              pkgs.nix
           ];
           # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''

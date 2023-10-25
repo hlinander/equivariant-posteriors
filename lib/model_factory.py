@@ -9,6 +9,10 @@ from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
+from lib.models.healpix.swin_hp_transformer import (
+    SwinHPTransformerConfig,
+    SwinHPTransformerSys,
+)
 
 
 class _ModelFactory:
@@ -23,6 +27,7 @@ class _ModelFactory:
         self.models[MLPProjClassConfig] = MLPProjClass
         self.models[ResnetConfig] = Resnet
         self.models[SwinTinyConfig] = SwinTiny
+        self.models[SwinHPTransformerConfig] = SwinHPTransformerSys
 
     def register(self, config_class, model_class):
         self.models[config_class] = model_class
