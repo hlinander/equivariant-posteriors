@@ -18,6 +18,11 @@ class _DataFactory:
 _data_factory = None
 
 
+def register_dataset(config_class, dataset):
+    global _data_factory
+    _data_factory.register(config_class, dataset)
+
+
 def get_factory():
     global _data_factory
     if _data_factory is None:

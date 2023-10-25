@@ -2,9 +2,10 @@
 set -x
 set -e
 PG_PATH=$(pwd)/pg_database
+mkdir -p $PG_PATH
 echo postgres > /tmp/pg
 initdb --pwfile /tmp/pg -U postgres $PG_PATH | exit 0
-rm $PG_PATH/pg_hba.conf
+rm -f $PG_PATH/pg_hba.conf
 cat <<EOM >$PG_PATH/pg_hba.conf
 local   all             all                                     md5
 host    all             all             0.0.0.0/0               md5
