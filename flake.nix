@@ -114,6 +114,9 @@
           psycopg
           pytest
           filelock
+          einops
+          timm
+          healpix
         ];
 
         src = ./.;
@@ -124,22 +127,10 @@
           python test.py
         '';
       };
-      devinputs = with pkgs; [
-          postgresql
-          ruff
-          helixmaster
-          nixfmt
-          jq
-          yazi
-          nerdfonts
-          poppler
-          fzf
-          (ueberzugpp.override { enableWayland=false; enableOpencv=false; })
-          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
-          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse matlab ggExtra ggpubr]; })
-          # cudatoolkit
-          (python3.withPackages (p: [
+
+      pythonWithPackages = with pkgs; (python3.withPackages (p: [
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+            p.jupyter
             healpix
             # p.torchUncertainty
             cdsapi
@@ -177,7 +168,23 @@
             p.psycopg2
             p.pytest
             p.sqlalchemy
-          ]))
+          ]));
+      devinputs = with pkgs; [
+          julia
+          postgresql
+          ruff
+          helixmaster
+          nixfmt
+          jq
+          yazi
+          nerdfonts
+          poppler
+          fzf
+          (ueberzugpp.override { enableWayland=false; enableOpencv=false; })
+          (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
+          (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse matlab ggExtra ggpubr]; })
+          # cudatoolkit
+          pythonWithPackages
         ];
     in {
       packages.x86_64-linux.default = program;
@@ -188,6 +195,7 @@
         shellHook = '' 
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
           export EDITOR=hx
+          export PYTHON=${pythonWithPackages}/bin/python
           # export CUDA_PATH=${pkgs.cudatoolkit}
         '';
          };

@@ -6,6 +6,7 @@ from lib.models.conv import Conv, ConvConfig
 from lib.models.conv_lap import ConvLAP, ConvLAPConfig
 from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
+from lib.models.mlp import MLP, MLPConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
@@ -23,6 +24,7 @@ class _ModelFactory:
         self.models[ConvConfig] = Conv
         self.models[ConvLAPConfig] = ConvLAP
         self.models[TransformerConfig] = Transformer
+        self.models[MLPConfig] = MLP
         self.models[MLPClassConfig] = MLPClass
         self.models[MLPProjClassConfig] = MLPProjClass
         self.models[ResnetConfig] = Resnet

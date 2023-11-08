@@ -156,7 +156,8 @@ class WindowAttention(nn.Module):
         if self.use_cos_attn:
             attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-2, -1)
             logit_scale = torch.clamp(
-                self.logit_scale, max=torch.log(torch.tensor(1.0 / 0.01))
+                self.logit_scale,
+                max=torch.log(torch.tensor(1.0 / 0.01, device=self.logit_scale.device)),
             ).exp()
             attn = attn * logit_scale
         else:
