@@ -3,6 +3,7 @@ import math
 import torch
 import numpy as np
 import healpix as hp
+import chealpix as chp
 
 from lib.models.healpix.hp_windowing import window_partition
 
@@ -338,13 +339,14 @@ class RingShift:
 
         ring_idcs = np.arange(12 * self.nside**2)
         shifted_ring_idcs = np.roll(ring_idcs, self.shift_size)
-        shifted_ring_idcs_in_nest = hp.pixelfunc.ring2nest(
-            self.nside, shifted_ring_idcs
-        )
+        shifted_ring_idcs_in_nest = chp.ring2nest(self.nside, shifted_ring_idcs)
+        # shifted_ring_idcs_in_nest = hp.ring2nest(self.nside, shifted_ring_idcs)
 
         # so far, this would return the image in ring indices, convert back to nested:
         nest_idcs = np.arange(self.npix)
-        nest_idcs_in_ring = hp.pixelfunc.nest2ring(self.nside, nest_idcs)
+        # chp.nest2ring()
+        # nest_idcs_in_ring = hp.nest2ring(self.nside, nest_idcs)
+        nest_idcs_in_ring = chp.nest2ring(self.nside, nest_idcs)
         result = shifted_ring_idcs_in_nest[nest_idcs_in_ring]
 
         # mask pixels that come from outside the domain we use, for each base pixel

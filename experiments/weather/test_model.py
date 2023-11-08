@@ -2,18 +2,21 @@
 import torch
 import numpy as np
 from pathlib import Path
+import tqdm
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
-from lib.classification_metrics import create_regression_metrics
+from lib.regression_metrics import create_regression_metrics
 
 from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
+from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
+from lib.ensemble import symlink_checkpoint_files
 from lib.files import prepare_results
 from lib.serialization import serialize_human
 
@@ -24,13 +27,16 @@ import healpix
 import xarray as xr
 import experiments.weather.cdstest as cdstest
 
+NSIDE = 64
+
 
 @dataclass
 class DataHPConfig:
-    nside: int = 64
+    nside: int = NSIDE
+    version: int = 10
 
     def serialize_human(self):
-        return serialize_human(self.__dict__)  # dict(validation=self.validation)
+        return serialize_human(self.__dict__)
 
 
 class DataHP(torch.utils.data.Dataset):
@@ -48,14 +54,19 @@ class DataHP(torch.utils.data.Dataset):
     def e5_to_numpy(self, e5xr):
         npix = healpix.nside2npix(self.config.nside)
         hlong, hlat = healpix.pix2ang(
-            128, np.arange(0, npix, 1), lonlat=True, nest=True
+            self.config.nside, np.arange(0, npix, 1), lonlat=True, nest=True
         )
         hlong = np.mod(hlong, 360)
         xlong = xr.DataArray(hlong, dims="z")
         xlat = xr.DataArray(hlat, dims="z")
         xhp = e5xr.surface.interp(latitude=xlat, longitude=xlong)
         hp_image = np.array(xhp.to_array().to_numpy(), dtype=np.float32)
-        hp_image = hp_image / hp_image.max()
+        hp_image = (hp_image - hp_image.mean(axis=1, keepdims=True)) / hp_image.std(
+            axis=1, keepdims=True
+        )
+        # max_vals = np.amax(hp_image, axis=1, keepdims=True)
+        # hp_image = hp_image / max_vals
+        # breakpoint()
         return hp_image
 
     def __getitem__(self, idx):
@@ -71,43 +82,54 @@ class DataHP(torch.utils.data.Dataset):
         hp_image = self.e5_to_numpy(e5s)
         hp_target = self.e5_to_numpy(e5target)
 
-        # breakpoint()
-        # hp_image = np.zeros(self.data_spec(self.config).input_shape, dtype=np.float32)
-        # hp_target = np.zeros(self.data_spec(self.config).input_shape, dtype=np.float32)
-        return hp_image, hp_target, 0
+        return hp_image[0:4], hp_target[0:4], 0
 
     def __len__(self):
         return 50
 
 
 def create_config(ensemble_id):
-    loss = torch.nn.HuberLoss()
+    loss = torch.nn.L1Loss()
 
-    def ce_loss(outputs, targets):
-        # breakpoint()
+    def reg_loss(outputs, targets):
         return loss(outputs["logits"], targets)
 
     train_config = TrainConfig(
-        # model_config=MLPClassConfig(widths=[50, 50]),
-        model_config=SwinHPTransformerConfig(base_pix=12, nside=64),
-        train_data_config=DataHPConfig(nside=64),
-        val_data_config=DataHPConfig(nside=64),
-        loss=ce_loss,
+        model_config=SwinHPTransformerConfig(
+            base_pix=12,
+            nside=NSIDE,
+            dev_mode=False,
+            depths=[4, 8, 12],
+            num_heads=[3, 6, 12],
+            embed_dim=48,
+            window_size=64,
+            use_cos_attn=True,
+            use_v2_norm_placement=True,
+            drop_rate=0.1,
+            attn_drop_rate=0.1,
+            rel_pos_bias="flat",
+            shift_size=32,
+            shift_strategy="nest_roll",
+            ape=True,
+        ),
+        # model_config=MLPConfig(widths=[256, 256]),
+        train_data_config=DataHPConfig(nside=NSIDE),
+        val_data_config=DataHPConfig(nside=NSIDE),
+        loss=reg_loss,
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.Adam,
-            # kwargs=dict(weight_decay=1e-4, lr=0.001, momentum=0.9),
-            kwargs=dict(weight_decay=1e-4, lr=0.001),
-            # kwargs=dict(weight_decay=0.0, lr=0.001),
+            optimizer=torch.optim.AdamW,
+            kwargs=dict(weight_decay=1e-5, lr=0.01),
         ),
         batch_size=2,
         ensemble_id=ensemble_id,
+        _version=2,
     )
-    train_eval = create_regression_metrics(None)
+    train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=3,
+        epochs=30,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -122,6 +144,26 @@ if __name__ == "__main__":
     ensemble_config = create_ensemble_config(create_config, 1)
     ensemble = create_ensemble(ensemble_config, device_id)
 
-    result_path = prepare_results(
-        Path(__file__).parent, Path(__file__).stem, ensemble_config
+    ds = get_factory().create(DataHPConfig(nside=NSIDE))
+    dl = torch.utils.data.DataLoader(
+        ds,
+        batch_size=2,
+        shuffle=False,
+        drop_last=False,
     )
+
+    result_path = prepare_results(
+        Path(__file__).parent,
+        f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}",
+        ensemble_config,
+    )
+    symlink_checkpoint_files(ensemble, result_path)
+
+    for xs, ys, ids in tqdm.tqdm(dl):
+        xs = xs.to(device_id)
+
+        output = ensemble.members[0](xs)
+        np.save(result_path / "of_surface.npy", output["logits"].detach().cpu().numpy())
+        np.save(result_path / "if_surface.npy", xs.detach().cpu().numpy())
+        np.save(result_path / "tf_surface.npy", ys.detach().cpu().numpy())
+        break
