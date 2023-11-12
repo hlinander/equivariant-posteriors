@@ -14,6 +14,7 @@ from lib.models.healpix.swin_hp_transformer import (
     SwinHPTransformerConfig,
     SwinHPTransformerSys,
 )
+from lib.models.healpix.swin_hp_pangu import SwinHPPangu, SwinHPPanguConfig
 
 
 class _ModelFactory:
@@ -30,6 +31,7 @@ class _ModelFactory:
         self.models[ResnetConfig] = Resnet
         self.models[SwinTinyConfig] = SwinTiny
         self.models[SwinHPTransformerConfig] = SwinHPTransformerSys
+        self.models[SwinHPPanguConfig] = SwinHPPangu
 
     def register(self, config_class, model_class):
         self.models[config_class] = model_class

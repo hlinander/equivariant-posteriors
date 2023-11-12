@@ -82,6 +82,16 @@
         propagatedBuildInputs = [  ];
         doCheck = false;
       };
+      # galgebra = pkgs.python3Packages.buildPythonPackage rec {
+      #   pname = "galgebra";
+      #   version = "0.5.0";
+      #   src = pkgs.python3Packages.fetchPypi {
+      #     inherit pname version;
+      #     sha256 = "sha256-8Fb7DnIrdZw5lVF+e3oSeArASnraaKwzzmyA4PWBi6M="; # TODO
+      #   };
+      #   propagatedBuildInputs = [ pkgs.python3Packages.sympy  ];
+      #   doCheck = false;
+      # };
       # myPython3 = pkgs.python3.override {
       #   packageOverrides = pyself: pysuper: {
       #     torchUncertainty = pysuper.buildPythonPackage rec {
@@ -129,6 +139,7 @@
       };
 
       pythonWithPackages = with pkgs; (python3.withPackages (p: [
+            # galgebra
             (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
             p.jupyter
             healpix
@@ -152,6 +163,8 @@
             p.pytorch
             # (p.torchvision.override {torch = p.pytorch-bin;})
             p.torchvision
+            # p.onnx
+            p.onnxruntime
             p.plotext
             p.torchmetrics
             # (p.torchmetrics.override {torch = p.pytorch-bin;})
