@@ -201,18 +201,20 @@ def deserialize(config: DeserializeConfig):
     train_dataloader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=train_config.batch_size,
-        drop_last=True,
+        drop_last=False,
         sampler=train_sampler,
         shuffle=train_shuffle,
         num_workers=config.train_run.compute_config.num_workers,
+        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
     )
     val_dataloader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=train_config.batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         sampler=val_sampler,
         num_workers=config.train_run.compute_config.num_workers,
+        collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
     )
 
     model = create_model(config, data_dict["model"])

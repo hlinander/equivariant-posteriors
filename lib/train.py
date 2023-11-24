@@ -62,10 +62,12 @@ def validate(
     train_epoch_spec: TrainEpochSpec,
     train_run: TrainRun,
 ):
+    # print(f"maybe validate {train_epoch_state.epoch}")
     if train_epoch_state.epoch % train_run.validate_nth_epoch != 0:
         # Evaluate if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
             return
+    # print(f"validate {train_epoch_state.epoch}")
     model = train_epoch_state.model
     dataloader = train_epoch_state.val_dataloader
     device = train_epoch_spec.device_id
@@ -73,7 +75,9 @@ def validate(
     model.eval()
 
     with torch.no_grad():
+        # breakpoint()
         for i, (input, target, sample_id) in enumerate(dataloader):
+            # print(i)
             input = input.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             output = model(input)
@@ -146,6 +150,7 @@ def create_dataloader(
         drop_last=False,
         sampler=sampler,
         num_workers=compute_config.num_workers,
+        collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
     )
     return dataloader
 
@@ -170,6 +175,7 @@ def create_initial_state(train_run: TrainRun, device_id):
         sampler=train_sampler,
         shuffle=train_shuffle,
         num_workers=train_run.compute_config.num_workers,
+        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
     )
     assert val_shuffle is False
     val_dataloader = torch.utils.data.DataLoader(
@@ -179,6 +185,7 @@ def create_initial_state(train_run: TrainRun, device_id):
         drop_last=False,
         sampler=val_sampler,
         num_workers=train_run.compute_config.num_workers,
+        collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
     )
 
     torch.manual_seed(train_config.ensemble_id)

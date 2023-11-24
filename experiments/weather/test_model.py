@@ -183,7 +183,7 @@ def create_config(ensemble_id):
         ),
         batch_size=1,
         ensemble_id=ensemble_id,
-        _version=18,
+        _version=25,
     )
     train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
