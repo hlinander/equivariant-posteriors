@@ -106,7 +106,7 @@ def length_cable(position):
     return np.linalg.norm(ps, axis=-1).sum()
 
 
-def step_function(position, distance_constraint):
+def step_function(position, distance_constraint, lr):
     # N, 3
     next_delta = position[1:] - position[:-1]
     next_delta = np.concatenate([next_delta, [[0, 0]]], axis=0)
@@ -115,7 +115,7 @@ def step_function(position, distance_constraint):
     prev_delta = np.concatenate([[[0, 0]], prev_delta], axis=0)
     prev_delta_len = np.linalg.norm(prev_delta, axis=-1)
 
-    sufficiently_small_number = 0.1
+    sufficiently_small_number = lr
     with np.errstate(divide="ignore", invalid="ignore"):
         dist_next_recip = (1.0 / next_delta_len)[:, None]
         dist_prev_recip = (1.0 / prev_delta_len)[:, None]
@@ -182,13 +182,25 @@ class DataCable(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         endpoints = np.random.rand(2, 2) * 5
-        x = np.linspace(endpoints[0, 0], endpoints[1, 0], 100)[:, None]
-        y = np.linspace(endpoints[0, 1], endpoints[1, 1], 100)[:, None]
+        x = (
+            np.linspace(endpoints[0, 0], endpoints[1, 0], 100, dtype=np.float32)[
+                :, None
+            ]
+            # + np.cos(np.linspace(0, 2 * np.pi, 100))[:, None] * 2
+        )
+        y = (
+            np.linspace(endpoints[0, 1], endpoints[1, 1], 100, dtype=np.float32)[
+                :, None
+            ]
+            # + np.sin(np.linspace(0, 2 * np.pi, 100))[:, None] * 2
+        )
         ps = np.concatenate([x, y], axis=-1)
         start_points = np.float32(np.random.rand(100, 2)) + ps
+        # start_points = ps
         points = start_points
         for i in range(80):
-            points = step_function(points, 0.05)
+            lr = 0.1  # + 0.3 * i / 8000  # min(0.4, 0.1 + 0.4 / 1000)
+            points = step_function(points, 0.05, lr)
             # print(length_cable(points))
         start_deltas = start_points[1:] - start_points[:-1]
         start_to_end = points - start_points
@@ -216,7 +228,7 @@ def create_config(ensemble_id):
         ),
         batch_size=256,
         ensemble_id=ensemble_id,
-        _version=30,
+        _version=33,
     )
     train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
@@ -257,7 +269,7 @@ if __name__ == "__main__":
     ds = data_factory.get_factory().create(DataCableConfig(npoints=100))
     dl = torch.utils.data.DataLoader(
         ds,
-        batch_size=10,
+        batch_size=9,
         shuffle=False,
         drop_last=False,
     )
@@ -275,13 +287,16 @@ if __name__ == "__main__":
         xs = xs.to(device_id)
 
         output = ensemble.members[0](xs)["logits"].cpu().detach().numpy()
-        fig, ax = plt.subplots()
-        for start_deltas, delta, target in zip(xs.cpu().numpy(), output, ys.numpy()):
+        fig, axs = plt.subplots(3, 3, figsize=(10, 10))
+        for idx, (start_deltas, delta, target) in enumerate(
+            zip(xs.cpu().numpy(), output, ys.numpy())
+        ):
             start = np.zeros_like(delta)
             # breakpoint()
             for i in range(start_deltas.shape[0]):
                 start[i + 1] = start[i] + start_deltas[i]
             # delta = np.concatenate([[[0, 0]], delta], axis=0)
+            ax = axs[idx // 3, idx % 3]
             ax.plot(start[:, 0], start[:, 1], "g--", label="initial", alpha=0.2)
             ax.plot(
                 start[:, 0] + delta[:, 0],
@@ -296,6 +311,7 @@ if __name__ == "__main__":
                 label="target",
             )
             ax.legend()
+            ax.set_title(f"{length_cable(start + target)}, {99 * 0.05}")
             fig.suptitle("80 iteration constraint resolve")
             fig.savefig("clifford_test.pdf")
-            raise Exception("exit")
+        raise Exception("exit")

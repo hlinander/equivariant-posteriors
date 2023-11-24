@@ -160,6 +160,9 @@
             p.python-lsp-server
             p.python-lsp-ruff
             p.numpy
+            p.transformers
+            p.peft
+            p.datasets
             p.pytorch
             # (p.torchvision.override {torch = p.pytorch-bin;})
             p.torchvision

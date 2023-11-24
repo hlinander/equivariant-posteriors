@@ -94,7 +94,7 @@ class DataCable(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         start_points = np.float32(np.random.rand(100, 3))
         points = start_points
-        for i in range(20):
+        for i in range(80):
             points = step_function(points, 0.05)
             # print(length_cable(points))
         start_deltas = start_points[1:] - start_points[:-1]
@@ -102,7 +102,7 @@ class DataCable(torch.utils.data.Dataset):
         return np.float32(start_deltas), np.float32(start_to_end), idx
 
     def __len__(self):
-        return 50
+        return 256
 
 
 def create_config(ensemble_id):
@@ -120,7 +120,7 @@ def create_config(ensemble_id):
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=3e-6, lr=5e-4),
         ),
-        batch_size=128,
+        batch_size=256,
         ensemble_id=ensemble_id,
         _version=29,
     )
@@ -129,7 +129,7 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=10),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=500,
+        epochs=5000,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
