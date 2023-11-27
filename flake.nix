@@ -1,8 +1,9 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/02f05fc";
   inputs.helix-pkg.url = "github:helix-editor/helix";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
   outputs = { self, nixpkgs, helix-pkg, ... }:
   # outputs = { self, nixpkgs, ... }:
     let
@@ -16,7 +17,87 @@
         };
       });
       helixmaster = helix-pkg.packages.${system}.default;
-      healpix = pkgs.python3Packages.buildPythonPackage rec {
+      datasets = pkgs.python3Packages.buildPythonPackage rec {
+  pname = "datasets";
+  version = "2.14.7";
+  format = "setuptools";
+
+  # disabled = pythonOlder "3.8";
+
+  src = pkgs.fetchFromGitHub {
+    owner = "huggingface";
+    repo = pname;
+    rev = "refs/tags/${version}";
+    hash = "sha256-Q8cSgupfj6xKD0bYgL6bvYBwdYDdNaiWEWWUrRvwc4g";
+  };
+
+  propagatedBuildInputs = [
+    pkgs.python3Packages.aiohttp
+    pkgs.python3Packages.dill
+    pkgs.python3Packages.fsspec
+    pkgs.python3Packages.huggingface-hub
+    pkgs.python3Packages.multiprocess
+    pkgs.python3Packages.numpy
+    pkgs.python3Packages.packaging
+    pkgs.python3Packages.pandas
+    pkgs.python3Packages.pyarrow
+    pkgs.python3Packages.requests
+    pkgs.python3Packages.responses
+    pkgs.python3Packages.tqdm
+    pkgs.python3Packages.xxhash
+    pyarrow_hotfix
+  ]; # ++ pkgs.lib.optionals (pkgs.pythonOlder "3.8") [
+    #pkgs.python3Packages.importlib-metadata
+  #];
+
+  # Tests require pervasive internet access
+  doCheck = false;
+
+  # Module import will attempt to create a cache directory
+  postFixup = "export HF_MODULES_CACHE=$TMPDIR";
+
+  pythonImportsCheck = [
+    "datasets"
+  ];
+
+  meta = with pkgs.lib; {
+    description = "Open-access datasets and evaluation metrics for natural language processing";
+    homepage = "https://github.com/huggingface/datasets";
+    changelog = "https://github.com/huggingface/datasets/releases/tag/${version}";
+    license = licenses.asl20;
+    platforms = platforms.unix;
+    maintainers = with maintainers; [ ];
+  };
+};
+pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
+  pname = "pyarrow_hotfix";
+  version = "1.0";
+
+  src = ./pyarrow_hotfix; # Path to your local dummy_package directory
+  format = "other";
+
+  buildPhase = "runHook postBuild";
+
+  installPhase = ''
+    # mkdir -p $out/${pkgs.python3.sitePackages}
+    # cp -r $src/* $out/${pkgs.python3.sitePackages}
+    mkdir -p $out/${pkgs.python3.sitePackages}/pyarrow_hotfix
+    cp -r $src/* $out/${pkgs.python3.sitePackages}/pyarrow_hotfix
+  '';
+  # No dependencies for this dummy package
+  propagatedBuildInputs = [ ];
+
+  # No tests to run
+  doCheck = false;
+
+  meta = with pkgs.lib; {
+    description = "A dummy Python package";
+    homepage = "https://example.com/dummy_package";
+    license = licenses.mit;
+  };
+};
+      
+                  healpix = pkgs.python3Packages.buildPythonPackage rec {
         pname = "healpix";
         version = "2023.1.13";
         src = pkgs.python3Packages.fetchPypi {
@@ -119,7 +200,7 @@
           torchvision
           torchmetrics
           plotext
-          wandb
+          # wandb
           pandas
           psycopg
           pytest
@@ -162,7 +243,7 @@
             p.numpy
             p.transformers
             p.peft
-            p.datasets
+            datasets
             p.pytorch
             # (p.torchvision.override {torch = p.pytorch-bin;})
             p.torchvision
@@ -179,7 +260,7 @@
             p.snakeviz
             p.pandas
             p.matplotlib
-            p.plotnine
+            #p.plotnine
             p.psycopg
             p.psycopg2
             p.pytest
