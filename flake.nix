@@ -193,22 +193,22 @@ pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
         pname = "equivariant-transformers";
         version = "1.0";
 
-        propagatedBuildInputs = with pkgs.python3Packages; [
-          tqdm
-          numpy
-          pytorch
-          torchvision
-          torchmetrics
-          plotext
-          # wandb
-          pandas
-          psycopg
-          pytest
-          filelock
-          einops
-          timm
-          healpix
-        ];
+        # buildInputs = [pythonWithPackages];
+        propagatedBuildInputs = pythonPackages;        #   tqdm
+        #   numpy
+        #   pytorch
+        #   torchvision
+        #   torchmetrics
+        #   plotext
+        #   # wandb
+        #   pandas
+        #   psycopg
+        #   pytest
+        #   filelock
+        #   einops
+        #   timm
+        #   healpix
+        # ];
 
         src = ./.;
 
@@ -219,53 +219,96 @@ pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
         '';
       };
 
-      pythonWithPackages = with pkgs; (python3.withPackages (p: [
-            # galgebra
-            (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
-            p.jupyter
-            healpix
-            # p.torchUncertainty
-            cdsapi
-            cfgrib
-            p.netcdf4
-            p.eccodes
-            eccodes3
-            p.xarray
-            p.einops
-            p.timm
-            p.ipdb
-            p.dill
-            p.filelock
-            p.gitpython
-            p.tqdm
-            p.python-lsp-server
-            p.python-lsp-ruff
-            p.numpy
-            p.transformers
-            p.peft
-            datasets
-            p.pytorch
-            # (p.torchvision.override {torch = p.pytorch-bin;})
-            p.torchvision
-            # p.onnx
-            p.onnxruntime
-            p.plotext
-            p.torchmetrics
-            # (p.torchmetrics.override {torch = p.pytorch-bin;})
-            p.ipython
-            p.black
-            p.flake8
-           # p.gitpython
-            p.wandb
-            p.snakeviz
-            p.pandas
-            p.matplotlib
-            #p.plotnine
-            p.psycopg
-            p.psycopg2
-            p.pytest
-            p.sqlalchemy
-          ]));
+      pythonPackages = with pkgs.python3Packages; [
+        psutil
+        jupyter
+        healpix
+        cdsapi
+        cfgrib
+        netcdf4
+        eccodes
+        eccodes3
+        xarray
+        einops
+        timm
+        ipdb
+        dill
+        filelock
+        gitpython
+        tqdm
+        python-lsp-server
+        python-lsp-ruff
+        numpy
+        transformers
+        peft
+        datasets
+        pytorch
+        torchvision
+        onnxruntime
+        plotext
+        torchmetrics
+        ipython
+        black
+        flake8
+        wandb
+        snakeviz
+        pandas
+        matplotlib
+        psycopg
+        psycopg2
+        pytest
+        sqlalchemy
+      ];
+
+
+      # pythonWithPackages = with pkgs; (python3.withPackages (p: [
+      #       # galgebra
+      #       (p.rpy2.override{ extraRPackages = with rPackages; [ggplot2 dplyr latex2exp patchwork reticulate Hmisc]; })
+      #       p.jupyter
+      #       healpix
+      #       # p.torchUncertainty
+      #       cdsapi
+      #       cfgrib
+      #       p.netcdf4
+      #       p.eccodes
+      #       eccodes3
+      #       p.xarray
+      #       p.einops
+      #       p.timm
+      #       p.ipdb
+      #       p.dill
+      #       p.filelock
+      #       p.gitpython
+      #       p.tqdm
+      #       p.python-lsp-server
+      #       p.python-lsp-ruff
+      #       p.numpy
+      #       p.transformers
+      #       p.peft
+      #       datasets
+      #       p.pytorch
+      #       # (p.torchvision.override {torch = p.pytorch-bin;})
+      #       p.torchvision
+      #       # p.onnx
+      #       p.onnxruntime
+      #       p.plotext
+      #       p.torchmetrics
+      #       # (p.torchmetrics.override {torch = p.pytorch-bin;})
+      #       p.ipython
+      #       p.black
+      #       p.flake8
+      #      # p.gitpython
+      #       p.wandb
+      #       p.snakeviz
+      #       p.pandas
+      #       p.matplotlib
+      #       #p.plotnine
+      #       p.psycopg
+      #       p.psycopg2
+      #       p.pytest
+      #       p.sqlalchemy
+      #     ]));
+      pythonWithPackages = pkgs.python3.withPackages(p: pythonPackages);
       devinputs = with pkgs; [
           julia
           postgresql
@@ -281,6 +324,7 @@ pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
           (rWrapper.override{ packages = with rPackages; [ ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly]; })
           (rstudioWrapper.override{ packages = with rPackages; [ ggplot2 dplyr patchwork reticulate Hmisc RPostgreSQL plotly esquisse matlab ggExtra ggpubr]; })
           # cudatoolkit
+          # python
           pythonWithPackages
         ];
     in {
