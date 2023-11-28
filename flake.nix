@@ -346,8 +346,8 @@ pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
 
       sing = pkgs.singularity-tools.buildImage {
         name = "equivariant-posteriors";
-        diskSize = 1024 * 100;
-        memSize = 1024 * 8;
+        diskSize = 1024 * 200;
+        memSize = 1024 * 15;
         contents = 
           [ 
             (pkgs.buildEnv {
