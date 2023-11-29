@@ -81,6 +81,36 @@ def train_member(ensemble_config: EnsembleConfig, member_idx: int, device_id):
     do_training(member_config, state, device_id)
 
 
+def request_ensemble(ensemble_config: EnsembleConfig):
+    for member_config in ensemble_config.members:
+        try:
+            request_train_run(member_config)
+        except filelock.Timeout:
+            print("lock timeout: Could not request train run...")
+        print(get_checkpoint_path(member_config.train_config).as_posix())
+
+
+def monitor_ensemble(ensemble_config: EnsembleConfig):
+    all_member_hashes = set(
+        [stable_hash(member_config) for member_config in ensemble_config.members]
+    )
+    train_config_hash_dict = {
+        stable_hash(member_config): dict(
+            train_config_hash=stable_hash(member_config.train_config),
+            train_run=member_config,
+        )
+        for member_config in ensemble_config.members
+    }
+    while True:
+        print(
+            [
+                f"{train_config_hash_dict[hash]['train_config_hash']}: {get_train_run_status(train_config_hash_dict[hash]['train_run'])}"
+                for hash in all_member_hashes
+            ]
+        )
+        time.sleep(1)
+
+
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
     all_member_hashes = set(
@@ -97,15 +127,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     print(
         "Requesting all ensemble members to make sure we can get help if multiple members are not trained until completion."
     )
-    for member_config in ensemble_config.members:
-        # if not is_serialized(member_config):
-        try:
-            request_train_run(member_config)
-        except filelock.Timeout:
-            print(
-                "Could not request train run...Dropping request but will do training myself if needed."
-            )
-        print(get_checkpoint_path(member_config.train_config).as_posix())
+    request_ensemble(ensemble_config)
     print("Loading or training ensemble...")
     while len(trained_members) < len(ensemble_config.members):
         for member_config in ensemble_config.members:
@@ -136,6 +158,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     print(
                         f"Could not deserialize {hash} or epochs are not enough, I will continue training myself."
                     )
+                    del deserialized_model
                     state = load_or_create_state(member_config, device_id)
                     # print(sum([p.numel() for p in state.model.parameters()]))
                     try:

@@ -38,6 +38,19 @@ class FileStructure:
     train_run: object = None
 
 
+def write_status_file(config: SerializeConfig):
+    if get_rank() != 0:
+        # print("I am not rank 0 so not serializing...")
+        return
+
+    checkpoint_path = get_or_create_checkpoint_path(config.train_run.train_config)
+    with open(checkpoint_path / "status_tmp", "w") as status_file:
+        status_file.write(
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: Epoch {config.train_epoch_state.epoch} / {config.train_run.epochs}, Batch {config.train_epoch_state.batch} / {len(config.train_epoch_state.train_dataloader)}"
+        )
+    shutil.move(checkpoint_path / "status_tmp", checkpoint_path / "status")
+
+
 def serialize(config: SerializeConfig):
     if get_rank() != 0:
         # print("I am not rank 0 so not serializing...")
@@ -69,11 +82,7 @@ def serialize(config: SerializeConfig):
     shutil.move(
         checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
     )
-    with open(checkpoint_path / "status_tmp", "w") as status_file:
-        status_file.write(
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: Epoch {train_epoch_state.epoch} / {train_run.epochs}"
-        )
-    shutil.move(checkpoint_path / "status_tmp", checkpoint_path / "status")
+    write_status_file(config)
 
 
 def get_train_run_status(train_run: TrainRun):
@@ -262,6 +271,7 @@ def deserialize(config: DeserializeConfig):
         model=model,
         optimizer=optimizer,
         epoch=epoch,
+        batch=0,
         train_metrics=train_metrics,
         validation_metrics=validation_metrics,
         train_dataloader=train_dataloader,

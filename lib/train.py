@@ -22,8 +22,10 @@ from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
 from lib.serialization import deserialize
 from lib.serialization import serialize
+from lib.serialization import write_status_file
 
 from lib.train_visualization import visualize_progress
+from lib.train_visualization import visualize_progress_batches
 
 from lib.paths import get_checkpoint_path, get_lock_path
 import lib.ddp as ddp
@@ -76,18 +78,26 @@ def validate(
 
     with torch.no_grad():
         # breakpoint()
-        for i, (input, target, sample_id) in enumerate(dataloader):
-            # print(i)
-            input = input.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            output = model(input)
+        for i, batch in enumerate(dataloader):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            # input = input.to(device, non_blocking=True)
+            # target = target.to(device, non_blocking=True)
+            output = model(batch)
+            # for i, (input, target, sample_id) in enumerate(dataloader):
+            #     # print(i)
+            #     input = input.to(device, non_blocking=True)
+            #     target = target.to(device, non_blocking=True)
+            #     output = model(input)
 
-            metric_sample = MetricSample(
-                output=output["logits"],
-                prediction=output["predictions"],
-                target=target,
-                sample_id=sample_id,
-                epoch=train_epoch_state.epoch,
+            # metric_sample = MetricSample(
+            #     output=output["logits"],
+            #     prediction=output["predictions"],
+            #     target=target,
+            #     sample_id=sample_id,
+            #     epoch=train_epoch_state.epoch,
+            # )
+            metric_sample = dataloader.dataset.create_metric_sample(
+                output=output, batch=batch, train_epoch_state=train_epoch_state
             )
             for metric in train_epoch_state.validation_metrics:
                 metric(metric_sample)
@@ -112,14 +122,19 @@ def train(
     if dataloader.sampler.__class__.__name__ == "DistributedSampler":
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
-    for i, (input, target, sample_id) in enumerate(dataloader):
-        input = input.to(device, non_blocking=True)
-        target = target.to(device, non_blocking=True)
-        output = model(input)
+    next_visualization = time.time()
+    train_epoch_state.batch = 0
+    for i, batch in enumerate(dataloader):
+        train_epoch_state.batch = i
+        batch = {k: v.to(device) for k, v in batch.items()}
+        # input = input.to(device, non_blocking=True)
+        # target = target.to(device, non_blocking=True)
+        output = model(batch)
 
-        loss_val = loss(output, target)
+        loss_val = loss(output, batch)
         optimizer.zero_grad()
         loss_val.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.3)
         optimizer.step()
 
         if i == 0 and torch.cuda.is_available():
@@ -127,15 +142,40 @@ def train(
                 torch.cuda.memory_stats_as_nested_dict()
             )
 
-        metric_sample = MetricSample(
-            output=output["logits"],
-            prediction=output["predictions"],
-            target=target,
-            sample_id=sample_id,
-            epoch=train_epoch_state.epoch,
+        metric_sample = dataloader.dataset.create_metric_sample(
+            output=output, batch=batch, train_epoch_state=train_epoch_state
         )
+        # MetricSample(
+        #     output=output["logits"],
+        #     prediction=output["predictions"],
+        #     target=target,
+        #     sample_id=sample_id,
+        #     epoch=train_epoch_state.epoch,
+        # )
         for metric in train_epoch_state.train_metrics:
             metric(metric_sample)
+
+        try:
+            now = time.time()
+            if now > next_visualization:
+                write_status_file(
+                    SerializeConfig(
+                        train_run=train_run, train_epoch_state=train_epoch_state
+                    )
+                )
+                last_postgres_result = render_psql(train_run, train_epoch_state)
+                next_visualization = now + 5
+                if ddp.get_rank() == 0:
+                    visualize_progress_batches(
+                        train_epoch_state,
+                        train_run,
+                        last_postgres_result,
+                        train_epoch_spec.device_id,
+                    )
+        except Exception as e:
+            logging.error("Visualization failed")
+            logging.error(str(e))
+            print(traceback.format_exc())
 
 
 def create_dataloader(
@@ -220,6 +260,7 @@ def create_initial_state(train_run: TrainRun, device_id):
         train_metrics=train_metrics,
         validation_metrics=validation_metrics,
         epoch=0,
+        batch=0,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
     )
@@ -236,7 +277,8 @@ def load_or_create_state(train_run: TrainRun, device_id):
         state = deserialize(config)
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
-        print(str(e))
+        raise e
+        # print(str(e))
 
     if state is None:
         state = create_initial_state(

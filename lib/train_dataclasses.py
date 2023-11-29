@@ -4,9 +4,8 @@ from typing import List
 from typing import Callable
 
 from lib.metric import Metric
-import lib.model_factory as model_factory
-import lib.data_factory as data_factory
 from lib.stable_hash import stable_hash
+import lib.serialize_human
 
 
 @dataclass
@@ -17,6 +16,7 @@ class TrainEpochState:
     validation_metrics: List[Metric]
     train_dataloader: torch.utils.data.DataLoader
     epoch: int
+    batch: int
     val_dataloader: torch.utils.data.DataLoader = None
     device_memory_stats: dict = None
     host_memory_stats: object = None
@@ -49,10 +49,13 @@ class TrainConfig:
     extra: object = None
 
     def serialize_human(self):
+        import lib.model_factory as model_factory
+        import lib.data_factory as data_factory
+
         val_data = None
         if self.val_data_config is not None:
             val_data = dict(
-                config=self.val_data_config.serialize_human(),
+                config=lib.serialize_human.serialize_human(self.val_data_config),
                 name=data_factory.get_factory()
                 .get_class(self.val_data_config)
                 .__name__,

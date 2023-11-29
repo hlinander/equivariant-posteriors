@@ -1,0 +1,76 @@
+from typing import Dict
+from dataclasses import dataclass
+
+import transformers
+import datasets
+
+import torch
+
+from lib.train_dataclasses import TrainEpochState
+from lib.dataspec import DataSpec
+from lib.metric import MetricSample
+import lib.serialize_human
+
+
+@dataclass
+class NLPDatasetConfig:
+    dataset: str
+    model_checkpoint: str
+    max_len: int = 512
+
+    def serialize_human(self):
+        return lib.serialize_human.serialize_human(self.__dict__)
+
+
+class NLPDataset(torch.utils.data.Dataset):
+    def __init__(self, data_config: NLPDatasetConfig):
+        self.config = data_config
+        self.dataset = datasets.load_dataset(data_config.dataset)["train"]
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+            data_config.model_checkpoint, add_prefix_space=True
+        )
+        self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        def preprocessing_function(examples):
+            return self.tokenizer(
+                examples["text"], truncation=True, max_length=data_config.max_len
+            )
+
+        col_to_delete = ["id", "keyword", "location", "text"]
+        self.tokenized_dataset = self.dataset.map(
+            preprocessing_function, batched=True, remove_columns=col_to_delete
+        )
+        self.tokenized_dataset = self.tokenized_dataset.rename_column("target", "label")
+        self.tokenized_dataset.set_format("torch")
+        self.collate_fn = transformers.DataCollatorWithPadding(tokenizer=self.tokenizer)
+
+    @staticmethod
+    def data_spec(config: NLPDatasetConfig):
+        return DataSpec(
+            input_shape=torch.Size([1]),
+            output_shape=torch.Size([1]),
+            target_shape=torch.Size([1]),
+        )
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return MetricSample(
+            output=output["logits"].detach(),
+            prediction=output["predictions"].detach(),
+            target=batch["labels"].detach(),
+            sample_id=batch["sample_ids"].detach(),
+            epoch=train_epoch_state.epoch,
+        )
+
+    def __getitem__(self, idx):
+        data = self.tokenized_dataset[idx]
+        data["sample_ids"] = [idx]
+        return data
+
+    def __len__(self):
+        return len(self.tokenized_dataset)
