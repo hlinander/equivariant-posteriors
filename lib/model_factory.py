@@ -16,31 +16,35 @@ from lib.models.healpix.swin_hp_transformer import (
 )
 from lib.models.healpix.swin_hp_pangu import SwinHPPangu, SwinHPPanguConfig
 
+# from experiments.lora_ensembles.configs import LLama2Model
+# from experiments.lora_ensembles.configs import LLama2Config
+
 
 class _ModelFactory:
     def __init__(self):
         self.models = dict()
-        self.models[DenseConfig] = Dense
-        self.models[ConvSmallConfig] = ConvSmall
-        self.models[ConvConfig] = Conv
-        self.models[ConvLAPConfig] = ConvLAP
-        self.models[TransformerConfig] = Transformer
-        self.models[MLPConfig] = MLP
-        self.models[MLPClassConfig] = MLPClass
-        self.models[MLPProjClassConfig] = MLPProjClass
-        self.models[ResnetConfig] = Resnet
-        self.models[SwinTinyConfig] = SwinTiny
-        self.models[SwinHPTransformerConfig] = SwinHPTransformerSys
-        self.models[SwinHPPanguConfig] = SwinHPPangu
+        self.models[DenseConfig.__name__] = Dense
+        self.models[ConvSmallConfig.__name__] = ConvSmall
+        self.models[ConvConfig.__name__] = Conv
+        self.models[ConvLAPConfig.__name__] = ConvLAP
+        self.models[TransformerConfig.__name__] = Transformer
+        self.models[MLPConfig.__name__] = MLP
+        self.models[MLPClassConfig.__name__] = MLPClass
+        self.models[MLPProjClassConfig.__name__] = MLPProjClass
+        self.models[ResnetConfig.__name__] = Resnet
+        self.models[SwinTinyConfig.__name__] = SwinTiny
+        self.models[SwinHPTransformerConfig.__name__] = SwinHPTransformerSys
+        self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
+        # self.models[LLama2Config.__name__] = LLama2Model
 
     def register(self, config_class, model_class):
-        self.models[config_class] = model_class
+        self.models[config_class.__name__] = model_class
 
     def create(self, model_config, data_config) -> torch.nn.Module:
-        return self.models[model_config.__class__](model_config, data_config)
+        return self.models[model_config.__class__.__name__](model_config, data_config)
 
     def get_class(self, model_config):
-        return self.models[model_config.__class__]
+        return self.models[model_config.__class__.__name__]
 
 
 _model_factory = None

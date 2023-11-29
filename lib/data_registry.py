@@ -9,17 +9,21 @@ from lib.datasets.cifar_2 import DataCIFAR2Config, DataCIFAR2
 from lib.datasets.subset import DataSubsetConfig, DataSubset
 from lib.datasets.join import DataJoinConfig, DataJoin
 
+# from experiments.lora_ensembles.configs import NLPDatasetConfig
+# from experiments.lora_ensembles.configs import NLPDataset
+
 
 def register_datasets():
     datasets = dict()
-    datasets[DataSpiralsConfig] = DataSpirals
-    datasets[DataSineConfig] = DataSine
-    datasets[DataUniformConfig] = DataUniform
-    datasets[DataMNISTConfig] = DataMNIST
-    datasets[DataMNIST2Config] = DataMNIST2
-    datasets[DataCIFARConfig] = DataCIFAR
-    datasets[DataCIFAR10CConfig] = DataCIFAR10C
-    datasets[DataCIFAR2Config] = DataCIFAR2
-    datasets[DataSubsetConfig] = DataSubset
-    datasets[DataJoinConfig] = DataJoin
+    datasets[DataSpiralsConfig.__name__] = DataSpirals
+    datasets[DataSineConfig.__name__] = DataSine
+    datasets[DataUniformConfig.__name__] = DataUniform
+    datasets[DataMNISTConfig.__name__] = DataMNIST
+    datasets[DataMNIST2Config.__name__] = DataMNIST2
+    datasets[DataCIFARConfig.__name__] = DataCIFAR
+    datasets[DataCIFAR10CConfig.__name__] = DataCIFAR10C
+    datasets[DataCIFAR2Config.__name__] = DataCIFAR2
+    datasets[DataSubsetConfig.__name__] = DataSubset
+    datasets[DataJoinConfig.__name__] = DataJoin
+    # datasets[NLPDatasetConfig.__name__] = NLPDataset
     return datasets

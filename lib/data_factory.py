@@ -6,13 +6,14 @@ class _DataFactory:
         self.datasets = dict()  # register_datasets()
 
     def register(self, config_class, data_class):
-        self.datasets[config_class] = data_class
+        self.datasets[config_class.__name__] = data_class
 
     def create(self, data_config) -> torch.utils.data.Dataset:
-        return self.datasets[data_config.__class__](data_config)
+        # breakpoint()
+        return self.datasets[data_config.__class__.__name__](data_config)
 
     def get_class(self, data_config):
-        return self.datasets[data_config.__class__]
+        return self.datasets[data_config.__class__.__name__]
 
 
 _data_factory = None

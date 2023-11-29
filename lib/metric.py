@@ -14,6 +14,7 @@ class MetricSample:
 
 @dataclass(frozen=True)
 class MetricSampleKey:
+    batch_idx: int
     sample_id: int
     epoch: int
 
@@ -31,6 +32,8 @@ class Metric:
         self.metric_name = metric_fn.__name__
         self.metric_kwargs = metric_kwargs if metric_kwargs is not None else dict()
         self.mean_mem = dict()
+        self.batch_idx = 0
+        self.batch_values = []
 
     def __call__(self, metric_sample: MetricSample):
         output = metric_sample.output.detach()
@@ -49,10 +52,14 @@ class Metric:
                 .detach()
                 .cpu()
             )
-        key = MetricSampleKey(sample_id=sample_id, epoch=metric_sample.epoch)
+        key = MetricSampleKey(
+            sample_id=sample_id, epoch=metric_sample.epoch, batch_idx=self.batch_idx
+        )
+        self.batch_idx += 1
         if metric_sample.epoch in self.mean_mem:
             del self.mean_mem[metric_sample.epoch]
         self.values[key] = values.mean()
+        self.batch_values.append(self.values[key])
 
     def mean(self, epoch=None):
         if epoch not in self.mean_mem:
@@ -66,6 +73,9 @@ class Metric:
 
             self.mean_mem[epoch] = mean
         return self.mean_mem[epoch]
+
+    def mean_batches(self):
+        return self.batch_values
 
     def serialize(self):
         return self.values
