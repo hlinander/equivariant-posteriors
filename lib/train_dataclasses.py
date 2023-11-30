@@ -42,7 +42,7 @@ class TrainConfig:
     loss: torch.nn.Module
     optimizer: OptimizerConfig
     batch_size: int
-    gradient_clipping: Union[None, float]
+    gradient_clipping: Union[None, float] = None
     ensemble_id: int = 0
     _version: int = 0
     val_data_config: object = None

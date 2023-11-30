@@ -4,14 +4,14 @@ import torchmetrics as tm
 from pathlib import Path
 
 from lib.train_dataclasses import TrainConfig
-from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import ComputeConfig
 from lib.train_dataclasses import OptimizerConfig
-from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
-from lib.data_factory import DataSpiralsConfig
+from lib.data_registry import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
+from lib.classification_metrics import create_classification_metrics
 
 
 def loss(preds, target):
@@ -25,6 +25,11 @@ def bce(preds, target):
 
 
 def create_config(mlp_dim, ensemble_id):
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    def loss(outputs, batch):
+        return ce_loss(outputs["logits"], batch["target"])
+
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=50,
@@ -39,30 +44,15 @@ def create_config(mlp_dim, ensemble_id):
         ),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
-        loss=torch.nn.BCELoss(),
+        loss=loss,
         batch_size=500,
         ensemble_id=ensemble_id,
     )
-    train_eval = TrainEval(
-        train_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(loss),
-            lambda: Metric(bce),
-        ],
-        validation_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
-        data_visualizer=visualize_spiral,
+    train_eval = create_classification_metrics(
+        data_visualizer=visualize_spiral, n_classes=2
     )
     train_run = TrainRun(
+        compute_config=ComputeConfig(False, 0),
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,

@@ -5,13 +5,14 @@ from lib.train_dataclasses import TrainEpochState
 
 def visualize_mnist(plt, state: TrainEpochState, device_id):
     state.model.eval()
-    input, target, ids = next(iter(state.val_dataloader))
+    batch = next(iter(state.val_dataloader))
     with torch.no_grad():
-        input = input.to(device_id, non_blocking=True)
-        output = state.model(input)
+        # input = input.to(device_id, non_blocking=True)
+        batch = {k: v.to(device_id) for k, v in batch.items()}
+        output = state.model(batch)
         digits = torch.argmax(output["predictions"].cpu(), dim=-1)
 
-    images = input.cpu().reshape(-1, 1, 28, 28)
+    images = batch["input"].cpu().reshape(-1, 1, 28, 28)
     images = 255.0 * images[:4]
     image_grid = tv.utils.make_grid(images.long(), 2)
     image_grid = image_grid.numpy().transpose((1, 2, 0))[:, :, 0].tolist()

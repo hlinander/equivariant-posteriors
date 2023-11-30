@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from typing import Dict
 import torch
 import numpy as np
 from pathlib import Path
@@ -12,17 +13,21 @@ from lib.train_dataclasses import ComputeConfig
 
 from lib.regression_metrics import create_regression_metrics
 
-from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
+# from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
 from lib.models.healpix.swin_hp_pangu import SwinHPPanguConfig
-from lib.models.mlp import MLPConfig
+
+# from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.files import prepare_results
 from lib.serialization import serialize_human
+from lib.data_utils import create_metric_sample_legacy
+from lib.train_dataclasses import TrainEpochState
 
 from lib.data_factory import register_dataset, get_factory
+from lib.data_utils import create_sample_legacy
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 import healpix
@@ -119,7 +124,15 @@ class DataHP(torch.utils.data.Dataset):
         hp_surface, hp_upper = self.e5_to_numpy(e5s)
         hp_target_surface, hp_target_upper = self.e5_to_numpy(e5target)
 
-        return hp_surface[0:4], hp_target_surface[0:4], 0
+        return create_sample_legacy(hp_surface[0:4], hp_target_surface[0:4], 0)
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     def __len__(self):
         return 50
@@ -128,8 +141,8 @@ class DataHP(torch.utils.data.Dataset):
 def create_config(ensemble_id):
     loss = torch.nn.L1Loss()
 
-    def reg_loss(outputs, targets):
-        return loss(outputs["logits"], targets)
+    def reg_loss(outputs, batch):
+        return loss(outputs["logits"], batch["target"])
 
     train_config = TrainConfig(
         model_config=SwinHPPanguConfig(

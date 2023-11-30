@@ -21,8 +21,8 @@ def main():
     print(f"Using device {device_id}")
     loss = torch.nn.MSELoss()
 
-    def mse_loss(outputs, targets):
-        return loss(outputs["logits"], targets)
+    def mse_loss(outputs, batch):
+        return loss(outputs["logits"], batch["target"])
 
     train_config = TrainConfig(
         model_config=DenseConfig(d_hidden=100),

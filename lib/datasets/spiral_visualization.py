@@ -7,11 +7,12 @@ def visualize_spiral(plt, state: TrainEpochState, device_id):
     outputs = []
     inputs = []
     with torch.no_grad():
-        for input, target, _ in state.val_dataloader:
-            input = input.to(device_id, non_blocking=True)
-            output = state.model(input)["predictions"].cpu()
+        for batch in state.val_dataloader:
+            batch = {k: v.to(device_id) for k, v in batch.items()}
+
+            output = state.model(batch)["predictions"].cpu()
             outputs.append(output.detach().cpu())
-            inputs.append(input.detach().cpu())
+            inputs.append(batch["input"].detach().cpu())
 
     input = torch.concat(inputs, dim=0)
     output = torch.concat(outputs, dim=0)

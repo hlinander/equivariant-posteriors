@@ -1,9 +1,12 @@
+from typing import Dict
 import functools
 import torch
 import torchvision
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from lib.data_utils import create_sample_legacy
+from lib.data_utils import create_metric_sample_legacy
+from lib.train_dataclasses import TrainEpochState
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,7 @@ class DataMNIST(torch.utils.data.Dataset):
         self.config = data_config
 
     @staticmethod
-    def data_spec():
+    def data_spec(config):
         return DataSpec(
             input_shape=torch.Size([4, 14 * 14]),
             target_shape=torch.Size([1]),
@@ -47,6 +50,14 @@ class DataMNIST(torch.utils.data.Dataset):
         # image = image.reshape(2 * 2, 14 * 14)
         image = image.reshape(-1, 14 * 14)
         return create_sample_legacy(image, mnist_sample[1], idx)
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     def __len__(self):
         return len(self.MNIST)

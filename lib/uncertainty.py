@@ -82,15 +82,19 @@ def uncertainty(data_loader: torch.utils.data.DataLoader, ensemble: Ensemble, de
     AS = []
     mean_preds = []
     targets = []
-    for iteration, (input, target, sample_id) in enumerate(tqdm(data_loader)):
+    for iteration, batch in enumerate(tqdm(data_loader)):
+        batch = {k: v.to(device) for k, v in batch.items()}
+        input = batch["input"]
+        target = batch["target"]
+        sample_id = batch["sample_id"]
         # if iteration > 10:
         #    break
         probs = torch.zeros(
             [input.shape[0], ensemble.n_members, data_loader.dataset.n_classes]
         )
-        input = input.to(device, non_blocking=True)
+        # input = input.to(device, non_blocking=True)
         for idx, member in enumerate(ensemble.members):
-            output = member(input)
+            output = member(batch)
             probs[:, idx, :] = output["predictions"]
 
         MI = mutual_information(probs)
