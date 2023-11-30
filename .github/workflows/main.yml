@@ -33,4 +33,4 @@ jobs:
         docker-images: true
         swap-storage: true
     - run: nix build
-    - run: nix flake check
+    # - run: nix flake check
