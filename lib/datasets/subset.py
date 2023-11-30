@@ -2,7 +2,7 @@ import torch
 from typing import List, Optional
 from lib.data_factory import get_factory
 from dataclasses import dataclass, field
-from lib.data_factory import get_factory
+from lib.data_utils import create_sample_legacy
 import math
 
 
@@ -38,12 +38,12 @@ class DataSubset:
     @staticmethod
     def sample_id_spec(config: DataSubsetConfig):
         return ["idx"]
-        #return get_factory().get_class(config.data_config).sample_id_spec(config.data_config)
+        # return get_factory().get_class(config.data_config).sample_id_spec(config.data_config)
 
     def __getitem__(self, idx):
         # breakpoint()
-        x, y, sample_id = self.ds[self.subset[idx]] 
-        return x, y, torch.tensor([idx])
+        x, y, sample_id = self.ds[self.subset[idx]]
+        return create_sample_legacy(x, y, torch.tensor([idx]))
 
     def __len__(self):
         return len(self.subset)

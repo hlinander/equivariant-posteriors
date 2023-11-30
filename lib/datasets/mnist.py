@@ -3,6 +3,7 @@ import torch
 import torchvision
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class DataMNIST(torch.utils.data.Dataset):
         # image = image.unfold(1, 14, 14)
         # image = image.reshape(2 * 2, 14 * 14)
         image = image.reshape(-1, 14 * 14)
-        return image, mnist_sample[1], idx
+        return create_sample_legacy(image, mnist_sample[1], idx)
 
     def __len__(self):
         return len(self.MNIST)

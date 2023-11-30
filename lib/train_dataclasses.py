@@ -2,6 +2,7 @@ import torch
 from dataclasses import dataclass
 from typing import List
 from typing import Callable
+from typing import Union
 
 from lib.metric import Metric
 from lib.stable_hash import stable_hash
@@ -41,6 +42,7 @@ class TrainConfig:
     loss: torch.nn.Module
     optimizer: OptimizerConfig
     batch_size: int
+    gradient_clipping: Union[None, float]
     ensemble_id: int = 0
     _version: int = 0
     val_data_config: object = None

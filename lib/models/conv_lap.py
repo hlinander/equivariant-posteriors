@@ -24,7 +24,8 @@ class ConvLAP(torch.nn.Module):
         self.bn3 = torch.nn.BatchNorm2d(192, momentum=0.99, eps=1e-3)
         self.bn4 = torch.nn.BatchNorm2d(192, momentum=0.99, eps=1e-3)
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         x = x.reshape(-1, 3, 32, 32)
         x = self.c1(x)
         x = self.bn1(x)

@@ -1,6 +1,7 @@
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 
 @dataclass
@@ -38,7 +39,7 @@ class DataSine(torch.utils.data.Dataset):
         input = self.x[idx]
         target = self.y[idx]
         sample_id = self.sample_ids[idx]
-        return input, target, sample_id
+        return create_sample_legacy(input, target, sample_id)
 
     def __len__(self):
         return self.x.shape[0]

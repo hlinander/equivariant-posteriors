@@ -1,5 +1,6 @@
 from typing import List
 from lib.data_factory import get_factory
+from lib.data_utils import create_sample_legacy
 from dataclasses import dataclass
 import torch
 
@@ -43,7 +44,7 @@ class DataJoin:
         ds_idx, sample_idx = self.index[idx]
         x, target, sample_ids = self.dss[ds_idx][sample_idx]
         # breakpoint()
-        return x, target, torch.tensor([idx])
+        return create_sample_legacy(x, target, torch.tensor([idx]))
 
     def __len__(self):
         return len(self.index)

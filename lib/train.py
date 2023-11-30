@@ -43,10 +43,9 @@ def evaluate_metrics_on_data(
         data_config, batch_size, shuffle=False, compute_config=compute_config
     )
     with torch.no_grad():
-        for i, (input, target, sample_id) in enumerate(dataloader):
-            input = input.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            output = model(input)
+        for i, batch in enumerate(dataloader):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            output = model(batch)
 
             metric_sample = MetricSample(
                 output=output["logits"],
@@ -64,12 +63,10 @@ def validate(
     train_epoch_spec: TrainEpochSpec,
     train_run: TrainRun,
 ):
-    # print(f"maybe validate {train_epoch_state.epoch}")
     if train_epoch_state.epoch % train_run.validate_nth_epoch != 0:
         # Evaluate if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
             return
-    # print(f"validate {train_epoch_state.epoch}")
     model = train_epoch_state.model
     dataloader = train_epoch_state.val_dataloader
     device = train_epoch_spec.device_id
@@ -77,25 +74,9 @@ def validate(
     model.eval()
 
     with torch.no_grad():
-        # breakpoint()
         for i, batch in enumerate(dataloader):
             batch = {k: v.to(device) for k, v in batch.items()}
-            # input = input.to(device, non_blocking=True)
-            # target = target.to(device, non_blocking=True)
             output = model(batch)
-            # for i, (input, target, sample_id) in enumerate(dataloader):
-            #     # print(i)
-            #     input = input.to(device, non_blocking=True)
-            #     target = target.to(device, non_blocking=True)
-            #     output = model(input)
-
-            # metric_sample = MetricSample(
-            #     output=output["logits"],
-            #     prediction=output["predictions"],
-            #     target=target,
-            #     sample_id=sample_id,
-            #     epoch=train_epoch_state.epoch,
-            # )
             metric_sample = dataloader.dataset.create_metric_sample(
                 output=output, batch=batch, train_epoch_state=train_epoch_state
             )
@@ -127,14 +108,15 @@ def train(
     for i, batch in enumerate(dataloader):
         train_epoch_state.batch = i
         batch = {k: v.to(device) for k, v in batch.items()}
-        # input = input.to(device, non_blocking=True)
-        # target = target.to(device, non_blocking=True)
         output = model(batch)
 
         loss_val = loss(output, batch)
         optimizer.zero_grad()
         loss_val.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.3)
+        if train_run.train_config.gradient_clipping is not None:
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), train_run.train_config.gradient_clipping
+            )
         optimizer.step()
 
         if i == 0 and torch.cuda.is_available():
@@ -145,13 +127,6 @@ def train(
         metric_sample = dataloader.dataset.create_metric_sample(
             output=output, batch=batch, train_epoch_state=train_epoch_state
         )
-        # MetricSample(
-        #     output=output["logits"],
-        #     prediction=output["predictions"],
-        #     target=target,
-        #     sample_id=sample_id,
-        #     epoch=train_epoch_state.epoch,
-        # )
         for metric in train_epoch_state.train_metrics:
             metric(metric_sample)
 

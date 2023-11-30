@@ -1,6 +1,7 @@
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,9 @@ class DataSpirals(torch.utils.data.Dataset):
         )
 
     def __getitem__(self, idx):
-        return self.spiral.xs[idx], self.spiral.ys[idx], self.spiral.sample_ids[idx]
+        return create_sample_legacy(
+            self.spiral.xs[idx], self.spiral.ys[idx], self.spiral.sample_ids[idx]
+        )
 
     def __len__(self):
         return self.spiral.xs.shape[0]

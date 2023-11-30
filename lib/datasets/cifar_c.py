@@ -15,6 +15,7 @@ from torchvision.datasets.utils import (
 import numpy as np
 
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 # Adapted from https://github.com/ENSTA-U2IS/torch-uncertainty/
 
@@ -263,7 +264,7 @@ class DataCIFAR10C(VisionDataset):
             sample = self.transform(sample)
         if self.target_transform is not None:
             target = self.target_transform(target)
-        return sample, target, sample_id
+        return create_sample_legacy(sample, target, sample_id)
 
     @staticmethod
     def sample_id_spec(config):

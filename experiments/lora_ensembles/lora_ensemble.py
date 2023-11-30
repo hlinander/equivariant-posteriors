@@ -60,7 +60,7 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=3,
+        epochs=2,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )

@@ -1,6 +1,7 @@
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,9 @@ class DataUniform(torch.utils.data.Dataset):
         )
 
     def __getitem__(self, idx):
-        return self.uniform.xs[idx], self.uniform.ys[idx], self.uniform.sample_ids[idx]
+        return create_sample_legacy(
+            self.uniform.xs[idx], self.uniform.ys[idx], self.uniform.sample_ids[idx]
+        )
 
     def __len__(self):
         return self.uniform.xs.shape[0]

@@ -15,3 +15,7 @@ def get_sampler(
     else:
         sampler = None
     return sampler, shuffle
+
+
+def create_sample_legacy(input, target, sample_id):
+    return dict(input=input, target=target, sample_id=sample_id)
