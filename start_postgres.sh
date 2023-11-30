@@ -4,7 +4,7 @@ set -e
 PG_PATH=$(pwd)/pg_database
 mkdir -p $PG_PATH
 echo postgres > /tmp/pg
-initdb --pwfile /tmp/pg -U postgres $PG_PATH | exit 0
+initdb --pwfile /tmp/pg -U postgres $PG_PATH
 rm -f $PG_PATH/pg_hba.conf
 cat <<EOM >$PG_PATH/pg_hba.conf
 local   all             all                                     md5
