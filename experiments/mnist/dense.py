@@ -7,13 +7,18 @@ from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.classification_metrics import create_classification_metrics
-from lib.data_factory import DataMNISTConfig
+from lib.data_registry import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 from lib.models.transformer import TransformerConfig
 from lib.generic_ablation import generic_ablation
 
 
 def create_config(mlp_dim, ensemble_id):
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    def loss(output, batch):
+        return ce_loss(output["logits"], batch["target"])
+
     train_config = TrainConfig(
         # model_config=MLPClassConfig(width=mlp_dim),
         model_config=TransformerConfig(
@@ -26,7 +31,7 @@ def create_config(mlp_dim, ensemble_id):
         ),
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),
-        loss=torch.nn.CrossEntropyLoss(),
+        loss=loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(lr=0.001, weight_decay=0.001)
         ),
@@ -35,7 +40,7 @@ def create_config(mlp_dim, ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False),
+        compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,
         epochs=80,

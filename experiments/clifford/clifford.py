@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from typing import Dict
 import torch
 import numpy as np
 from pathlib import Path
@@ -14,7 +15,6 @@ from lib.train_dataclasses import ComputeConfig
 
 from lib.regression_metrics import create_regression_metrics
 
-from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
@@ -27,6 +27,9 @@ import lib.data_factory as data_factory
 import lib.model_factory as model_factory
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
+from lib.data_utils import create_metric_sample_legacy
+from lib.train_dataclasses import TrainEpochState
 
 
 class CliffordLinear(torch.nn.Module):
@@ -80,7 +83,8 @@ class CliffordModel(torch.nn.Module):
         )
         self.basis = {tuple(key): idx for idx, key in enumerate(clifford_blades)}
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         cl_x = embed_clifford(x, self.basis)
         # breakpoint()
         y = self.cl_in(cl_x)
@@ -204,7 +208,17 @@ class DataCable(torch.utils.data.Dataset):
             # print(length_cable(points))
         start_deltas = start_points[1:] - start_points[:-1]
         start_to_end = points - start_points
-        return np.float32(start_deltas), np.float32(start_to_end), idx
+        return create_sample_legacy(
+            np.float32(start_deltas), np.float32(start_to_end), idx
+        )
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     def __len__(self):
         return 256
@@ -213,8 +227,8 @@ class DataCable(torch.utils.data.Dataset):
 def create_config(ensemble_id):
     loss = torch.nn.L1Loss()
 
-    def reg_loss(outputs, targets):
-        return loss(outputs["logits"], targets)
+    def reg_loss(outputs, batch):
+        return loss(outputs["logits"], batch["target"])
 
     train_config = TrainConfig(
         # model_config=MLPConfig(widths=[256, 256, 256]),

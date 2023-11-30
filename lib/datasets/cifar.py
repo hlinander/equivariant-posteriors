@@ -1,3 +1,4 @@
+from typing import Dict
 import random
 import functools
 import torch
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from lib.serialization import serialize_human
 from lib.data_utils import create_sample_legacy
+from lib.data_utils import create_metric_sample_legacy
+from lib.train_dataclasses import TrainEpochState
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,14 @@ class DataCIFAR(torchvision.datasets.CIFAR10):
         # image = image.reshape(2 * 2, 14 * 14)
         # image = image.reshape(-1, 16 * 16)
         return create_sample_legacy(cifar_sample[0], cifar_sample[1], np.array([idx]))
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     # def __len__(self):
     # return len(self.CIFAR)

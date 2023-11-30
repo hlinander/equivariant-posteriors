@@ -8,7 +8,7 @@ from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.models.transformer import TransformerConfig
-from lib.data_factory import DataSpiralsConfig
+from lib.data_registry import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
 from lib.classification_metrics import create_classification_metrics
@@ -25,6 +25,11 @@ def bce(preds, target):
 
 
 def create_config(embed_d, ensemble_id):
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    def loss(outputs, batch):
+        return ce_loss(outputs["logits"], batch["target"])
+
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=embed_d,
@@ -39,13 +44,13 @@ def create_config(embed_d, ensemble_id):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
-        loss=torch.nn.CrossEntropyLoss(),
+        loss=loss,
         batch_size=500,
         ensemble_id=ensemble_id,
     )
     train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False),
+        compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,

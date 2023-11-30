@@ -7,11 +7,13 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
+from lib.train_dataclasses import ComputeConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
-from lib.data import DataSpiralsConfig
+from lib.data_registry import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
+from lib.classification_metrics import create_classification_metrics
 
 
 def loss(preds, target):
@@ -25,6 +27,11 @@ def bce(preds, target):
 
 
 def create_config(layers, ensemble_id):
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    def loss(outputs, batch):
+        return ce_loss(outputs["logits"], batch["target"])
+
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=20,
@@ -39,30 +46,15 @@ def create_config(layers, ensemble_id):
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
-        loss=torch.nn.BCELoss(),
+        loss=loss,
         batch_size=500,
         ensemble_id=ensemble_id,
     )
-    train_eval = TrainEval(
-        train_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
-        validation_metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
-        data_visualizer=visualize_spiral,
+    train_eval = create_classification_metrics(
+        data_visualizer=visualize_spiral, n_classes=2
     )
     train_run = TrainRun(
+        compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,
         epochs=500,

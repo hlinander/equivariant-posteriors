@@ -1,7 +1,10 @@
+from typing import Dict
 import torch
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from lib.data_utils import create_sample_legacy
+from lib.data_utils import create_metric_sample_legacy
+from lib.train_dataclasses import TrainEpochState
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ class DataUniform(torch.utils.data.Dataset):
             data_config.min, data_config.max, data_config.N
         )
         self.n_classes = 2
+        self.config = data_config
 
     def data_spec(self):
         return DataSpec(
@@ -49,10 +53,22 @@ class DataUniform(torch.utils.data.Dataset):
             output_shape=torch.Size([1]),
         )
 
+    @staticmethod
+    def sample_id_spec(config):
+        return ["idx"]
+
     def __getitem__(self, idx):
         return create_sample_legacy(
             self.uniform.xs[idx], self.uniform.ys[idx], self.uniform.sample_ids[idx]
         )
+
+    def create_metric_sample(
+        self,
+        output: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        train_epoch_state: TrainEpochState,
+    ):
+        return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     def __len__(self):
         return self.uniform.xs.shape[0]

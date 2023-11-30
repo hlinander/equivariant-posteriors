@@ -49,10 +49,10 @@ class Transformer(torch.nn.Module):
         x = batch["input"]
         embed = self.embed(x) * math.sqrt(32)
         embed = self.pos_embed(embed)
-        tout = self.transformer(embed, self.mem)
+        tout = self.transformer(embed, self.mem[: embed.shape[0]])
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
         output = self.debed(tout[:, 0, :])
-        return output, self.output_to_value(output)
+        return dict(logits=output, predictions=self.output_to_value(output))
 
     def output_to_value(self, output):
         return torch.softmax(output, dim=-1)

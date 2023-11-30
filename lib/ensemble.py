@@ -59,7 +59,9 @@ def symlink_checkpoint_files(ensemble, target_path: Path):
     model_factory = get_factory()
     for config, file in get_ensemble_checkpoint_files(ensemble):
         model_name = model_factory.get_class(config.train_config.model_config).__name__
-        link_path = output_path / model_name / file.name
+        link_path = (
+            output_path / f"{model_name}_{config.train_config.ensemble_id}" / file.name
+        )
         link_path.parent.mkdir(parents=True, exist_ok=True)
         if link_path.is_symlink():
             link_path.unlink()

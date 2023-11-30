@@ -8,7 +8,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
-from lib.data_factory import DataSpiralsConfig
+from lib.data_registry import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
 from lib.generic_ablation import generic_ablation
@@ -17,8 +17,8 @@ from lib.generic_ablation import generic_ablation
 def create_config(mlp_dim, ensemble_id):
     loss = torch.nn.CrossEntropyLoss()
 
-    def ce_loss(output, target):
-        return loss(output["logits"], target)
+    def ce_loss(output, batch):
+        return loss(output["logits"], batch["target"])
 
     train_config = TrainConfig(
         model_config=MLPClassConfig(widths=[mlp_dim, mlp_dim]),
