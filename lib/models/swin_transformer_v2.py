@@ -934,6 +934,7 @@ class SwinTiny(torch.nn.Module):
             use_checkpoint=False,
         )
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         logits = self.swin(x)
         return dict(logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))

@@ -31,7 +31,8 @@ class ConvSmall(torch.nn.Module):
         torch.nn.init.normal_(self.c4.weight, 0.0, std=math.sqrt(1.0 / (192 * 1 * 1)))
         torch.nn.init.normal_(self.c4.bias, 0.0, std=math.sqrt(1e-7))
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         x = x.reshape(-1, 3, 32, 32)
         x = self.c1(x)
         x = torch.nn.functional.tanh(x)

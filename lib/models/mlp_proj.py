@@ -41,7 +41,8 @@ class MLPProjClass(torch.nn.Module):
         torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / 2.0))
         torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         out = self.model(x)
         projection = self.mlp_proj(out["logits"])
         logits = self.mlp_out(projection)

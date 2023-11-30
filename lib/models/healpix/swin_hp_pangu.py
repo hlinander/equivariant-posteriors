@@ -980,7 +980,8 @@ class SwinHPPangu(nn.Module):
 
         return dict(logits=x, predictions=x)
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         # input = x
         x = self.patch_embed(x)
         # breakpoint()

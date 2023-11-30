@@ -18,7 +18,8 @@ class Dense(torch.nn.Module):
         self.l1 = torch.nn.Linear(data_spec.input_shape.numel(), model_config.d_hidden)
         self.l2 = torch.nn.Linear(model_config.d_hidden, data_spec.output_shape.numel())
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         x = x.reshape(x.shape[0], -1)
         x = self.l1(x)
         x = self.l2(x)

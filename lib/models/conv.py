@@ -43,7 +43,8 @@ class Conv(torch.nn.Module):
         torch.nn.init.normal_(self.c7.weight, 0.0, std=math.sqrt(1.0 / (192 * 3 * 3)))
         torch.nn.init.normal_(self.c7.bias, 0.0, std=math.sqrt(1e-7))
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         x = x.reshape(-1, 3, 32, 32)
         x = self.c1(x)
         x = torch.nn.functional.tanh(x)
@@ -69,34 +70,3 @@ class Conv(torch.nn.Module):
         logits = torch.nn.functional.avg_pool2d(x, 4)
         logits = logits.squeeze()
         return dict(logits=logits, predictions=torch.softmax(logits.detach(), dim=-1))
-
-
-# def create_small_conv_model(input_shape, model_params=None):
-#     WD = 1e-3
-#     kreg = None  # regularizers.l1(WD)
-#     model = Sequential(
-#         [
-#             # keras.layers.Dropout(0.2, input_shape=(32, 32, 3)),
-#             Conv2D(96, kernel_size=5, input_shape=input_shape, kernel_regularizer=kreg),
-#             keras.layers.BatchNormalization(axis=-1),
-#             ReLU(),
-#             MaxPooling2D(pool_size=(3, 3), strides=(2, 2)),
-#             # keras.layers.Dropout(0.5),
-#             Conv2D(40, kernel_size=5, kernel_regularizer=kreg),
-#             keras.layers.BatchNormalization(axis=-1),
-#             ReLU(),
-#             Conv2D(192, kernel_size=1, kernel_regularizer=kreg),
-#             keras.layers.BatchNormalization(axis=-1),
-#             ReLU(),
-#             Conv2D(10, kernel_size=1, kernel_regularizer=kreg),
-#             keras.layers.BatchNormalization(axis=-1),
-#             ReLU(),
-#             GlobalAveragePooling2D(),
-#             Softmax(),
-#         ]
-#     )
-#     # model.compile(loss=keras.losses.categorical_crossentropy,
-#     #             optimizer=keras.optimizers.Adam(learning_rate=lr),#, amsgrad=True),
-#     #             metrics=['accuracy'])
-#     # model.summary()
-#     return model

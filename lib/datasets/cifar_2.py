@@ -3,6 +3,7 @@ import torch
 import torchvision
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
+from lib.data_utils import create_sample_legacy
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ class DataCIFAR2(torch.utils.data.Dataset):
         # image = image.reshape(2 * 2, 14 * 14)
         # image = image.reshape(-1, 16 * 16)
         class_idx = self.class_map[cifar_sample[1]]
-        return cifar_sample[0], class_idx, idx
+        return create_sample_legacy(cifar_sample[0], class_idx, idx)
 
     def __len__(self):
         return len(self.CIFAR)

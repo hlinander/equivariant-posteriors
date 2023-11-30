@@ -45,7 +45,8 @@ class Transformer(torch.nn.Module):
             ),
         )
 
-    def forward(self, x):
+    def forward(self, batch):
+        x = batch["input"]
         embed = self.embed(x) * math.sqrt(32)
         embed = self.pos_embed(embed)
         tout = self.transformer(embed, self.mem)
