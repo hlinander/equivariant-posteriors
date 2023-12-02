@@ -56,11 +56,12 @@ def setup_psql():
                     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
                     train_id text,
                     ensemble_id text,
-                    epoch int,
+                    x float,
+                    xaxis text,
                     variable text,
                     value float,
                     value_text text,
-                    UNIQUE(train_id, epoch, variable)
+                    UNIQUE(train_id, x, xaxis, variable)
                 )
                 """
         )
@@ -247,40 +248,76 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
     ) as conn:
         create_param_view(conn, train_run)
 
-        start_time = time.time()
+        # start_time = time.time()
         insert_or_update_train_run(conn, train_run)
         for epoch in range(train_epoch_state.epoch):
             for metric in train_epoch_state.train_metrics:
                 conn.execute(
                     """
-                    INSERT INTO metrics (train_id, epoch, variable, value)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (train_id, epoch, variable) DO UPDATE SET value = EXCLUDED.value
+                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
                 """,
                     (
                         train_run_dict["train_id"],
                         epoch,
+                        "epoch",
                         metric.name(),
                         metric.mean(epoch),
                     ),
                 )
+            for metric in train_epoch_state.validation_metrics:
+                if metric.mean(epoch) is not None:
+                    conn.execute(
+                        """
+                        INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+                    """,
+                        (
+                            train_run_dict["train_id"],
+                            epoch,
+                            "epoch",
+                            f"val_{metric.name()}",
+                            metric.mean(epoch),
+                        ),
+                    )
+        for metric in train_epoch_state.train_metrics:
+            for idx, value in enumerate(metric.mean_batches()):
                 conn.execute(
                     """
-                    INSERT INTO metrics (train_id, epoch, variable, value)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (train_id, epoch, variable) DO UPDATE SET value = EXCLUDED.value
+                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
                 """,
                     (
                         train_run_dict["train_id"],
-                        epoch,
-                        f"val_{metric.name()}",
-                        metric.mean(epoch),
+                        idx,
+                        "batch",
+                        f"{metric.name()}_batch",
+                        value,
+                    ),
+                )
+        for metric in train_epoch_state.validation_metrics:
+            for idx, value in enumerate(metric.mean_batches()):
+                conn.execute(
+                    """
+                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+                """,
+                    (
+                        train_run_dict["train_id"],
+                        idx,
+                        "batch",
+                        f"{metric.name()}_batch",
+                        value,
                     ),
                 )
         conn.commit()
-        drop_views(conn)
-        create_metrics_view(conn)
-        create_metrics_and_run_info_view(conn)
+        # drop_views(conn)
+        # create_metrics_view(conn)
+        # create_metrics_and_run_info_view(conn)
         conn.commit()
 
     return (True, "")

@@ -238,6 +238,7 @@
         xorg.libXinerama
         xorg.libXcursor
         xorg.libXi
+        xclip
         libGL
         libGLU
 

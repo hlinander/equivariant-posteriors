@@ -59,7 +59,7 @@ class Metric:
         if metric_sample.epoch in self.mean_mem:
             del self.mean_mem[metric_sample.epoch]
         self.values[key] = values.mean()
-        self.batch_values.append(self.values[key])
+        self.batch_values.append(self.values[key].item())
 
     def mean(self, epoch=None):
         if epoch not in self.mean_mem:
