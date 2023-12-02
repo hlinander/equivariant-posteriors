@@ -307,6 +307,7 @@
           buildInputs = devinputs;
           nativeBuildInputs = [ pkgs.cudatoolkit ];
           shellHook = ''
+            export POSTGRES=${pkgs.postgresql}
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
             export EDITOR=hx
             export PYTHON=${pythonWithPackages}/bin/python
@@ -347,7 +348,7 @@
               program
               devinputs
             ];
-            pathsToLink = [ "/bin" ];
+            pathsToLink = [ "/bin" "/share" ];
           })
           program
           devinputs
@@ -355,10 +356,14 @@
           pkgs.findutils
           pkgs.vim
           pkgs.nix
+          pkgs.glibcLocales
+          pkgs.which
         ];
         # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
           #!${pkgs.stdenv.shell}
+          export POSTGRES=${pkgs.postgresql}
+          export LOCALE_ARCHIVE=${pkgs.glibcLocales}/lib/locale/locale-archive
           exec /bin/sh $@'';
         runAsRoot =
           "   #!${pkgs.stdenv.shell}\n   ${pkgs.dockerTools.shadowSetup}\n";
