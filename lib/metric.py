@@ -79,10 +79,11 @@ class Metric:
         return self.batch_values
 
     def serialize(self):
-        return self.values
+        return dict(values=self.values, batch_values=self.batch_values)
 
-    def deserialize(self, values):
-        self.values = values
+    def deserialize(self, serialized):
+        self.values = serialized["values"]
+        self.batch_values = serialized["batch_values"]
 
     def name(self):
         return self.metric_name
