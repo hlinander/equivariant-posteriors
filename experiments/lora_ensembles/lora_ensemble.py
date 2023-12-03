@@ -45,14 +45,16 @@ def create_config(ensemble_id):
             dataset="mehdiiraqui/twitter_disaster",
             model_checkpoint=LLAMA_CHECKPOINT,
             max_len=512,
+            validation=True,
         ),
         loss=loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=0.001, lr=1e-4),
         ),
-        batch_size=8,
+        batch_size=4,
         ensemble_id=ensemble_id,
+        gradient_clipping=0.3,
         _version=37,
     )
     train_eval = create_classification_metrics(None, 2)
@@ -62,7 +64,7 @@ def create_config(ensemble_id):
         train_eval=train_eval,
         epochs=2,
         save_nth_epoch=1,
-        validate_nth_epoch=5,
+        validate_nth_epoch=1,
     )
     return train_run
 

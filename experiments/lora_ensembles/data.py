@@ -17,6 +17,7 @@ class NLPDatasetConfig:
     dataset: str
     model_checkpoint: str
     max_len: int = 512
+    validation: bool = False
 
     def serialize_human(self):
         return lib.serialize_human.serialize_human(self.__dict__)
@@ -25,7 +26,12 @@ class NLPDatasetConfig:
 class NLPDataset(torch.utils.data.Dataset):
     def __init__(self, data_config: NLPDatasetConfig):
         self.config = data_config
-        self.dataset = datasets.load_dataset(data_config.dataset)["train"]
+        data = datasets.load_dataset(data_config.dataset)["train"]
+        data = data.train_test_split(0.9, seed=42)
+        if data_config.validation:
+            self.dataset = data["test"]
+        else:
+            self.dataset = data["train"]
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             data_config.model_checkpoint, add_prefix_space=True
         )
@@ -65,6 +71,7 @@ class NLPDataset(torch.utils.data.Dataset):
             target=batch["labels"].detach(),
             sample_id=batch["sample_ids"].detach(),
             epoch=train_epoch_state.epoch,
+            batch=train_epoch_state.batch,
         )
 
     def __getitem__(self, idx):
