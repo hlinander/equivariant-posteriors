@@ -1,19 +1,17 @@
+use chrono::NaiveDate;
+use chrono::NaiveDateTime;
 use eframe::egui;
 use egui::{epaint, Stroke};
-use egui_plot::{Legend, PlotPoints, Points};
+use egui_plot::{Legend, PlotPoints};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
-use sqlx::postgres::PgColumn;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::postgres::PgRow;
-use sqlx::Column;
 use sqlx::Row;
+// use sqlx::types::JsonValue
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
-use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
-use tokio::main;
 
 #[derive(Default, Debug, Clone)]
 struct Metric {
@@ -32,7 +30,7 @@ struct Run {
 #[derive(Default, Debug, Clone)]
 struct Runs {
     runs: HashMap<String, Run>,
-    filtered_runs: HashMap<String, Run>,
+    active_runs: Vec<String>, // filtered_runs: HashMap<String, Run>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -54,19 +52,30 @@ enum DataStatus {
 struct GuiRuns {
     runs: Runs,
     dirty: bool,
-    db_reciever: Receiver<Runs>,
-    recomputed_reciever: Receiver<Runs>,
-    dirty_sender: Sender<(GuiParams, Runs)>,
+    db_train_runs_sender: Sender<Vec<String>>,
+    db_reciever: Receiver<HashMap<String, Run>>,
+    recomputed_reciever: Receiver<HashMap<String, Run>>,
+    dirty_sender: Sender<(GuiParams, HashMap<String, Run>)>,
     initialized: bool,
     data_status: DataStatus,
     gui_params: GuiParams,
 }
 
-fn recompute(runs: &mut Runs, gui_params: &GuiParams) {
-    runs.filtered_runs = runs
-        .runs
-        .iter()
-        .filter(|run| {
+fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
+    resample(runs, gui_params);
+}
+
+fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams) -> Vec<String> {
+    if gui_params
+        .param_filters
+        .values()
+        .map(|hs| hs.is_empty())
+        .all(|x| x)
+    {
+        return Vec::new();
+    }
+    runs.iter()
+        .filter_map(|run| {
             for (param_name, values) in gui_params
                 .param_filters
                 .iter()
@@ -74,21 +83,20 @@ fn recompute(runs: &mut Runs, gui_params: &GuiParams) {
             {
                 if let Some(run_value) = run.1.params.get(param_name) {
                     if !values.contains(run_value) {
-                        return false;
+                        return None;
                     }
                 } else {
-                    return false;
+                    return None;
                 }
             }
-            true
+            Some(run.0)
         })
-        .map(|(p, v)| (p.clone(), v.clone()))
-        .collect();
-    resample(runs, gui_params);
+        .cloned()
+        .collect()
 }
 
-fn resample(runs: &mut Runs, gui_params: &GuiParams) {
-    for run in runs.filtered_runs.values_mut() {
+fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
+    for run in runs.values_mut() {
         for metric in run.metrics.values_mut() {
             let max_n = gui_params.max_n;
             metric.values = if metric.orig_values.len() > max_n {
@@ -135,19 +143,23 @@ fn resample(runs: &mut Runs, gui_params: &GuiParams) {
 }
 
 impl eframe::App for GuiRuns {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.initialized {
             ctx.set_zoom_factor(2.0);
         }
         if self.dirty {
+            self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
             self.dirty_sender
-                .send((self.gui_params.clone(), self.runs.clone()))
+                .send((self.gui_params.clone(), self.runs.runs.clone()))
                 .expect("Failed to send dirty runs");
+            self.db_train_runs_sender
+                .send(self.runs.active_runs.clone())
+                .expect("Failed to send train runs to db thread");
             self.dirty = false;
             // self.recompute();
         }
         if let Ok(new_runs) = self.recomputed_reciever.try_recv() {
-            self.runs = new_runs;
+            self.runs.runs = new_runs;
             if self.data_status == DataStatus::FirstDataArrived && self.runs.runs.len() > 0 {
                 self.data_status = DataStatus::FirstDataProcessed;
             }
@@ -186,7 +198,7 @@ impl eframe::App for GuiRuns {
                 (train_id.clone(), *ensemble_colors.get(ensemble_id).unwrap())
             })
             .collect();
-        let param_values = get_parameter_values(&self.runs.runs);
+        let param_values = get_parameter_values(&self.runs, true);
         for param_name in param_values.keys() {
             if !self.gui_params.param_filters.contains_key(param_name) {
                 self.gui_params
@@ -197,11 +209,12 @@ impl eframe::App for GuiRuns {
         // for run in &filtered_runs {
         //     println!("{:?}", run.1.params.get("epochs"))
         // }
-        let filtered_values = get_parameter_values(&self.runs.filtered_runs);
+        let filtered_values = get_parameter_values(&self.runs, false);
         let metric_names: Vec<String> = self
             .runs
-            .filtered_runs
-            .values()
+            .active_runs
+            .iter()
+            .map(|train_id| self.runs.runs.get(train_id).unwrap())
             .map(|run| run.metrics.keys().cloned())
             .flatten()
             .unique()
@@ -392,6 +405,8 @@ impl GuiRuns {
                 (
                     metric_name.clone(),
                     Plot::new(&metric_name)
+                        .auto_bounds_x()
+                        .auto_bounds_y()
                         .legend(Legend::default())
                         .width(plot_width)
                         .height(plot_height)
@@ -399,19 +414,22 @@ impl GuiRuns {
                             **metric_name_axis_id.get(&metric_name).unwrap(),
                             true,
                             false,
-                        ),
+                        )
+                        .link_cursor(**metric_name_axis_id.get(&metric_name).unwrap(), true, true),
                 )
             })
             .collect();
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, v)| k.clone()) {
+                for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone()) {
                     ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
                         ui.vertical_centered(|ui| {
                             ui.label(&metric_name);
                             plot.show(ui, |plot_ui| {
                                 for (run_id, run) in
-                                    self.runs.filtered_runs.iter().sorted_by_key(|(k, _v)| *k)
+                                    self.runs.active_runs.iter().sorted().map(|train_id| {
+                                        (train_id, self.runs.runs.get(train_id).unwrap())
+                                    })
                                 {
                                     if let Some(metric) = run.metrics.get(&metric_name) {
                                         if self.gui_params.n_average > 1 {
@@ -457,15 +475,27 @@ impl GuiRuns {
     }
 }
 
-fn get_parameter_values(lruns: &HashMap<String, Run>) -> HashMap<String, HashSet<String>> {
-    let mut param_values: HashMap<String, HashSet<String>> = lruns
-        .values()
+fn get_parameter_values(
+    runs: &Runs, // active_runs: &Vec<String>,
+    all: bool,
+) -> HashMap<String, HashSet<String>> {
+    let train_ids: Vec<String> = if all {
+        runs.runs.keys().cloned().collect()
+    } else {
+        runs.active_runs.clone()
+    };
+    let mut param_values: HashMap<String, HashSet<String>> = train_ids
+        .iter()
+        .map(|train_id| runs.runs.get(train_id).unwrap())
         .map(|run| run.params.keys().cloned())
         .flatten()
         .unique()
         .map(|param_name| (param_name, HashSet::new()))
         .collect();
-    for run in lruns.values() {
+    for run in train_ids
+        .iter()
+        .map(|train_id| runs.runs.get(train_id).unwrap())
+    {
         for (k, v) in &run.params {
             let values = param_values.get_mut(k).unwrap();
             values.insert(v.clone());
@@ -474,8 +504,14 @@ fn get_parameter_values(lruns: &HashMap<String, Run>) -> HashMap<String, HashSet
     param_values
 }
 
-async fn get_state_new(pool: &sqlx::postgres::PgPool) -> Result<Runs, sqlx::Error> {
+async fn get_state_new(
+    pool: &sqlx::postgres::PgPool,
+    runs: &mut HashMap<String, Run>,
+    train_ids: &Vec<String>,
+    last_timestamp: &mut NaiveDateTime,
+) -> Result<(), sqlx::Error> {
     // Query to get the table structure
+    // TODO: WHERE train_id not in runs.keys()
     let run_rows = sqlx::query(
         r#"
         SELECT * FROM runs ORDER BY train_id
@@ -484,7 +520,7 @@ async fn get_state_new(pool: &sqlx::postgres::PgPool) -> Result<Runs, sqlx::Erro
     .fetch_all(pool)
     .await?;
     // Print each column's details
-    let mut runs: HashMap<String, Run> = HashMap::new();
+    // let mut runs: HashMap<String, Run> = HashMap::new();
     for (train_id, params) in &run_rows
         .into_iter()
         .group_by(|row| row.get::<String, _>("train_id"))
@@ -497,60 +533,89 @@ async fn get_state_new(pool: &sqlx::postgres::PgPool) -> Result<Runs, sqlx::Erro
                 )
             })
             .collect();
-        runs.insert(
-            train_id,
-            Run {
-                params,
-                metrics: HashMap::new(),
-            },
-        );
-    }
-
-    let metric_rows = sqlx::query(
-        r#"
-        SELECT * FROM metrics ORDER BY train_id, variable, xaxis, x
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    for (train_id, run_metric_rows) in &metric_rows
-        .into_iter()
-        .group_by(|row| row.get::<String, _>("train_id"))
-    {
-        let run = runs.get_mut(&train_id).unwrap();
-        for (variable, value_rows) in
-            &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
-        {
-            let rows: Vec<_> = value_rows.collect();
-            // println!("{:?}", rows[0].columns());
-            let orig_values: Vec<_> = rows
-                .iter()
-                .filter_map(|row| {
-                    // println!("{:?}", row.try_get::<i32, _>("id"));
-                    if let Ok(x) = row.try_get::<f64, _>("x") {
-                        if let Ok(value) = row.try_get::<f64, _>("value") {
-                            return Some([x, value]);
-                        }
-                    }
-                    None
-                })
-                .collect();
-            let xaxis = rows[0].get::<String, _>("xaxis");
-            run.metrics.insert(
-                variable,
-                Metric {
-                    resampled: Vec::new(),
-                    orig_values,
-                    xaxis,
-                    values: Vec::new(),
+        if !runs.contains_key(&train_id) {
+            runs.insert(
+                train_id,
+                Run {
+                    params,
+                    metrics: HashMap::new(),
                 },
             );
         }
     }
-    Ok(Runs {
-        filtered_runs: runs.clone(),
-        runs,
-    })
+
+    if train_ids.len() > 0 {
+        let q = format!(
+            r#"
+        SELECT * FROM metrics WHERE train_id IN ({}) AND created_at > $1 ORDER BY train_id, variable, xaxis, x
+        "#,
+            train_ids
+                .iter()
+                .map(|train_id| format!("'{}'", train_id))
+                .join(","),
+        );
+        println!("{}", q);
+        let metric_rows = sqlx::query(q.as_str())
+            .bind(*last_timestamp)
+            .fetch_all(pool)
+            .await?;
+        for (train_id, run_metric_rows) in &metric_rows
+            .into_iter()
+            .group_by(|row| row.get::<String, _>("train_id"))
+        {
+            let run = runs.get_mut(&train_id).unwrap();
+            for (variable, value_rows) in
+                &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
+            {
+                let rows: Vec<_> = value_rows.collect();
+                let max_timestamp = rows
+                    .iter()
+                    .max_by_key(|row| row.get::<NaiveDateTime, _>("created_at"))
+                    .map(|row| row.get::<NaiveDateTime, _>("created_at"));
+                if let Some(max_timestamp) = max_timestamp {
+                    if max_timestamp > *last_timestamp {
+                        *last_timestamp = max_timestamp
+                    }
+                }
+                // println!("{:?}", rows[0].columns());
+                let orig_values: Vec<_> = rows
+                    .iter()
+                    .filter_map(|row| {
+                        // println!("{:?}", row.try_get::<i32, _>("id"));
+                        if let Ok(x) = row.try_get::<f64, _>("x") {
+                            if let Ok(value) = row.try_get::<f64, _>("value") {
+                                return Some([x, value]);
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+                let xaxis = rows[0].get::<String, _>("xaxis");
+                if !run.metrics.contains_key(&variable) {
+                    run.metrics.insert(
+                        variable,
+                        Metric {
+                            resampled: Vec::new(),
+                            orig_values,
+                            xaxis,
+                            values: Vec::new(),
+                        },
+                    );
+                } else {
+                    run.metrics
+                        .get_mut(&variable)
+                        .unwrap()
+                        .orig_values
+                        .extend(orig_values);
+                }
+            }
+        }
+    }
+    Ok(())
+    // Ok(Runs {
+    //     filtered_runs: runs.clone(),
+    //     runs,
+    // })
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
@@ -559,6 +624,7 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx, rx) = mpsc::channel();
     let (tx_gui_dirty, rx_gui_dirty) = mpsc::channel();
     let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::channel();
+    let (tx_db_filters, rx_db_filters) = mpsc::channel();
 
     std::thread::spawn(move || loop {
         if let Ok((gui_params, mut runs)) = rx_gui_dirty.recv() {
@@ -579,18 +645,31 @@ fn main() -> Result<(), sqlx::Error> {
                 .connect(&database_url)
                 .await
                 .expect("Can't connect to database");
-
+            let mut train_ids = Vec::new();
+            let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+            let mut runs: HashMap<String, Run> = Default::default();
             loop {
                 // Fetch data from database
                 println!("Getting state...");
-                let runs = get_state_new(&pool).await.expect("Get state:");
+                get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
+                    .await
+                    .expect("Get state:");
+                // println!("{:?}", runs);
                 println!("Done.");
                 // Send data to UI thread
-                // if let Ok(runs) = runs {
-                tx.send(runs).expect("Failed to send data");
+                // if let Ok(runs) = runs e
+                tx.send(runs.clone()).expect("Failed to send data");
                 // }
                 // Wait some time before fetching again
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                for _ in 0..100 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    if let Ok(new_train_ids) = rx_db_filters.try_recv() {
+                        train_ids = new_train_ids;
+                        last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+                        runs = HashMap::new();
+                        break;
+                    }
+                }
             }
         });
     });
@@ -606,6 +685,7 @@ fn main() -> Result<(), sqlx::Error> {
             Box::<GuiRuns>::new(GuiRuns {
                 runs: Default::default(),
                 dirty: true,
+                db_train_runs_sender: tx_db_filters,
                 db_reciever: rx,
                 recomputed_reciever: rx_gui_recomputed,
                 dirty_sender: tx_gui_dirty,
