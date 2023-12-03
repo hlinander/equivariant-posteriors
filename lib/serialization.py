@@ -46,7 +46,7 @@ def write_status_file(config: SerializeConfig):
     checkpoint_path = get_or_create_checkpoint_path(config.train_run.train_config)
     with open(checkpoint_path / "status_tmp", "w") as status_file:
         status_file.write(
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: Epoch {config.train_epoch_state.epoch} / {config.train_run.epochs}, Batch {config.train_epoch_state.batch} / {len(config.train_epoch_state.train_dataloader)}"
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: Epoch {config.train_epoch_state.epoch} / {config.train_run.epochs}, Batch {config.train_epoch_state.batch} / {config.train_run.epochs * len(config.train_epoch_state.train_dataloader)}"
         )
     shutil.move(checkpoint_path / "status_tmp", checkpoint_path / "status")
 
@@ -276,4 +276,6 @@ def deserialize(config: DeserializeConfig):
         validation_metrics=validation_metrics,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
+        next_visualization=0.0,
+        next_visualizer=0,
     )

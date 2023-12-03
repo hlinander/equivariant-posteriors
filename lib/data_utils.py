@@ -35,4 +35,5 @@ def create_metric_sample_legacy(
         target=batch["target"].detach(),
         sample_id=batch["sample_id"].detach(),
         epoch=train_epoch_state.epoch,
+        batch=train_epoch_state.batch,
     )

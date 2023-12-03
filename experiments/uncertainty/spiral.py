@@ -14,6 +14,7 @@ from lib.train_dataclasses import ComputeConfig
 from lib.classification_metrics import create_classification_metrics
 from lib.data_registry import DataSpiralsConfig
 from lib.data_registry import DataUniformConfig
+from lib.data_registry import DataSubsetConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
 import lib.uncertainty as uncertainty

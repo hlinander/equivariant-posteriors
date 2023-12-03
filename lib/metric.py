@@ -10,6 +10,7 @@ class MetricSample:
     target: torch.Tensor
     sample_id: torch.Tensor
     epoch: int
+    batch: int
 
 
 @dataclass(frozen=True)

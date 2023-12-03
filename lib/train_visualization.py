@@ -18,38 +18,41 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
     plt.subplots(1, 3)
 
     train_metric_names = [metric.name() for metric in state.train_metrics]
-    val_metric_names = [metric.name() for metric in state.validation_metrics]
+    # val_metric_names = [metric.name() for metric in state.validation_metrics]
 
-    common_metrics = list(set(train_metric_names).intersection(set(val_metric_names)))
+    common_metrics = list(
+        set(train_metric_names)
+    )  # .intersection(set(val_metric_names)))
     common_metrics = sorted(common_metrics)
     n_metrics = min(4, len(common_metrics))
 
     train_indices = [train_metric_names.index(name) for name in common_metrics]
-    val_indices = [val_metric_names.index(name) for name in common_metrics]
+    # val_indices = [val_metric_names.index(name) for name in common_metrics]
 
     # First column (many metrics in rows)
     plt.subplot(1, 1).subplots(n_metrics, 1)
 
     for idx in range(n_metrics):
         train_metric = state.train_metrics[train_indices[idx]]
-        val_metric = state.validation_metrics[val_indices[idx]]
+        # val_metric = state.validation_metrics[val_indices[idx]]
 
         train_means = list(enumerate(train_metric.mean_batches()))
         # train_means = [
         # (epoch, mean) for (epoch, mean) in train_means if mean is not None
         # ]
-        val_means = list(enumerate(val_metric.mean_batches()))
+        # val_means = list(enumerate(val_metric.mean_batches()))
         # val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
         plt.title(common_metrics[idx])
+        plt.xlabel("batches")
         if len(train_means) > 0:
             x = [epoch for (epoch, mean) in train_means]
             y = [mean for (epoch, mean) in train_means]
             plt.plot(x, y, label=f"Train {common_metrics[idx]}")
-        if len(val_means) > 0:
-            x = [epoch for (epoch, mean) in val_means]
-            y = [mean for (epoch, mean) in val_means]
-            plt.plot(x, y, label=f"Val {common_metrics[idx]}")
+        # if len(val_means) > 0:
+        # x = [epoch for (epoch, mean) in val_means]
+        # y = [mean for (epoch, mean) in val_means]
+        # plt.plot(x, y, label=f"Val {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
@@ -156,6 +159,7 @@ def visualize_progress(state, train_run, last_postgres_result, device):
         val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
         plt.title(common_metrics[idx])
+        plt.xlabel("epoch")
         if len(train_means) > 0:
             x = [epoch for (epoch, mean) in train_means]
             y = [mean for (epoch, mean) in train_means]

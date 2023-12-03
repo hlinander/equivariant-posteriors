@@ -16,11 +16,13 @@ def do_train_run(train_run, device_id):
 
 def main():
     device_id = ddp_setup()
+    last_aquired_training = time.time()
     while True:
         print("Trying to fetch train run...")
         distributed_train_run = fetch_requested_train_run()
         if distributed_train_run is not None:
             try:
+                last_aquired_training = time.time()
                 do_train_run(distributed_train_run.train_run, device_id)
                 report_done(distributed_train_run)
             except filelock.Timeout:
@@ -29,6 +31,9 @@ def main():
                 )
             finally:
                 distributed_train_run.lock.release()
+        if time.time() > last_aquired_training + 10 * 60:
+            print("10 minutes since last aquired training, stopping...")
+            break
         time.sleep(1)
 
 

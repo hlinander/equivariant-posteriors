@@ -18,6 +18,8 @@ class TrainEpochState:
     train_dataloader: torch.utils.data.DataLoader
     epoch: int
     batch: int
+    next_visualization: float
+    next_visualizer: int
     val_dataloader: torch.utils.data.DataLoader = None
     device_memory_stats: dict = None
     host_memory_stats: object = None

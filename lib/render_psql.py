@@ -1,7 +1,6 @@
 import psycopg
 import pandas
 import json
-import time
 from threading import Thread
 import os
 import queue
@@ -23,6 +22,7 @@ def setup_psql():
     port = 5432
     if "EP_POSTGRES" in os.environ:
         hostname = os.environ.get("EP_POSTGRES")
+        # print(f"PSQL: {hostname}")
     if "EP_POSTGRES_PORT" in os.environ:
         try:
             port = int(os.environ.get("EP_POSTGRES_PORT"))
@@ -45,8 +45,8 @@ def setup_psql():
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host="localhost",
-        port=5432,
+        host=hostname,
+        port=port,
         autocommit=True,
     ) as conn:
         conn.execute(
@@ -219,7 +219,9 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
 
 
 def get_url():
-    return "postgresql://postgres:postgres@localhost:5432/equiv"
+    hostname = os.getenv("EP_POSTGRES", "localhost")
+    port = int(os.getenv("EP_POSTGRES_PORT", "5432"))
+    return f"postgresql://postgres:postgres@{hostname}:{port}/equiv"
 
 
 def _render_psql(
@@ -242,8 +244,8 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host="localhost",
-        port=5432,
+        host=os.getenv("EP_POSTGRES", "localhost"),
+        port=int(os.getenv("EP_POSTGRES_PORT", "5432")),
         autocommit=False,
     ) as conn:
         create_param_view(conn, train_run)
@@ -298,23 +300,23 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                         value,
                     ),
                 )
-        for metric in train_epoch_state.validation_metrics:
-            for idx, value in enumerate(metric.mean_batches()):
-                conn.execute(
-                    """
-                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
-                """,
-                    (
-                        train_run_dict["train_id"],
-                        idx,
-                        "batch",
-                        f"{metric.name()}_batch",
-                        value,
-                    ),
-                )
-        conn.commit()
+        # for metric in train_epoch_state.validation_metrics:
+        #     for idx, value in enumerate(metric.mean_batches()):
+        #         conn.execute(
+        #             """
+        #             INSERT INTO metrics (train_id, x, xaxis, variable, value)
+        #             VALUES (%s, %s, %s, %s, %s)
+        #             ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+        #         """,
+        #             (
+        #                 train_run_dict["train_id"],
+        #                 idx,
+        #                 "batch",
+        #                 f"{metric.name()}_batch",
+        #                 value,
+        #             ),
+        #         )
+        # conn.commit()
         # drop_views(conn)
         # create_metrics_view(conn)
         # create_metrics_and_run_info_view(conn)

@@ -103,10 +103,10 @@ def train(
     if dataloader.sampler.__class__.__name__ == "DistributedSampler":
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
-    next_visualization = time.time()
-    train_epoch_state.batch = 0
+    visualizers = [visualize_progress, visualize_progress_batches]
+    # train_epoch_state.batch = 0
     for i, batch in enumerate(dataloader):
-        train_epoch_state.batch = i
+        train_epoch_state.batch += 1
         batch = {k: v.to(device) for k, v in batch.items()}
         output = model(batch)
 
@@ -132,21 +132,23 @@ def train(
 
         try:
             now = time.time()
-            if now > next_visualization:
+            if now > train_epoch_state.next_visualization and ddp.get_rank() == 0:
                 write_status_file(
                     SerializeConfig(
                         train_run=train_run, train_epoch_state=train_epoch_state
                     )
                 )
                 last_postgres_result = render_psql(train_run, train_epoch_state)
-                next_visualization = now + 5
-                if ddp.get_rank() == 0:
-                    visualize_progress_batches(
-                        train_epoch_state,
-                        train_run,
-                        last_postgres_result,
-                        train_epoch_spec.device_id,
-                    )
+                train_epoch_state.next_visualization = now + 5
+                train_epoch_state.next_visualizer = (
+                    train_epoch_state.next_visualizer + 1
+                ) % 2
+                visualizers[train_epoch_state.next_visualizer](
+                    train_epoch_state,
+                    train_run,
+                    last_postgres_result,
+                    train_epoch_spec.device_id,
+                )
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
@@ -238,6 +240,8 @@ def create_initial_state(train_run: TrainRun, device_id):
         batch=0,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
+        next_visualization=0.0,
+        next_visualizer=0,
     )
 
 
@@ -265,8 +269,6 @@ def load_or_create_state(train_run: TrainRun, device_id):
 
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
-    next_visualization = time.time()
-
     train_epoch_spec = TrainEpochSpec(
         loss=train_run.train_config.loss,
         device_id=device_id,
@@ -284,24 +286,24 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
             validate(state, train_epoch_spec, train_run)
             state.epoch += 1
             serialize(serialize_config)
-            last_postgres_result = render_psql(train_run, state)
-            try:
-                now = time.time()
-                if now > next_visualization:
-                    next_visualization = now + 1
-                    if ddp.get_rank() == 0:
-                        visualize_progress(
-                            state, train_run, last_postgres_result, device_id
-                        )
-            except Exception as e:
-                logging.error("Visualization failed")
-                logging.error(str(e))
-                print(traceback.format_exc())
+            # last_postgres_result = render_psql(train_run, state)
+            # try:
+            #     now = time.time()
+            #     if now > next_visualization:
+            #         next_visualization = now + 1
+            #         if ddp.get_rank() == 0:
+            #             visualize_progress(
+            #                 state, train_run, last_postgres_result, device_id
+            #             )
+            # except Exception as e:
+            #     logging.error("Visualization failed")
+            #     logging.error(str(e))
+            #     print(traceback.format_exc())
 
         print("Render dataframe...")
         df = render_dataframe(train_run, state)
 
-        # print("Render psql...")
+        print("Render psql...")
         render_psql(train_run, state)
 
         print("Pickling dataframe...")
