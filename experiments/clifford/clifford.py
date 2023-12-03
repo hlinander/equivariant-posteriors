@@ -221,7 +221,7 @@ class DataCable(torch.utils.data.Dataset):
         return create_metric_sample_legacy(output, batch, train_epoch_state)
 
     def __len__(self):
-        return 256
+        return 256 * 10
 
 
 def create_config(ensemble_id):
