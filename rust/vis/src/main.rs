@@ -525,7 +525,15 @@ async fn get_state_new(pool: &sqlx::postgres::PgPool) -> Result<Runs, sqlx::Erro
             // println!("{:?}", rows[0].columns());
             let orig_values: Vec<_> = rows
                 .iter()
-                .map(|row| [row.get::<f64, _>("x"), row.get::<f64, _>("value")])
+                .filter_map(|row| {
+                    // println!("{:?}", row.try_get::<i32, _>("id"));
+                    if let Ok(x) = row.try_get::<f64, _>("x") {
+                        if let Ok(value) = row.try_get::<f64, _>("value") {
+                            return Some([x, value]);
+                        }
+                    }
+                    None
+                })
                 .collect();
             let xaxis = rows[0].get::<String, _>("xaxis");
             run.metrics.insert(
