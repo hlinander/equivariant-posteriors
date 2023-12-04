@@ -39,6 +39,7 @@ struct GuiParams {
     max_n: usize,
     param_filters: HashMap<String, HashSet<String>>,
     metric_filters: HashSet<String>,
+    inspect_params: HashSet<String>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -126,14 +127,22 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
                     } else {
                         0..=0
                     };
-                    let vals: Vec<f64> = window
+                    // let vals: Vec<f64> = window
+                    //     .map(|sub_idx| {
+                    //         let idx = orig_idx as i32 + sub_idx;
+                    //         metric.values[idx as usize][1]
+                    //     })
+                    //     .sorted_by(|a, b| a.partial_cmp(b).unwrap())
+                    //     .collect();
+                    // let mean_val = vals[vals.len() / 2];
+                    let sum: f64 = window
+                        .clone()
                         .map(|sub_idx| {
                             let idx = orig_idx as i32 + sub_idx;
                             metric.values[idx as usize][1]
                         })
-                        .sorted_by(|a, b| a.partial_cmp(b).unwrap())
-                        .collect();
-                    let mean_val = vals[vals.len() / 2];
+                        .sum();
+                    let mean_val = sum / window.count() as f64;
                     [metric.values[orig_idx][0], mean_val]
                 })
                 .collect();
@@ -178,7 +187,7 @@ impl eframe::App for GuiRuns {
             .runs
             .runs
             .values()
-            .map(|run| run.params.get("ensemble_id").unwrap())
+            .map(|run| self.label_from_active_inspect_params(run))
             .unique()
             .sorted()
             .enumerate()
@@ -194,8 +203,11 @@ impl eframe::App for GuiRuns {
             .values()
             .map(|run| {
                 let train_id = run.params.get("train_id").unwrap();
-                let ensemble_id = run.params.get("ensemble_id").unwrap();
-                (train_id.clone(), *ensemble_colors.get(ensemble_id).unwrap())
+                let ensemble_id = self.label_from_active_inspect_params(run); // run.params.get("ensemble_id").unwrap();
+                (
+                    train_id.clone(),
+                    *ensemble_colors.get(&ensemble_id).unwrap(),
+                )
             })
             .collect();
         let param_values = get_parameter_values(&self.runs, true);
@@ -294,7 +306,16 @@ impl GuiRuns {
                 };
                 for param_name in param_values.keys().sorted() {
                     ui.separator();
-                    ui.label(param_name);
+                    if ui
+                        .add(egui::Label::new(param_name).sense(egui::Sense::click()))
+                        .clicked()
+                    {
+                        if self.gui_params.inspect_params.contains(param_name) {
+                            self.gui_params.inspect_params.remove(param_name);
+                        } else {
+                            self.gui_params.inspect_params.insert(param_name.clone());
+                        }
+                    }
                     ui.horizontal_wrapped(|ui| {
                         for value in param_values.get(param_name).unwrap().iter().sorted() {
                             let active_filter = self
@@ -426,39 +447,43 @@ impl GuiRuns {
                         ui.vertical_centered(|ui| {
                             ui.label(&metric_name);
                             plot.show(ui, |plot_ui| {
+                                if self.gui_params.n_average > 1 {
+                                    for (run_id, run) in
+                                        self.runs.active_runs.iter().sorted().map(|train_id| {
+                                            (train_id, self.runs.runs.get(train_id).unwrap())
+                                        })
+                                    {
+                                        if let Some(metric) = run.metrics.get(&metric_name) {
+                                            let label = self.label_from_active_inspect_params(run);
+                                            plot_ui.line(
+                                                Line::new(PlotPoints::from(metric.values.clone()))
+                                                    // .name(&label)
+                                                    .stroke(Stroke::new(
+                                                        1.0,
+                                                        run_ensemble_color
+                                                            .get(run_id)
+                                                            .unwrap()
+                                                            .gamma_multiply(0.4),
+                                                    )),
+                                            );
+                                        }
+                                    }
+                                }
                                 for (run_id, run) in
                                     self.runs.active_runs.iter().sorted().map(|train_id| {
                                         (train_id, self.runs.runs.get(train_id).unwrap())
                                     })
                                 {
                                     if let Some(metric) = run.metrics.get(&metric_name) {
-                                        if self.gui_params.n_average > 1 {
-                                            plot_ui.line(
-                                                Line::new(PlotPoints::from(metric.values.clone()))
-                                                    .name(run.params.get("ensemble_id").unwrap())
-                                                    .stroke(Stroke::new(
-                                                        1.0,
-                                                        run_ensemble_color
-                                                            .get(run_id)
-                                                            .unwrap()
-                                                            .gamma_multiply(0.6),
-                                                    )),
-                                            );
-                                        }
-
+                                        let label = self.label_from_active_inspect_params(run);
                                         plot_ui.line(
                                             Line::new(PlotPoints::from(metric.resampled.clone()))
-                                                .name(run.params.get("ensemble_id").unwrap())
+                                                .name(&label)
                                                 .stroke(Stroke::new(
                                                     2.0,
                                                     *run_ensemble_color.get(run_id).unwrap(),
                                                 )),
                                         );
-                                        if self.data_status == DataStatus::FirstDataProcessed {
-                                            println!("auto bounds");
-                                            plot_ui.set_auto_bounds(egui::Vec2b::new(true, true));
-                                            // self.data_status = DataStatus::FirstDataProcessed;
-                                        }
                                     }
                                 }
                             })
@@ -472,6 +497,27 @@ impl GuiRuns {
             // plot_ui.set_auto_bounds(egui::Vec2b::new(true, true));
             self.data_status = DataStatus::FirstDataPlotted;
         }
+    }
+
+    fn label_from_active_inspect_params(&self, run: &Run) -> String {
+        let label = if self.gui_params.inspect_params.is_empty() {
+            run.params.get("ensemble_id").unwrap().clone()
+        } else {
+            let empty = "".to_string();
+            self.gui_params
+                .inspect_params
+                .iter()
+                .sorted()
+                .map(|param| {
+                    format!(
+                        "{}:{}",
+                        param.split(".").last().unwrap_or(param),
+                        run.params.get(param).unwrap_or(&empty)
+                    )
+                })
+                .join(", ")
+        };
+        label
     }
 }
 
@@ -695,6 +741,7 @@ fn main() -> Result<(), sqlx::Error> {
                     max_n: 1000,
                     param_filters: HashMap::new(),
                     metric_filters: HashSet::new(),
+                    inspect_params: HashSet::new(),
                     n_average: 1,
                 },
             })
