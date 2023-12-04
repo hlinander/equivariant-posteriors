@@ -8,13 +8,7 @@ from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
 
-from lib.ddp import ddp_setup
-from lib.ensemble import create_ensemble_config
-from lib.ensemble import request_ensemble
-from lib.ensemble import monitor_ensemble
-
-# from lib.ensemble import symlink_checkpoint_files
-# from lib.files import prepare_results
+from lib.generic_ablation import generic_ablation
 
 import lib.data_factory as data_factory
 import lib.model_factory as model_factory
@@ -28,14 +22,14 @@ from experiments.lora_ensembles.data import NLPDatasetConfig
 LLAMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
 
 
-def create_config(ensemble_id):
+def create_config(ensemble_id, lora_rank):
     ce_loss = torch.nn.CrossEntropyLoss()
 
     def loss(outputs, batch):
         return ce_loss(outputs["logits"], batch["labels"])
 
     train_config = TrainConfig(
-        model_config=LLama2Config(checkpoint=LLAMA_CHECKPOINT),
+        model_config=LLama2Config(checkpoint=LLAMA_CHECKPOINT, lora_rank=lora_rank),
         train_data_config=NLPDatasetConfig(
             dataset="mehdiiraqui/twitter_disaster",
             model_checkpoint=LLAMA_CHECKPOINT,
@@ -78,23 +72,6 @@ def register_model_and_dataset():
 
 
 if __name__ == "__main__":
-    register_model_and_dataset()
-
-    device_id = ddp_setup()
-
-    ensemble_config = create_ensemble_config(create_config, n_members=5)
-
-    # Request training of ensemble
-    # The actual training is carried out by one or more distributed trainers.
-    # The distributed trained can be started before or after this call.
-    request_ensemble(ensemble_config)
-
-    # Monitor progress
-    monitor_ensemble(ensemble_config)
-
-    # result_path = prepare_results(
-    #     Path(__file__).parent,
-    #     f"{Path(__file__).stem}",
-    #     ensemble_config,
-    # )
-    # symlink_checkpoint_files(ensemble, result_path)
+    configs = generic_ablation(
+        create_config, dict(ensemble_id=[0, 1, 2], lora_rank=[8, 16, 32])
+    )
