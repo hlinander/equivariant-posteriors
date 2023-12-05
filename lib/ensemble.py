@@ -18,21 +18,8 @@ from lib.serialization import (
 )
 from lib.model_factory import get_factory
 from lib.stable_hash import stable_hash
-
-
-@dataclass
-class EnsembleConfig:
-    members: list[TrainRun]
-
-    def serialize_human(self):
-        return [member_config.serialize_human() for member_config in self.members]
-
-
-@dataclass
-class Ensemble:
-    member_configs: list[TrainRun]
-    members: list[torch.nn.Module]
-    n_members: int
+from lib.train_dataclasses import Ensemble
+from lib.train_dataclasses import EnsembleConfig
 
 
 def create_ensemble_config(

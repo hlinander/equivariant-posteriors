@@ -19,6 +19,7 @@ from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
 import lib.uncertainty as uncertainty
 from lib.files import prepare_results
+from lib.render_psql import add_ensemble_artifact
 
 
 def create_config(ensemble_id):
@@ -92,6 +93,7 @@ def main():
         columns=["MI", "H", "id", "r", "x", "y", "pred"], data=data.numpy()
     )
     df.to_csv(result_path / "uncertainty_mlp.csv")
+    add_ensemble_artifact(ensemble_config, "uq", result_path / "uncertainty_mlp.csv")
 
 
 if __name__ == "__main__":

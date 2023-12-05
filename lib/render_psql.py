@@ -4,9 +4,12 @@ import json
 from threading import Thread
 import os
 import queue
+from typing import Union
+from pathlib import Path
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import EnsembleConfig
 
 
 # TODO explain analyze, psql \x, web explain analyze, CTE,
@@ -80,6 +83,19 @@ def setup_psql():
                 )
                 """
         )
+        conn.execute(
+            """
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id serial PRIMARY KEY,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                    train_id text,
+                    ensemble_id text,
+                    name text,
+                    path text,
+                    UNIQUE(train_id, name)
+                )
+                """
+        )
 
 
 def insert_param(conn, train_id, ensemble_id, variable, value):
@@ -109,78 +125,6 @@ def insert_param(conn, train_id, ensemble_id, variable, value):
         """,
         value_dict,
     )
-
-
-def drop_views(conn):
-    conn.execute("DROP VIEW IF EXISTS metrics_and_runs;")
-    conn.execute("DROP VIEW IF EXISTS metrics_view;")
-
-
-def create_metrics_view(conn):
-    variables = list(
-        conn.execute("SELECT DISTINCT variable FROM metrics ORDER BY variable")
-    )
-    keys_and_type = [f'"{key}" float' for key, in variables]
-
-    properties = ", ".join(keys_and_type)
-    properties = (
-        f"(train_id_and_epoch TEXT, train_id TEXT, epoch INTEGER, {properties})"
-    )
-
-    create_view_sql2 = f"""
-       CREATE OR REPLACE VIEW metrics_view AS
-        SELECT *
-        FROM crosstab(
-            'SELECT train_id || epoch, train_id, epoch, variable, value
-             FROM metrics ORDER BY train_id || epoch, variable',
-            'SELECT DISTINCT variable FROM metrics ORDER BY variable'
-        ) AS ct{properties};
-    """
-    # print(create_view_sql2)
-    conn.execute("CREATE EXTENSION IF NOT EXISTS tablefunc")
-    try:
-        conn.execute(create_view_sql2)
-    except psycopg.errors.InvalidTableDefinition:
-        conn.cancel()
-        conn.execute("DROP VIEW metrics_view CASCADE")
-        conn.execute(create_view_sql2)
-
-
-def create_metrics_and_run_info_view(conn):
-    sql = """
-            CREATE OR REPLACE VIEW metrics_and_runs AS 
-        SELECT * FROM metrics_view JOIN runs_view USING(train_id)
-        """
-    conn.execute(sql)
-
-
-def create_param_view(conn, train_run: TrainRun):
-    insert_or_update_train_run(conn, train_run)
-    variables = list(
-        conn.execute("SELECT DISTINCT variable FROM runs ORDER BY variable")
-    )
-    keys_and_type = [f'"{key}" TEXT' for key, in variables]
-
-    properties = ", ".join(keys_and_type)
-    properties = f"(id text, {properties})"
-
-    create_view_sql2 = f"""
-       CREATE OR REPLACE VIEW runs_view AS
-        SELECT *
-        FROM crosstab(
-            'SELECT train_id, variable, value_text
-             FROM runs ORDER BY train_id, variable',
-            'SELECT DISTINCT variable FROM runs ORDER BY variable'
-        ) AS ct{properties};
-    """
-    # print(create_view_sql2)
-    conn.execute("CREATE EXTENSION IF NOT EXISTS tablefunc")
-    try:
-        conn.execute(create_view_sql2)
-    except psycopg.errors.InvalidTableDefinition:
-        conn.commit()
-        conn.execute("DROP VIEW runs_view CASCADE")
-        conn.execute(create_view_sql2)
 
 
 def insert_or_update_train_run(conn, train_run: TrainRun):
@@ -248,7 +192,7 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         port=int(os.getenv("EP_POSTGRES_PORT", "5432")),
         autocommit=False,
     ) as conn:
-        create_param_view(conn, train_run)
+        # create_param_view(conn, train_run)
 
         # start_time = time.time()
         insert_or_update_train_run(conn, train_run)
@@ -324,3 +268,46 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
 
     return (True, "")
     # print(f"Updated psql {time.time() - start_time}s")
+
+
+def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
+    # train_run_dict = train_run.serialize_human()
+    try:
+        setup_psql()
+    except psycopg.errors.OperationalError as e:
+        print("[Database] Could not connect to database, artifact not added.")
+        return (False, str(e))
+
+    train_run_dict = train_run.serialize_human()
+
+    if isinstance(path, Path):
+        path = path.as_posix()
+
+    value_dict = dict(
+        train_id=train_run_dict["train_id"],
+        ensemble_id=train_run_dict["ensemble_id"],
+        name=name,
+        path=path,
+    )
+
+    with psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=os.getenv("EP_POSTGRES", "localhost"),
+        port=int(os.getenv("EP_POSTGRES_PORT", "5432")),
+        autocommit=False,
+    ) as conn:
+        conn.execute(
+            """
+            INSERT INTO artifacts (train_id, ensemble_id, name, path)
+            VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s)
+            ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path
+            """,
+            value_dict,
+        )
+    print(f"[Database] Added artifact {name}: {path}")
+
+
+def add_ensemble_artifact(
+    ensemble_config: EnsembleConfig, name: str, path: Union[str, Path]
+):
+    add_artifact(ensemble_config.members[0], name, path)
