@@ -168,6 +168,7 @@ fn show_artifacts(ui: &mut egui::Ui, handler: &mut ArtifactHandler, gui_params: 
             views,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
+            let npy_axis_id = ui.id().with("npy_axis");
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
             for (artifact_name, filtered_arrays) in gui_params
                 .artifact_filters
@@ -227,6 +228,8 @@ fn show_artifacts(ui: &mut egui::Ui, handler: &mut ArtifactHandler, gui_params: 
                                     .data_aspect(1.0)
                                     .view_aspect(1.0)
                                     .show_grid(false)
+                                    .link_axis(npy_axis_id, true, true)
+                                    .link_cursor(npy_axis_id, true, true)
                                     .show(ui, |plot_ui| {
                                         plot_ui.image(pi);
                                     });
