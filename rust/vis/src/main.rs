@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use chrono::NaiveDateTime;
+use clap::Parser;
 use eframe::egui;
 use egui::{epaint, Stroke};
 use egui_plot::{Legend, PlotPoints};
@@ -8,10 +9,12 @@ use itertools::Itertools;
 use ndarray::s;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
+use tokio::task::JoinHandle;
 // use sqlx::types::JsonValue
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
@@ -20,6 +23,12 @@ use cdshealpix::nested::Layer;
 use colorous::CIVIDIS;
 use ndarray_stats::QuantileExt;
 use np::load_npy;
+
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(default_value = "../../")]
+    artifacts: String,
+}
 
 #[derive(Default, Debug, Clone)]
 struct Metric {
@@ -69,14 +78,20 @@ struct ArtifactId {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
 struct NPYArtifactView {
     artifact_id: ArtifactId,
-    variable: usize,
+    index: Vec<usize>,
+}
+
+enum NPYArray {
+    Loading(JoinHandle<std::io::Result<ndarray::ArrayD<f32>>>),
+    Loaded(ndarray::ArrayD<f32>),
+    Error(String),
 }
 
 enum ArtifactHandler {
     NPYArtifact {
         textures: HashMap<NPYArtifactView, egui::TextureHandle>,
-        arrays: HashMap<ArtifactId, ndarray::ArrayD<f32>>,
-        errors: HashMap<ArtifactId, String>,
+        arrays: HashMap<ArtifactId, NPYArray>,
+        views: HashMap<ArtifactId, NPYArtifactView>,
     },
 }
 
@@ -90,31 +105,57 @@ fn add_artifact(
     match handler {
         ArtifactHandler::NPYArtifact {
             arrays,
-            errors,
             textures,
+            views,
         } => {
             // if arrays.contains_key(run_id) {
-            let base_path = std::path::Path::new("../../");
+            let args = Args::parse();
+            let base_path = std::path::Path::new(&args.artifacts);
             let full_path = base_path.join(std::path::Path::new(path));
-            let path = full_path.as_path();
+            let mpath = full_path.clone();
             let artifact_id = ArtifactId {
                 train_id: run_id.to_string(),
                 name: name.to_string(),
             };
-            match load_npy(path) {
-                Ok(new_array) => {
-                    // let array = arrays.get_mut(run_id).unwrap();
-                    // *array = new_array;
-                    arrays.insert(artifact_id, new_array);
+            // if !arrays.contains_key(&artifact_id) {
+            match arrays.get(&artifact_id) {
+                None => {
+                    let shoop = tokio::spawn(async move {
+                        let path = full_path.as_path();
+                        load_npy(path)
+                    });
+                    arrays.insert(artifact_id, NPYArray::Loading(shoop));
                 }
-                Err(err) => {
-                    errors.insert(
-                        artifact_id,
-                        format!("{} [{}]", err, path.display()).to_string(),
-                    );
+                Some(NPYArray::Loading(array_join_handle)) => {
+                    if array_join_handle.is_finished() {
+                        let Some(NPYArray::Loading(array_join_handle)) =
+                            arrays.remove(&artifact_id)
+                        else {
+                            panic!();
+                        };
+                        let npyarray = tokio::runtime::Handle::current()
+                            .block_on(array_join_handle)
+                            .unwrap();
+                        match npyarray {
+                            Ok(new_array) => {
+                                // let array = arrays.get_mut(run_id).unwrap();
+                                // *array = new_array;
+                                arrays.insert(artifact_id, NPYArray::Loaded(new_array));
+                            }
+                            Err(err) => {
+                                arrays.insert(
+                                    artifact_id,
+                                    NPYArray::Error(
+                                        format!("{} [{}]", err, mpath.display()).to_string(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
                 }
+                Some(NPYArray::Error(err)) => {}
+                Some(NPYArray::Loaded(array)) => {}
             }
-            // }
         }
     }
 }
@@ -123,8 +164,8 @@ fn show_artifacts(ui: &mut egui::Ui, handler: &mut ArtifactHandler, gui_params: 
     match handler {
         ArtifactHandler::NPYArtifact {
             arrays,
-            errors,
             textures,
+            views,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
@@ -136,41 +177,66 @@ fn show_artifacts(ui: &mut egui::Ui, handler: &mut ArtifactHandler, gui_params: 
             {
                 ui.collapsing(artifact_name, |ui| {
                     for (artifact_id, array) in filtered_arrays {
-                        ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
-                        let artifact_view = NPYArtifactView {
-                            artifact_id: artifact_id.clone(),
-                            variable: 0,
-                        };
-                        if !textures.contains_key(&artifact_view) {
-                            let mut texture = ui.ctx().load_texture(
-                                &artifact_id.name,
-                                egui::ColorImage::example(),
-                                egui::TextureOptions::default(),
-                            );
-                            let img = image_from_ndarray_healpix(array);
-                            texture.set(img, egui::TextureOptions::default());
-                            textures.insert(artifact_view.clone(), texture);
+                        match array {
+                            NPYArray::Loading(_) => {
+                                ui.label("loading...");
+                            }
+                            NPYArray::Loaded(array) => {
+                                let view =
+                                    views.entry(artifact_id.clone()).or_insert(NPYArtifactView {
+                                        artifact_id: artifact_id.clone(),
+                                        index: vec![0; array.shape().len() - 1],
+                                    });
+                                for (dim_idx, dim) in array
+                                    .shape()
+                                    .iter()
+                                    .enumerate()
+                                    .take(array.shape().len() - 1)
+                                {
+                                    ui.add(egui::Slider::new(
+                                        &mut view.index[dim_idx],
+                                        0..=(dim - 1),
+                                    ));
+                                }
+                                ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
+                                // let artifact_view = NPYArtifactView {
+                                //     artifact_id: artifact_id.clone(),
+                                //     // index:
+                                // };
+                                if !textures.contains_key(&view) {
+                                    let mut texture = ui.ctx().load_texture(
+                                        &artifact_id.name,
+                                        egui::ColorImage::example(),
+                                        egui::TextureOptions::default(),
+                                    );
+                                    let img = image_from_ndarray_healpix(array, view);
+                                    texture.set(img, egui::TextureOptions::default());
+                                    textures.insert(view.clone(), texture);
+                                }
+                                let pi = egui_plot::PlotImage::new(
+                                    textures.get(&view).unwrap(),
+                                    // texture.id(),
+                                    egui_plot::PlotPoint::from([0.0, 0.0]),
+                                    [2.0 * 3.14, 3.14],
+                                );
+                                // texture.set(img, egui::TextureOptions::default());
+                                // ui.image((texture.id(), texture.size_vec2()));
+                                Plot::new(artifact_id)
+                                    .width(500.0 * 2.0)
+                                    .height(500.0)
+                                    .data_aspect(1.0)
+                                    .view_aspect(1.0)
+                                    .show_grid(false)
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.image(pi);
+                                    });
+                            }
+                            NPYArray::Error(err) => {
+                                ui.colored_label(egui::Color32::RED, err);
+                            }
                         }
-                        let pi = egui_plot::PlotImage::new(
-                            textures.get(&artifact_view).unwrap(),
-                            // texture.id(),
-                            egui_plot::PlotPoint::from([0.0, 0.0]),
-                            [2.0 * 3.14, 3.14],
-                        );
-                        // texture.set(img, egui::TextureOptions::default());
-                        // ui.image((texture.id(), texture.size_vec2()));
-                        Plot::new(artifact_id)
-                            .width(500.0 * 2.0)
-                            .height(500.0)
-                            .show_grid(false)
-                            .show(ui, |plot_ui| {
-                                plot_ui.image(pi);
-                            });
                     }
                 });
-            }
-            for (train_id, error) in errors.iter().sorted_by_key(|(k, _v)| *k) {
-                ui.label(format!("{:?}: {}", train_id, error));
             }
         }
     }
@@ -181,6 +247,7 @@ fn image_from_ndarray_healpix(
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
+    view: &NPYArtifactView,
 ) -> egui::ColorImage {
     let max = array.max().unwrap();
     let min = array.min().unwrap();
@@ -188,22 +255,32 @@ fn image_from_ndarray_healpix(
     let width = 1000;
     let height = 1000;
     let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
+    let mut local_index = vec![0; array.shape().len()];
+    for (dim_idx, dim) in view.index.iter().enumerate() {
+        local_index[dim_idx] = *dim;
+    }
+    let ndim = local_index.len();
     for y in 0..height {
         for x in 0..width {
             let lon_x = x as f64 / width as f64 * 8.0;
             let lat_y = (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * 2.0;
             let (lon, lat) = cdshealpix::unproj(lon_x, lat_y);
-            let (lon, lat) = (
-                x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
-                (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
-                    / 2.0,
-            );
+            // let (lon, lat) = (
+            //     x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
+            //     (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
+            //         / 2.0,
+            // );
             let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
             let depth = cdshealpix::depth(nside);
             let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
+            // if hp_idx < cdshealpix::n_hash(depth) {
+            // println!("nside {}, depth {}, idx {}", nside, depth, hp_idx);
+            // dbg!(array.shape());
+            local_index[ndim - 1] = hp_idx as usize;
             let color =
-                CIVIDIS.eval_continuous(t(*array.get([0, 0, hp_idx as usize]).unwrap()) as f64);
+                CIVIDIS.eval_continuous(t(*array.get(local_index.as_slice()).unwrap()) as f64);
             img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
+            // }
         }
     }
     img
@@ -953,10 +1030,15 @@ async fn get_state_new(
 fn main() -> Result<(), sqlx::Error> {
     // Load environment variables
     // dotenv::dotenv().ok();
+    let args = Args::parse();
+    println!("Args: {:?}", args);
     let (tx, rx) = mpsc::channel();
     let (tx_gui_dirty, rx_gui_dirty) = mpsc::channel();
     let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::channel();
     let (tx_db_filters, rx_db_filters) = mpsc::channel();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let rt_handle = rt.handle().clone();
+    let _guard = rt.enter();
 
     std::thread::spawn(move || loop {
         if let Ok((gui_params, mut runs)) = rx_gui_dirty.recv() {
@@ -967,44 +1049,42 @@ fn main() -> Result<(), sqlx::Error> {
         }
     });
     // Connect to the database
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-            let pool = PgPoolOptions::new()
-                .max_connections(5)
-                .connect(&database_url)
+    // std::thread::spawn(move || {
+    rt_handle.spawn(async move {
+        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&database_url)
+            .await
+            .expect("Can't connect to database");
+        let mut train_ids = Vec::new();
+        let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+        let mut runs: HashMap<String, Run> = Default::default();
+        loop {
+            // Fetch data from database
+            println!("Getting state...");
+            get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
                 .await
-                .expect("Can't connect to database");
-            let mut train_ids = Vec::new();
-            let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
-            let mut runs: HashMap<String, Run> = Default::default();
-            loop {
-                // Fetch data from database
-                println!("Getting state...");
-                get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
-                    .await
-                    .expect("Get state:");
-                // println!("{:?}", runs);
-                println!("Done.");
-                // Send data to UI thread
-                // if let Ok(runs) = runs e
-                tx.send(runs.clone()).expect("Failed to send data");
-                // }
-                // Wait some time before fetching again
-                for _ in 0..100 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    if let Ok(new_train_ids) = rx_db_filters.try_recv() {
-                        train_ids = new_train_ids;
-                        last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
-                        runs = HashMap::new();
-                        break;
-                    }
+                .expect("Get state:");
+            // println!("{:?}", runs);
+            println!("Done.");
+            // Send data to UI thread
+            // if let Ok(runs) = runs e
+            tx.send(runs.clone()).expect("Failed to send data");
+            // }
+            // Wait some time before fetching again
+            for _ in 0..100 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                if let Ok(new_train_ids) = rx_db_filters.try_recv() {
+                    train_ids = new_train_ids;
+                    last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+                    runs = HashMap::new();
+                    break;
                 }
             }
-        });
+        }
     });
+    // });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([350.0, 200.0]),
@@ -1036,8 +1116,8 @@ fn main() -> Result<(), sqlx::Error> {
                     "npy".to_string(),
                     ArtifactHandler::NPYArtifact {
                         arrays: HashMap::new(),
-                        errors: HashMap::new(),
                         textures: HashMap::new(),
+                        views: HashMap::new(),
                     },
                 )]),
             })

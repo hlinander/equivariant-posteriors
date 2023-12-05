@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 cdshealpix = "0.6.6"
 chrono = "0.4.31"
+clap = "4.4.11"
 colorous = "1.0.12"
 dotenvy = "0.15.7"
 eframe = "0.24.1"
