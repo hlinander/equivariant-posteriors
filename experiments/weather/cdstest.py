@@ -3,6 +3,8 @@ import xarray as xr
 import numpy as np
 import cdsapi
 from dataclasses import dataclass
+import shutil
+import urllib3
 
 # import ssl
 
@@ -62,19 +64,24 @@ class ERA5Sample:
 
 def get_era5_sample(sample_config: ERA5SampleConfig):
     ERA5_GRIB_DATA_PATH.mkdir(exist_ok=True, parents=True)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if not sample_config.surface_path().is_file():
         get_surface_variables(
             sample_config.surface_grib_path(), **sample_config.__dict__
         )
         xr_grib = xr.load_dataset(sample_config.surface_grib_path())
-        xr_grib.to_netcdf(sample_config.surface_path())
+        tmp_path = f"{sample_config.surface_path().absolute().as_posix()}_tmp"
+        xr_grib.to_netcdf(tmp_path)
+        shutil.move(tmp_path, sample_config.surface_path())
         # np.save(sample_config.surface_path(), xr_grib.to_array().to_numpy())
 
     if not sample_config.upper_path().is_file():
         get_upper_variables(sample_config.upper_grib_path(), **sample_config.__dict__)
         xr_grib = xr.load_dataset(sample_config.upper_grib_path())
-        xr_grib.to_netcdf(sample_config.upper_path())
+        tmp_path = f"{sample_config.upper_path().absolute().as_posix()}_tmp"
+        xr_grib.to_netcdf(tmp_path)
+        shutil.move(tmp_path, sample_config.upper_path())
         # np.save(sample_config.upper_path(), xr_grib.to_array().to_numpy())
 
     surface_ds = xr.open_dataset(sample_config.surface_path())
@@ -97,7 +104,8 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
 
 
 def get_surface_variables(target, year="2018", month="09", day="27", time="12:00"):
-    c = cdsapi.Client(verify=False)
+    # urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    c = cdsapi.Client(verify=False, quiet=False)
     c.retrieve(
         "reanalysis-era5-single-levels",
         {
@@ -119,7 +127,8 @@ def get_surface_variables(target, year="2018", month="09", day="27", time="12:00
 
 
 def get_upper_variables(target, year="2018", month="09", day="27", time="12:00"):
-    c = cdsapi.Client(verify=False)
+    # urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    c = cdsapi.Client(verify=False, quiet=False)
     c.retrieve(
         "reanalysis-era5-pressure-levels",
         {
