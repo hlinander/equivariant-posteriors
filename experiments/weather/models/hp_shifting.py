@@ -2,17 +2,18 @@ import math
 
 import torch
 import numpy as np
-import healpix as hp
+
+# import healpix as hp
 import chealpix as chp
 
-from lib.models.healpix.hp_windowing import window_partition
+from experiments.weather.models.hp_windowing import window_partition
 
 
 def get_attn_mask_from_mask(mask, window_size):
     """Translates mask of shape (N) with different int values to attention mask of shape (nW,
     window_size, window_size) with values in {0,-100} suitable for attention module"""
 
-    mask = mask[None, :, None]
+    mask = mask[None, :, :, None]
     mask_windows = window_partition(mask, window_size)  # nW, window_size, 1
     mask_windows = mask_windows.squeeze()  # nW, window_size
 
@@ -45,33 +46,45 @@ class NestRollShift:
         self.shift_size = shift_size
         self.input_resolution = input_resolution
         self.window_size = window_size
+        self.window_size_d, self.window_size_hp = window_size
 
     def get_mask(self):
         # calculate attention mask for SW-MSA
-        N = self.input_resolution
-        img_mask = torch.zeros(N)
+        D, N = self.input_resolution
+        img_mask = torch.zeros(D, N)
         # JG: These slices select points inside full windows and partly split windows,
         # cf. Figure 4 in the SWIN paper. For healpy, there are just three cases
-        slices = (
-            slice(0, -self.window_size),
-            slice(-self.window_size, -self.shift_size),
-            slice(-self.shift_size, None),
+        hp_slices = (
+            slice(0, -self.window_size_hp),
+            slice(-self.window_size_hp, -self.window_size_hp // 2),
+            slice(-self.window_size_hp // 2, None),
+            # slice(-self.window_size_hp//2, -1),
+        )
+        d_slices = (
+            slice(0, -2),
+            slice(-2, None),
+            slice(-2, None),
         )
         # JG: In this loop, the three different subwindows A, B, ... from Figure 4 are given
         # different numbers 0,1,3
         cnt = 0
-        for n in slices:
-            img_mask[n] = cnt
+        for d_slice, hp_slice in zip(d_slices, hp_slices):
+            img_mask[d_slice, hp_slice] = cnt
             cnt += 1
 
         attn_mask = get_attn_mask_from_mask(img_mask, self.window_size)
         return attn_mask
 
     def shift(self, x):
-        return torch.roll(x, shifts=-self.shift_size, dims=1)
+        return torch.roll(
+            x, shifts=[-self.window_size_d // 2, -self.window_size_hp // 2], dims=[1, 2]
+        )
 
     def shift_back(self, x):
-        return torch.roll(x, shifts=self.shift_size, dims=1)
+        # return torch.roll(x, shifts=self.shift_size, dims=2)
+        return torch.roll(
+            x, shifts=[self.window_size_d // 2, self.window_size_hp // 2], dims=[1, 2]
+        )
 
 
 class NestGridShift:

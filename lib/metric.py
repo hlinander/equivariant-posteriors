@@ -38,7 +38,7 @@ class Metric:
 
     def __call__(self, metric_sample: MetricSample):
         output = metric_sample.output.detach()
-        prediction = metric_sample.prediction.detach()
+        # prediction = metric_sample.prediction.detach()
         target = metric_sample.target.detach()
         sample_id = metric_sample.sample_id.detach()
         if self.raw_output:
@@ -49,7 +49,11 @@ class Metric:
             )
         else:
             values = (
-                self.metric_fn(preds=prediction, target=target, **self.metric_kwargs)
+                self.metric_fn(
+                    preds=metric_sample.prediction.detach(),
+                    target=target,
+                    **self.metric_kwargs
+                )
                 .detach()
                 .cpu()
             )

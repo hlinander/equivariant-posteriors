@@ -10,14 +10,6 @@ from lib.models.mlp import MLP, MLPConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
-from lib.models.healpix.swin_hp_transformer import (
-    SwinHPTransformerConfig,
-    SwinHPTransformerSys,
-)
-from lib.models.healpix.swin_hp_pangu import SwinHPPangu, SwinHPPanguConfig
-
-# from experiments.lora_ensembles.configs import LLama2Model
-# from experiments.lora_ensembles.configs import LLama2Config
 
 
 class _ModelFactory:
@@ -33,9 +25,6 @@ class _ModelFactory:
         self.models[MLPProjClassConfig.__name__] = MLPProjClass
         self.models[ResnetConfig.__name__] = Resnet
         self.models[SwinTinyConfig.__name__] = SwinTiny
-        self.models[SwinHPTransformerConfig.__name__] = SwinHPTransformerSys
-        self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
-        # self.models[LLama2Config.__name__] = LLama2Model
 
     def register(self, config_class, model_class):
         self.models[config_class.__name__] = model_class

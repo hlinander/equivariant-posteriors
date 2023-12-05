@@ -13,13 +13,17 @@ import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from timm.models.layers import DropPath, trunc_normal_
 
+import healpix as hp
+
 from lib.dataspec import DataSpec
-from lib.models.healpix import hp_shifting
-from lib.models.healpix.hp_windowing import (
+
+from experiments.weather.models import hp_shifting
+from experiments.weather.models.hp_windowing import (
     window_partition,
     window_reverse,
     get_nest_win_idcs,
 )
+from experiments.weather.data import DataSpecHP
 from lib.serialize_human import serialize_human
 
 
@@ -93,11 +97,22 @@ class WindowAttention(nn.Module):
 
         if self.rel_pos_bias == "earth":
             # B * n_windows, window_size, C
-            n_windows = input_resolution // window_size
+            n_windows = (
+                torch.tensor(input_resolution).numel()
+                // torch.tensor(window_size).numel()
+            )
             # indices = torch.arange(end=window_size)
             # coords = indices[:, None] - indices[None, :]
+            window_size_d, window_size_hp = window_size
             self.earth_position_bias = nn.Parameter(
-                torch.zeros((n_windows, self.num_heads, window_size, window_size))
+                torch.zeros(
+                    (
+                        n_windows,
+                        self.num_heads,
+                        window_size_d * window_size_hp,
+                        window_size_d * window_size_hp,
+                    )
+                )
             )
             trunc_normal_(self.earth_position_bias, std=0.02)
 
@@ -152,11 +167,10 @@ class WindowAttention(nn.Module):
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, window_size, window_size) or None
         """
-        B_, N, C = x.shape
-        # breakpoint()
+        B_, W, C = x.shape
         qkv = (
             self.qkv(x)
-            .reshape(B_, N, 3, self.num_heads, C // self.num_heads)
+            .reshape(B_, W, 3, self.num_heads, C // self.num_heads)
             .permute(2, 0, 3, 1, 4)
         )
         q, k, v = (
@@ -189,36 +203,23 @@ class WindowAttention(nn.Module):
 
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(
+            attn = attn.view(B_ // nW, nW, self.num_heads, W, W) + mask.unsqueeze(
                 1
             ).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, N, N)
+            attn = attn.view(-1, self.num_heads, W, W)
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B_, W, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}"
-
-    def flops(self, N):
-        # calculate flops for 1 window with token length of N
-        flops = 0
-        # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
-        # attn = (q @ k.transpose(-2, -1))
-        flops += self.num_heads * N * (self.dim // self.num_heads) * N
-        #  x = (attn @ v)
-        flops += self.num_heads * N * N * (self.dim // self.num_heads)
-        # x = self.proj(x)
-        flops += N * self.dim * self.dim
-        return flops
 
 
 class SwinTransformerBlock(nn.Module):
@@ -271,10 +272,10 @@ class SwinTransformerBlock(nn.Module):
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         self.use_v2_norm_placement = use_v2_norm_placement
-        if self.input_resolution <= self.window_size:
-            # if window size is larger than input resolution, we don't partition windows
-            self.shift_size = 0
-            self.window_size = self.input_resolution
+        # if self.input_resolution <= self.window_size:
+        # if window size is larger than input resolution, we don't partition windows
+        # self.shift_size = 0
+        # self.window_size = self.input_resolution
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
@@ -301,7 +302,7 @@ class SwinTransformerBlock(nn.Module):
         )
 
         # get nside parameter of current resolution
-        nside = math.sqrt(input_resolution // base_pix)
+        nside = math.sqrt(input_resolution[1] // base_pix)
         # assert nside % 1 == 0, "nside has to be an integer in every layer"
         nside = math.floor(nside)
         # shifter classes and arguments for their init functions
@@ -340,8 +341,8 @@ class SwinTransformerBlock(nn.Module):
         self.register_buffer("attn_mask", attn_mask)
 
     def forward(self, x):
-        N = self.input_resolution
-        B, N, C = x.shape
+        # N = self.input_resolution
+        B, D, N, C = x.shape
 
         shortcut = x
         if not self.use_v2_norm_placement:
@@ -358,15 +359,13 @@ class SwinTransformerBlock(nn.Module):
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size, C
 
         # merge windows
-        shifted_x = window_reverse(attn_windows, self.window_size, N)  # B N' C
+        shifted_x = window_reverse(attn_windows, self.window_size, D, N)  # B N' C
 
         # reverse cyclic shift
         x = self.shifter.shift_back(shifted_x)
 
         # FFN
-        # breakpoint()
         if self.use_v2_norm_placement:
-            # breakpoint()
             x = shortcut + self.drop_path(self.norm1(x))
             x = x + self.drop_path(self.norm2(self.mlp(x)))
         else:
@@ -381,20 +380,6 @@ class SwinTransformerBlock(nn.Module):
             f" window_size={self.window_size}, shift_size={self.shift_size}"
             f", mlp_ratio={self.mlp_ratio}"
         )
-
-    def flops(self):
-        flops = 0
-        H, W = self.input_resolution
-        # norm1
-        flops += self.dim * H * W
-        # W-MSA/SW-MSA
-        nW = H * W / self.window_size[0] / self.window_size[1]
-        flops += nW * self.attn.flops(self.window_size[0] * self.window_size[1])
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
-        # norm2
-        flops += self.dim * H * W
-        return flops
 
 
 class PatchMerging(nn.Module):
@@ -415,16 +400,15 @@ class PatchMerging(nn.Module):
         """
         x: B, N, C
         """
-        B, N, C = x.shape
+        B, D, N, C = x.shape
         assert (
             N % 4 == 0
         ), f"x size {N} is not divisible by 4 as necessary for patching."
 
-        # breakpoint()
-        x0 = x[:, 0::4, :]  # B N/4 C
-        x1 = x[:, 1::4, :]  # B N/4 C
-        x2 = x[:, 2::4, :]  # B N/4 C
-        x3 = x[:, 3::4, :]  # B N/4 C
+        x0 = x[:, :, 0::4, :]  # B N/4 C
+        x1 = x[:, :, 1::4, :]  # B N/4 C
+        x2 = x[:, :, 2::4, :]  # B N/4 C
+        x3 = x[:, :, 3::4, :]  # B N/4 C
         # concatenate the patches per merge-window channel-wise
         x = torch.cat([x0, x1, x2, x3], -1)  # B N/4 patch_size*C
 
@@ -435,12 +419,6 @@ class PatchMerging(nn.Module):
 
     def extra_repr(self) -> str:
         return f"input_resolution={self.input_resolution}, dim={self.dim}"
-
-    def flops(self):
-        N = self.input_resolution
-        flops = N * self.dim
-        flops += (N // 2) * self.patch_size * self.dim * 2 * self.dim
-        return flops
 
 
 class PatchExpand(nn.Module):
@@ -462,10 +440,9 @@ class PatchExpand(nn.Module):
         x: B, N, dim
         """
         x = self.expand(x)
-        B, N, C = x.shape
+        B, D, N, C = x.shape
 
-        x = rearrange(x, "b n (p c)-> b (n p) c", p=4, c=C // 4)
-        # breakpoint()
+        x = rearrange(x, "b d n (p c)-> b d (n p) c", p=4, c=C // 4)
         x = self.norm(x)
         x = self.linear(x)
 
@@ -473,27 +450,35 @@ class PatchExpand(nn.Module):
 
 
 class FinalPatchExpand_Transpose(nn.Module):
-    def __init__(self, patch_size, dim):
+    def __init__(self, patch_size, dim, data_spec_hp: DataSpecHP):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
-        self.conv = nn.ConvTranspose1d(
+        self.conv_surface = nn.ConvTranspose1d(
             dim,
-            dim,
+            data_spec_hp.n_surface,
             kernel_size=patch_size * 4,
             stride=patch_size,
             padding=patch_size + 2,
         )
+        self.conv_upper = nn.ConvTranspose2d(
+            dim,
+            data_spec_hp.n_upper,
+            kernel_size=[2, patch_size * 4],
+            stride=[2, patch_size],
+            padding=[0, patch_size + 2],
+        )
         # self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: torch.Tensor):
-        # B N C -> B C N
-        x = x.permute(0, 2, 1)
-        x = self.conv(x)
-        # breakpoint()
-        x = x.permute(0, 2, 1)
+        # B D N C -> B C D N
+        x = x.permute(0, 3, 1, 2)
+        x_surface = self.conv_surface(x[:, :, 0, :])
+        x_upper = self.conv_upper(x[:, :, 1:, :])
+        x_surface = x_surface.permute(0, 2, 1)
+        x_upper = x_upper.permute(0, 2, 3, 1)
         # x = self.norm(x)
-        return x
+        return x_surface, x_upper
 
 
 class FinalPatchExpand_X4(nn.Module):
@@ -609,14 +594,6 @@ class BasicLayer(nn.Module):
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
 
-    def flops(self):
-        flops = 0
-        for blk in self.blocks:
-            flops += blk.flops()
-        if self.downsample is not None:
-            flops += self.downsample.flops()
-        return flops
-
 
 class PatchEmbed(nn.Module):
     r"""Image to Patch Embedding
@@ -629,137 +606,38 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, config, data_spec: DataSpec):
+    def __init__(self, config, data_spec: DataSpecHP):
         super().__init__()
         assert config.patch_size % 4 == 0, "required for valid nside in deeper layers"
 
         self.config = config
         self.data_spec = data_spec
-        # breakpoint()
-        self.num_patches = data_spec.input_shape[1] // config.patch_size
 
-        self.proj = nn.Conv1d(
-            data_spec.input_shape[0],
+        self.num_hp_patches = hp.nside2npix(data_spec.nside) // config.patch_size
+
+        self.proj_surface = nn.Conv1d(
+            data_spec.n_surface,
             config.embed_dims[0],
             kernel_size=config.patch_size,
             stride=config.patch_size,
         )
-        if config.patch_embed_norm_layer is not None:
-            self.norm = config.patch_embed_norm_layer
-        else:
-            self.norm = None
+        self.proj_upper = nn.Conv2d(
+            data_spec.n_upper,
+            config.embed_dims[0],
+            kernel_size=[2, config.patch_size],
+            stride=[2, config.patch_size],
+        )
 
-    def forward(self, x):
-        B, C, N = x.shape
-        assert (
-            N == self.data_spec.input_shape[1]
+    def forward(self, x_surface, x_upper):
+        B, C, N = x_surface.shape
+        assert N == hp.nside2npix(
+            self.data_spec.nside
         ), f"Input image size ({N}) doesn't match model ({self.data_spec.input_shape[0]})."
-        x = self.proj(x).transpose(1, 2)  # B Pn C
-        if self.norm is not None:
-            x = self.norm(x)
-        return x
-
-    def flops(self):
-        N = self.num_patches
-        flops = (
-            N * self.config.embed_dim * self.data_spec.input_shape[-1] * self.patch_size
-        )
-        if self.norm is not None:
-            flops += N * self.embed_dim
-        return flops
-
-
-class UnetDecoder(nn.Module):
-    def __init__(self, config, data_spec: DataSpec, dpr):
-        super().__init__()
-        self.config = config
-        self.num_layers = len(config.depths)
-        self.num_features = int(config.embed_dim * 2 ** (self.num_layers - 1))
-        num_patches = data_spec.input_shape[1] // config.patch_size
-        self.layers_up = nn.ModuleList()
-        self.concat_back_dim = nn.ModuleList()
-        for i_layer in range(self.num_layers):
-            down_idx = self.num_layers - 1 - i_layer
-            concat_out = int(config.embed_dim * 2**down_idx)
-            concat_in = 2 * concat_out
-            concat_linear = (
-                nn.Linear(concat_in, concat_out) if i_layer > 0 else nn.Identity()
-            )
-            if i_layer == 0:
-                layer_up = PatchExpand(
-                    dim=concat_out,
-                    dim_scale=2,
-                    norm_layer=config.norm_layer,
-                )
-            else:
-                layer_up = BasicLayer_up(
-                    dim=concat_out,
-                    input_resolution=num_patches // (4**down_idx),
-                    depth=config.depths[down_idx],
-                    num_heads=config.num_heads[down_idx],
-                    window_size=config.window_size,
-                    base_pix=config.base_pix,
-                    shift_size=config.shift_size,
-                    shift_strategy=config.shift_strategy,
-                    rel_pos_bias=config.rel_pos_bias,
-                    mlp_ratio=config.mlp_ratio,
-                    qkv_bias=config.qkv_bias,
-                    qk_scale=config.qk_scale,
-                    use_cos_attn=config.use_cos_attn,
-                    drop=config.drop_rate,
-                    attn_drop=config.attn_drop_rate,
-                    drop_path=dpr[
-                        sum(config.depths[:down_idx]) : sum(
-                            config.depths[: down_idx + 1]
-                        )
-                    ],
-                    norm_layer=config.norm_layer,
-                    use_v2_norm_placement=config.use_v2_norm_placement,
-                    upsample=PatchExpand if down_idx > 0 else None,
-                    use_checkpoint=config.use_checkpoint,
-                )
-            self.layers_up.append(layer_up)
-            self.concat_back_dim.append(concat_linear)
-
-        self.up = FinalPatchExpand_X4(
-            patch_size=config.patch_size,
-            dim=config.embed_dim,
-        )
-        self.output = nn.Conv1d(
-            in_channels=config.embed_dim,
-            out_channels=data_spec.output_shape[0],
-            kernel_size=1,
-            bias=False,
-        )
-
-        self.norm_up = config.norm_layer(config.embed_dim)
-
-    def forward(self, x, x_downsample):
-        for inx, layer_up in enumerate(self.layers_up):
-            if inx == 0:
-                x = layer_up(x)
-                if self.config.dev_mode:
-                    print(f"feature shape after PatchExpand: {x.size()}")
-            else:
-                x = torch.cat([x, x_downsample[self.num_layers - 1 - inx]], -1)
-                if self.config.dev_mode:
-                    print(f"feature shape after concatenation: {x.size()}")
-                x = self.concat_back_dim[inx](x)
-                if self.config.dev_mode:
-                    print(f"feature shape after linear layer: {x.size()}")
-                x = layer_up(x)
-                if self.config.dev_mode:
-                    print("feature shape after basic layer up", inx, ": ", x.size())
-        x = self.norm_up(x)  # B L C
-        x = self.up(x)
-        if self.config.dev_mode:
-            print("feature shape after FinalPatchExpand_X4: ", x.size())
-        x = x.permute(0, 2, 1)  # B,C,N
-        if self.config.dev_mode:
-            print("feature shape after permutation: ", x.size())
-        x = self.output(x)
-        if self.config.dev_mode:
-            print("feature shape after 1x1 convolution: ", x.size())
+        x_surface = self.proj_surface(x_surface)[:, :, None, :]
+        x_upper = self.proj_upper(x_upper)
+        x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
+        x = torch.concatenate([x_surface, x_upper], dim=2)
+        x = x.permute(0, 2, 3, 1)
         return x
 
 
@@ -789,7 +667,7 @@ class SwinHPPanguConfig:
     patch_norm: bool = True
     use_checkpoint: bool = False
     dev_mode: bool = False  # Developer mode for printing extra information
-    decoder_class: Literal[UnetDecoder] = UnetDecoder
+    # decoder_class: Literal[UnetDecoder] = UnetDecoder
 
     def serialize_human(self):
         return serialize_human(self.__dict__)  # dict(validation=self.validation)
@@ -835,20 +713,20 @@ class SwinHPPangu(nn.Module):
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(config, data_spec=data_spec)
-        num_patches = self.patch_embed.num_patches
+        num_hp_patches = self.patch_embed.num_hp_patches
         self.input_resolutions = [
-            num_patches,
-            num_patches // 4,
-            num_patches // 4,
-            num_patches,
+            [4, num_hp_patches],
+            [4, num_hp_patches // 4],
+            [4, num_hp_patches // 4],
+            [4, num_hp_patches],
         ]
 
         # absolute position embedding
-        if config.ape:
-            self.absolute_pos_embed = nn.Parameter(
-                torch.zeros(1, num_patches, config.embed_dims[0])
-            )
-            trunc_normal_(self.absolute_pos_embed, std=0.02)
+        # if config.ape:
+        #     self.absolute_pos_embed = nn.Parameter(
+        #         torch.zeros(1, num_patches, config.embed_dims[0])
+        #     )
+        #     trunc_normal_(self.absolute_pos_embed, std=0.02)
 
         self.pos_drop = nn.Dropout(p=config.drop_rate)
 
@@ -866,18 +744,20 @@ class SwinHPPangu(nn.Module):
         #     dim=2 * config.embed_dims[-1],
         # )
         self.final_up = FinalPatchExpand_Transpose(
-            patch_size=config.patch_size, dim=2 * config.embed_dims[-1]
+            patch_size=config.patch_size,
+            dim=2 * config.embed_dims[-1],
+            data_spec_hp=data_spec,
         )
         # self.final_up = FinalPatchExpand_Transpose(
         #     patch_size=config.patch_size, dim=config.embed_dims[0]
         # )
-        self.output = nn.Conv1d(
-            in_channels=2 * config.embed_dims[-1],
-            # in_channels=config.embed_dims[0],  # 2 * config.embed_dims[-1],
-            out_channels=data_spec.output_shape[0],
-            kernel_size=1,
-            bias=False,
-        )
+        # self.output = nn.Conv1d(
+        #     in_channels=2 * config.embed_dims[-1],
+        #     # in_channels=config.embed_dims[0],  # 2 * config.embed_dims[-1],
+        #     out_channels=1,  # data_spec.output_shape[0],
+        #     kernel_size=1,
+        #     bias=False,
+        # )
 
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -911,21 +791,21 @@ class SwinHPPangu(nn.Module):
 
         # out_channels = self.num_features
         self.norm = config.norm_layer(config.embed_dims[1])
-        self.mlp_in = torch.nn.Linear(
-            data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
-            # 147456,
-            # data_spec.input_shape[0] // config.patch_size * config.embed_dims[0],
-            256,
-            bias=True,
-        )
-        self.mlps = torch.nn.ModuleList(
-            [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in [(256, 256)]]
-        )
-        self.mlp_out = torch.nn.Linear(
-            256,
-            data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
-            bias=True,
-        )
+        # self.mlp_in = torch.nn.Linear(
+        #     data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
+        #     # 147456,
+        #     # data_spec.input_shape[0] // config.patch_size * config.embed_dims[0],
+        #     256,
+        #     bias=True,
+        # )
+        # self.mlps = torch.nn.ModuleList(
+        #     [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in [(256, 256)]]
+        # )
+        # self.mlp_out = torch.nn.Linear(
+        #     256,
+        #     data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
+        #     bias=True,
+        # )
 
         self.apply(self._init_weights)
 
@@ -946,45 +826,11 @@ class SwinHPPangu(nn.Module):
     def no_weight_decay_keywords(self):
         return {"relative_position_bias_table"}
 
-    def old_forward(self, x):
-        # input = x
-        x = self.patch_embed(x)
-        # breakpoint()
-        B, C, N = x.shape
-        x = x.reshape(B, C * N)
-        y = self.mlp_in(x)
-        y = torch.nn.functional.relu(y)
-
-        for idx, mlp in enumerate(self.mlps):
-            y = mlp(y)
-            y = torch.nn.functional.relu(y)
-
-        y = self.mlp_out(y)
-        # x = y.reshape(B, 4 * C, N // 4)
-        x = y.reshape(B, C, N)
-        # x = x.permute(0, 2, 1)
-        # x = x + self.absolute_pos_embed
-        # x = self.layers[0](x)
-        # skip = x
-        # x = self.downsample(x)
-        # x = self.layers[1](x)
-        # x = self.layers[2](x)
-        # x = self.norm(x)
-        # x = self.upsample(x)
-        # x = self.layers[3](x)
-        # x = torch.concatenate([x, skip], -1)
-        x = self.final_up(x)
-        # breakpoint()
-        x = x.permute(0, 2, 1)  # B,C,N
-        x = self.output(x)
-
-        return dict(logits=x, predictions=x)
-
     def forward(self, batch):
-        x = batch["input"]
+        x_surface = batch["input_surface"]
+        x_upper = batch["input_upper"]
         # input = x
-        x = self.patch_embed(x)
-        # breakpoint()
+        x = self.patch_embed(x_surface, x_upper)
         # skip2 = x
         # x = x + self.absolute_pos_embed
         # x = x.permute(0, 2, 1)
@@ -998,9 +844,14 @@ class SwinHPPangu(nn.Module):
         x = self.layers[3](x)
         x = torch.concatenate([skip, x], -1)
         # x = torch.concatenate([skip2, skip2], -1)
-        x = self.final_up(x)
-        # breakpoint()
-        x = x.permute(0, 2, 1)  # B,C,N
-        x = self.output(x)
+        x_surface, x_upper = self.final_up(x)
+        x_surface = x_surface.permute(0, 2, 1)
+        x_upper = x_upper.permute(0, 3, 1, 2)
+        # x = x.permute(0, 2, 1)  # B,C,N
+        # x = self.output(x)
 
-        return dict(logits=x, predictions=x)
+        return dict(
+            logits_surface=x_surface,
+            logits_upper=x_upper[:, :, :13, :],
+            predictions=None,
+        )
