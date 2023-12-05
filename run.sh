@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/env bash
 set -x
 export PYTHONPATH=$(pwd)
 ulimit -n 64000
