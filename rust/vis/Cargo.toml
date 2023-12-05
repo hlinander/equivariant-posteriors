@@ -6,13 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+cdshealpix = "0.6.6"
 chrono = "0.4.31"
+colorous = "1.0.12"
 dotenvy = "0.15.7"
 eframe = "0.24.1"
 egui = "0.24.1"
 egui_plot = "0.24.1"
 flamegraph = "0.6.4"
 itertools = "0.12.0"
+ndarray = "0.15.6"
+ndarray-stats = "0.5.1"
+npyz = "0.8.2"
 serde_json = "1.0.108"
 sqlx = { version="0.7.3" , features = [ "runtime-tokio", "postgres", "chrono" ]}
 sqlx-cli = "0.7.3"

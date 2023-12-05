@@ -5,6 +5,7 @@ use egui::{epaint, Stroke};
 use egui_plot::{Legend, PlotPoints};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
+use ndarray::s;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 // use sqlx::types::JsonValue
@@ -12,6 +13,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+
+pub mod np;
+use cdshealpix::nested::Layer;
+use colorous::CIVIDIS;
+use ndarray_stats::QuantileExt;
+use np::load_npy;
 
 #[derive(Default, Debug, Clone)]
 struct Metric {
@@ -24,6 +32,7 @@ struct Metric {
 #[derive(Default, Debug, Clone)]
 struct Run {
     params: HashMap<String, String>,
+    artifacts: HashMap<String, String>,
     metrics: HashMap<String, Metric>,
 }
 
@@ -39,6 +48,7 @@ struct GuiParams {
     max_n: usize,
     param_filters: HashMap<String, HashSet<String>>,
     metric_filters: HashSet<String>,
+    artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
 }
 
@@ -48,6 +58,155 @@ enum DataStatus {
     FirstDataArrived,
     FirstDataProcessed,
     FirstDataPlotted,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
+struct ArtifactId {
+    train_id: String,
+    name: String,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
+struct NPYArtifactView {
+    artifact_id: ArtifactId,
+    variable: usize,
+}
+
+enum ArtifactHandler {
+    NPYArtifact {
+        textures: HashMap<NPYArtifactView, egui::TextureHandle>,
+        arrays: HashMap<ArtifactId, ndarray::ArrayD<f32>>,
+        errors: HashMap<ArtifactId, String>,
+    },
+}
+
+fn add_artifact(
+    handler: &mut ArtifactHandler,
+    ui: &egui::Ui,
+    run_id: &str,
+    name: &str,
+    path: &str,
+) {
+    match handler {
+        ArtifactHandler::NPYArtifact {
+            arrays,
+            errors,
+            textures,
+        } => {
+            // if arrays.contains_key(run_id) {
+            let base_path = std::path::Path::new("../../");
+            let full_path = base_path.join(std::path::Path::new(path));
+            let path = full_path.as_path();
+            let artifact_id = ArtifactId {
+                train_id: run_id.to_string(),
+                name: name.to_string(),
+            };
+            match load_npy(path) {
+                Ok(new_array) => {
+                    // let array = arrays.get_mut(run_id).unwrap();
+                    // *array = new_array;
+                    arrays.insert(artifact_id, new_array);
+                }
+                Err(err) => {
+                    errors.insert(
+                        artifact_id,
+                        format!("{} [{}]", err, path.display()).to_string(),
+                    );
+                }
+            }
+            // }
+        }
+    }
+}
+
+fn show_artifacts(ui: &mut egui::Ui, handler: &mut ArtifactHandler, gui_params: &GuiParams) {
+    match handler {
+        ArtifactHandler::NPYArtifact {
+            arrays,
+            errors,
+            textures,
+        } => {
+            // let texture = texture.get_or_insert_with(|| {});
+            let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
+            for (artifact_name, filtered_arrays) in gui_params
+                .artifact_filters
+                .iter()
+                .filter(|name| available_artifact_names.contains(name))
+                .map(|name| (name, arrays.iter().filter(|(key, _v)| key.name == *name)))
+            {
+                ui.collapsing(artifact_name, |ui| {
+                    for (artifact_id, array) in filtered_arrays {
+                        ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
+                        let artifact_view = NPYArtifactView {
+                            artifact_id: artifact_id.clone(),
+                            variable: 0,
+                        };
+                        if !textures.contains_key(&artifact_view) {
+                            let mut texture = ui.ctx().load_texture(
+                                &artifact_id.name,
+                                egui::ColorImage::example(),
+                                egui::TextureOptions::default(),
+                            );
+                            let img = image_from_ndarray_healpix(array);
+                            texture.set(img, egui::TextureOptions::default());
+                            textures.insert(artifact_view.clone(), texture);
+                        }
+                        let pi = egui_plot::PlotImage::new(
+                            textures.get(&artifact_view).unwrap(),
+                            // texture.id(),
+                            egui_plot::PlotPoint::from([0.0, 0.0]),
+                            [2.0 * 3.14, 3.14],
+                        );
+                        // texture.set(img, egui::TextureOptions::default());
+                        // ui.image((texture.id(), texture.size_vec2()));
+                        Plot::new(artifact_id)
+                            .width(500.0 * 2.0)
+                            .height(500.0)
+                            .show_grid(false)
+                            .show(ui, |plot_ui| {
+                                plot_ui.image(pi);
+                            });
+                    }
+                });
+            }
+            for (train_id, error) in errors.iter().sorted_by_key(|(k, _v)| *k) {
+                ui.label(format!("{:?}: {}", train_id, error));
+            }
+        }
+    }
+}
+
+fn image_from_ndarray_healpix(
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+) -> egui::ColorImage {
+    let max = array.max().unwrap();
+    let min = array.min().unwrap();
+    let t = |x: f32| (x - min) / (max - min);
+    let width = 1000;
+    let height = 1000;
+    let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
+    for y in 0..height {
+        for x in 0..width {
+            let lon_x = x as f64 / width as f64 * 8.0;
+            let lat_y = (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * 2.0;
+            let (lon, lat) = cdshealpix::unproj(lon_x, lat_y);
+            let (lon, lat) = (
+                x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
+                (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
+                    / 2.0,
+            );
+            let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
+            let depth = cdshealpix::depth(nside);
+            let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
+            let color =
+                CIVIDIS.eval_continuous(t(*array.get([0, 0, hp_idx as usize]).unwrap()) as f64);
+            img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
+        }
+    }
+    img
 }
 
 struct GuiRuns {
@@ -60,6 +219,8 @@ struct GuiRuns {
     initialized: bool,
     data_status: DataStatus,
     gui_params: GuiParams,
+    artifact_handlers: HashMap<String, ArtifactHandler>,
+    // texture: Option<egui::TextureHandle>,
 }
 
 fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
@@ -245,35 +406,114 @@ impl eframe::App for GuiRuns {
             .default_width(300.0)
             .width_range(100.0..=300.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        for metric_name in &metric_names {
-                            let active_filter =
-                                self.gui_params.metric_filters.contains(metric_name);
-                            if ui
-                                .add(egui::Button::new(metric_name).selected(active_filter))
-                                .clicked()
-                            {
-                                if self.gui_params.metric_filters.contains(metric_name) {
-                                    self.gui_params.metric_filters.remove(metric_name);
-                                } else {
-                                    self.gui_params.metric_filters.insert(metric_name.clone());
-                                }
-                                self.dirty = true;
-                            }
+                self.render_metrics(ui, &metric_names);
+                ui.separator();
+                for artifact_name in self
+                    .runs
+                    .active_runs
+                    .iter()
+                    .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
+                    .flatten()
+                    .unique()
+                    .sorted()
+                {
+                    if ui
+                        .add(
+                            egui::Button::new(artifact_name)
+                                .selected(self.gui_params.artifact_filters.contains(artifact_name)),
+                        )
+                        .clicked()
+                    {
+                        if self.gui_params.artifact_filters.contains(artifact_name) {
+                            self.gui_params.artifact_filters.remove(artifact_name);
+                        } else {
+                            self.gui_params
+                                .artifact_filters
+                                .insert(artifact_name.clone());
                         }
-                    });
-                });
+                    }
+                }
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             ctx.request_repaint();
-            self.render_plots(ui, metric_names, run_ensemble_color);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                self.render_plots(ui, metric_names, run_ensemble_color);
+                let active_artifact_types: Vec<&str> = self
+                    .gui_params
+                    .artifact_filters
+                    .iter()
+                    .map(|artifact_name| {
+                        self.runs
+                            .active_runs
+                            .iter()
+                            .map(|train_id| (train_id, self.runs.runs.get(train_id).unwrap()))
+                            .map(|(train_id, run)| {
+                                if let Some(path) = run.artifacts.get(artifact_name) {
+                                    let artifact_type_str = get_artifact_type(path);
+                                    if self.artifact_handlers.contains_key(artifact_type_str) {
+                                        // println!("{}", artifact_type_str);
+                                        // add_artifact(handler, ui, train_id, path);
+                                        artifact_type_str
+                                    } else {
+                                        ""
+                                    }
+                                    // if let Some(artifact_handler) = self.
+                                } else {
+                                    ""
+                                }
+                            })
+                    })
+                    .flatten()
+                    .unique()
+                    .sorted()
+                    .collect();
+                for artifact_type in active_artifact_types {
+                    if let Some(handler) = self.artifact_handlers.get_mut(artifact_type) {
+                        for (run_id, run) in self
+                            .runs
+                            .active_runs
+                            .iter()
+                            .map(|run_id| (run_id, self.runs.runs.get(run_id).unwrap()))
+                        {
+                            for (artifact_name, path) in run.artifacts.iter() {
+                                if artifact_type == get_artifact_type(path) {
+                                    // println!("{}", artifact_type);
+                                    add_artifact(handler, ui, run_id, artifact_name, path);
+                                }
+                            }
+                        }
+                        show_artifacts(ui, handler, &self.gui_params);
+                    }
+                }
+            });
+            // let texture: &mut egui::TextureHandle = self.texture.get_or_insert_with(|| {
+            //     // Load the texture only once.
+            //     ui.ctx().load_texture(
+            //         "eventframe",
+            //         egui::ColorImage::example(),
+            //         egui::TextureOptions::default(),
+            //     )
+            // });
+            // let mut img = egui::ColorImage::new([500, 500], egui::Color32::WHITE);
+
+            // // draw on pixels
+            // // img.pixels[y * W + x] = Color32::from_rgb(255, 155, 0);
+            // texture.set(img, egui::TextureOptions::default());
+            // // egui::Image::from_texture(texture);
+            // ui.image((texture.id(), texture.size_vec2()));
+            // // egui::Image::from_texture()
+            // // ui.image(egui::ColorImage::example());
+            // egui::Image::new(egui::ColorImage::example());
             // });
             // });
             // })
         });
         self.initialized = true;
     }
+}
+
+fn get_artifact_type(path: &String) -> &str {
+    path.split(".").last().unwrap_or("unknown")
 }
 
 impl GuiRuns {
@@ -440,35 +680,14 @@ impl GuiRuns {
                 )
             })
             .collect();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone()) {
-                    ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.label(&metric_name);
-                            plot.show(ui, |plot_ui| {
-                                if self.gui_params.n_average > 1 {
-                                    for (run_id, run) in
-                                        self.runs.active_runs.iter().sorted().map(|train_id| {
-                                            (train_id, self.runs.runs.get(train_id).unwrap())
-                                        })
-                                    {
-                                        if let Some(metric) = run.metrics.get(&metric_name) {
-                                            let label = self.label_from_active_inspect_params(run);
-                                            plot_ui.line(
-                                                Line::new(PlotPoints::from(metric.values.clone()))
-                                                    // .name(&label)
-                                                    .stroke(Stroke::new(
-                                                        1.0,
-                                                        run_ensemble_color
-                                                            .get(run_id)
-                                                            .unwrap()
-                                                            .gamma_multiply(0.4),
-                                                    )),
-                                            );
-                                        }
-                                    }
-                                }
+        // egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone()) {
+                ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(&metric_name);
+                        plot.show(ui, |plot_ui| {
+                            if self.gui_params.n_average > 1 {
                                 for (run_id, run) in
                                     self.runs.active_runs.iter().sorted().map(|train_id| {
                                         (train_id, self.runs.runs.get(train_id).unwrap())
@@ -477,22 +696,43 @@ impl GuiRuns {
                                     if let Some(metric) = run.metrics.get(&metric_name) {
                                         let label = self.label_from_active_inspect_params(run);
                                         plot_ui.line(
-                                            Line::new(PlotPoints::from(metric.resampled.clone()))
-                                                .name(&label)
+                                            Line::new(PlotPoints::from(metric.values.clone()))
+                                                // .name(&label)
                                                 .stroke(Stroke::new(
-                                                    2.0,
-                                                    *run_ensemble_color.get(run_id).unwrap(),
+                                                    1.0,
+                                                    run_ensemble_color
+                                                        .get(run_id)
+                                                        .unwrap()
+                                                        .gamma_multiply(0.4),
                                                 )),
                                         );
                                     }
                                 }
-                            })
-                        });
-                        // });
+                            }
+                            for (run_id, run) in
+                                self.runs.active_runs.iter().sorted().map(|train_id| {
+                                    (train_id, self.runs.runs.get(train_id).unwrap())
+                                })
+                            {
+                                if let Some(metric) = run.metrics.get(&metric_name) {
+                                    let label = self.label_from_active_inspect_params(run);
+                                    plot_ui.line(
+                                        Line::new(PlotPoints::from(metric.resampled.clone()))
+                                            .name(&label)
+                                            .stroke(Stroke::new(
+                                                2.0,
+                                                *run_ensemble_color.get(run_id).unwrap(),
+                                            )),
+                                    );
+                                }
+                            }
+                        })
                     });
-                }
-            })
+                    // });
+                });
+            }
         });
+        // });
         if self.data_status == DataStatus::FirstDataProcessed {
             // plot_ui.set_auto_bounds(egui::Vec2b::new(true, true));
             self.data_status = DataStatus::FirstDataPlotted;
@@ -518,6 +758,27 @@ impl GuiRuns {
                 .join(", ")
         };
         label
+    }
+
+    fn render_metrics(&mut self, ui: &mut egui::Ui, metric_names: &Vec<String>) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.vertical(|ui| {
+                for metric_name in metric_names {
+                    let active_filter = self.gui_params.metric_filters.contains(metric_name);
+                    if ui
+                        .add(egui::Button::new(metric_name).selected(active_filter))
+                        .clicked()
+                    {
+                        if self.gui_params.metric_filters.contains(metric_name) {
+                            self.gui_params.metric_filters.remove(metric_name);
+                        } else {
+                            self.gui_params.metric_filters.insert(metric_name.clone());
+                        }
+                        self.dirty = true;
+                    }
+                }
+            });
+        });
     }
 }
 
@@ -585,23 +846,48 @@ async fn get_state_new(
                 Run {
                     params,
                     metrics: HashMap::new(),
+                    artifacts: HashMap::new(),
                 },
             );
+        }
+    }
+
+    let artifact_rows = sqlx::query(
+        r#"
+        SELECT * FROM artifacts ORDER BY train_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (train_id, rows) in &artifact_rows
+        .into_iter()
+        .group_by(|row| row.get::<String, _>("train_id"))
+    {
+        for row in rows {
+            let incoming_name: String = row.try_get("name").unwrap_or_default();
+            let incoming_path: String = row.try_get("path").unwrap_or_default();
+            if let Some(run) = runs.get_mut(&train_id) {
+                if let Some(path) = run.artifacts.get_mut(&incoming_name) {
+                    *path = incoming_path;
+                } else {
+                    run.artifacts.insert(incoming_name, incoming_path);
+                }
+            } else {
+                println!("[Artifact] No run_id {}", train_id);
+            }
         }
     }
 
     if train_ids.len() > 0 {
         let q = format!(
             r#"
-        SELECT * FROM metrics WHERE train_id IN ({}) AND created_at > $1 ORDER BY train_id, variable, xaxis, x
+        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 ORDER BY train_id, variable, xaxis, x
         "#,
-            train_ids
-                .iter()
-                .map(|train_id| format!("'{}'", train_id))
-                .join(","),
         );
         println!("{}", q);
         let metric_rows = sqlx::query(q.as_str())
+            .bind(train_ids)
             .bind(*last_timestamp)
             .fetch_all(pool)
             .await?;
@@ -743,7 +1029,17 @@ fn main() -> Result<(), sqlx::Error> {
                     metric_filters: HashSet::new(),
                     inspect_params: HashSet::new(),
                     n_average: 1,
+                    artifact_filters: HashSet::new(),
                 },
+                // texture: None,
+                artifact_handlers: HashMap::from([(
+                    "npy".to_string(),
+                    ArtifactHandler::NPYArtifact {
+                        arrays: HashMap::new(),
+                        errors: HashMap::new(),
+                        textures: HashMap::new(),
+                    },
+                )]),
             })
         }),
     );
