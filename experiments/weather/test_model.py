@@ -26,6 +26,8 @@ from lib.files import prepare_results
 from lib.data_factory import get_factory as get_dataset_factory
 from lib.model_factory import get_factory as get_model_factory
 
+from lib.render_psql import add_artifact
+
 from experiments.weather.data import DataHP
 from experiments.weather.data import DataHPConfig
 
@@ -149,23 +151,34 @@ if __name__ == "__main__":
     #     sess_options=options,
     #     providers=[("CUDAExecutionProvider", cuda_provider_options)],
     # )
+    def save_and_register(name, array):
+        path = result_path / f"{name}.npy"
+
+        np.save(
+            path,
+            array.detach().cpu().numpy(),
+        )
+        add_artifact(ensemble_config.members[0], name, path)
 
     for batch in tqdm.tqdm(dl):
         batch = {k: v.to(device_id) for k, v in batch.items()}
 
         output = ensemble.members[0](batch)
-        np.save(
-            result_path / "of_surface.npy",
-            output["logits_surface"].detach().cpu().numpy(),
-        )
-        np.save(
-            result_path / "if_surface.npy",
-            batch["input_surface"].detach().cpu().numpy(),
-        )
-        np.save(
-            result_path / "tf_surface.npy",
-            batch["target_surface"].detach().cpu().numpy(),
-        )
+        save_and_register("of_surface", output["logits_surface"])
+        save_and_register("if_surface", batch["input_surface"])
+        save_and_register("tf_surface", batch["target_surface"])
+        save_and_register("of_upper", output["logits_upper"])
+        save_and_register("if_upper", batch["input_upper"])
+        save_and_register("tf_upper", batch["target_upper"])
+        # save_and_register("of_surface.npy", output["logits_surface"])
+        # np.save(
+        #     result_path / "if_surface.npy",
+        #     batch["input_surface"].detach().cpu().numpy(),
+        # )
+        # np.save(
+        #     result_path / "tf_surface.npy",
+        #     batch["target_surface"].detach().cpu().numpy(),
+        # )
 
         # dh, dh_target = ds.get_driscoll_healy(ids[0])
         # te5s = ds.get_template_e5s()
@@ -183,12 +196,12 @@ if __name__ == "__main__":
         # )
         # np.save(result_path / "pangu_pred_surface.npy", pangu_np_surface)
         # np.save(result_path / "pangu_pred_upper.npy", pangu_np_upper)
-        np.save(
-            result_path / "pangu_pred_surface.npy",
-            batch["input_surface"].detach().cpu().numpy()[0],
-        )
-        np.save(
-            result_path / "pangu_pred_upper.npy",
-            batch["input_upper"].detach().cpu().numpy()[0],
-        )
+        # np.save(
+        #     result_path / "pangu_pred_surface.npy",
+        #     batch["input_surface"].detach().cpu().numpy()[0],
+        # )
+        # np.save(
+        #     result_path / "pangu_pred_upper.npy",
+        #     batch["input_upper"].detach().cpu().numpy()[0],
+        # )
         break
