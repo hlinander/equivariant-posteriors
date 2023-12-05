@@ -3,16 +3,18 @@ from pathlib import Path
 import shutil
 import lib.git as git
 import lib.stable_hash as stable_hash
+from lib.compute_env import env
 
 
 def create_result_path(base_path: Path, name: str, config: object):
+    base_path = env().paths.artifacts
     git_short_rev = git.get_rev_short()
     config_hash = stable_hash.stable_hash_small(config)
     path = base_path / "results" / f"{name}_{git_short_rev}_{config_hash}"
     path.mkdir(parents=True, exist_ok=True)
     current_version = base_path / f"{name}_latest"
     current_version.unlink(missing_ok=True)
-    current_version.symlink_to(path)
+    current_version.symlink_to(path.relative_to(base_path))
     return path
 
 
