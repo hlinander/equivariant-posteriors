@@ -1,4 +1,4 @@
-#!/bin/env bash
+#!/bin/sh
 set -x
 export PYTHONPATH=$(pwd)
 export PYTHONBREAKPOINT=ipdb.set_trace
