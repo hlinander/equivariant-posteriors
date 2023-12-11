@@ -12,4 +12,6 @@ database/
 /datasets/
 results/
 *.npy
-
+slurm_log/
+slurm_tmp/
+locks/
