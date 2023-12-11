@@ -28,10 +28,14 @@ class Metric:
         self,
         metric_fn: Callable[[torch.Tensor, torch.Tensor], object],
         metric_kwargs=None,
+        name=None,
     ):
         self.values = dict()
         self.metric_fn = metric_fn
-        self.metric_name = metric_fn.__name__
+        if name is None:
+            self.metric_name = metric_fn.__name__
+        else:
+            self.metric_name = name
         self.metric_kwargs = metric_kwargs if metric_kwargs is not None else dict()
         self.mean_mem = dict()
         self.batch_idx = 0
@@ -87,5 +91,17 @@ class Metric:
         return self.metric_name
 
 
-def create_metric(metric_fn):
-    return lambda: Metric(metric_fn)
+def detach_tensors(output, batch):
+    output = {k: v.detach() for k, v in output.items()}
+    batch = {k: v.detach() for k, v in batch.items()}
+    return dict(output=output, batch=batch)
+
+
+def create_metric(metric_fn, name=None):
+    if name is None:
+        name = metric_fn.__name__
+
+    def detached_fn(output, batch):
+        return metric_fn(**detach_tensors(output, batch))
+
+    return lambda: Metric(detached_fn, name=name)

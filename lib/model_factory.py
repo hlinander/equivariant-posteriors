@@ -11,6 +11,8 @@ from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
+from lib.models.llama2generative import LLaMA2Generative, LLaMA2GenerativeConfig
+
 
 class _ModelFactory:
     def __init__(self):
@@ -25,6 +27,7 @@ class _ModelFactory:
         self.models[MLPProjClassConfig.__name__] = MLPProjClass
         self.models[ResnetConfig.__name__] = Resnet
         self.models[SwinTinyConfig.__name__] = SwinTiny
+        self.models[LLaMA2GenerativeConfig.__name__] = LLaMA2Generative
 
     def register(self, config_class, model_class):
         self.models[config_class.__name__] = model_class
