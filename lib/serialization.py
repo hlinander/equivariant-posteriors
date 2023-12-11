@@ -37,6 +37,7 @@ class FileStructure:
     train_metrics: object = None
     validation_metrics: object = None
     train_run: object = None
+    timing_metric: object = None
 
 
 def write_status_file(config: SerializeConfig):
