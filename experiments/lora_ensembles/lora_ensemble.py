@@ -13,6 +13,8 @@ from lib.generic_ablation import generic_ablation
 import lib.data_factory as data_factory
 import lib.model_factory as model_factory
 
+from lib.files import prepare_results
+
 from experiments.lora_ensembles.model import LLama2Config
 from experiments.lora_ensembles.model import LLama2Model
 from experiments.lora_ensembles.data import NLPDataset
@@ -75,3 +77,5 @@ if __name__ == "__main__":
     configs = generic_ablation(
         create_config, dict(ensemble_id=[0, 1, 2], lora_rank=[8, 16, 32])
     )
+    register_model_and_dataset()
+    prepare_results("lora_ensemble", configs)

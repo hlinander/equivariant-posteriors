@@ -6,14 +6,26 @@ import os
 import queue
 from typing import Union
 from pathlib import Path
+from itertools import islice
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import EnsembleConfig
 
+from lib.compute_env import env
+
 
 # TODO explain analyze, psql \x, web explain analyze, CTE,
 # TODO one table per value type
+
+
+def batched(iterable, n):
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    if n < 1:
+        raise ValueError("n must be at least one")
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch
 
 
 def dict_to_normalized_json(input_dict):
@@ -21,8 +33,8 @@ def dict_to_normalized_json(input_dict):
 
 
 def setup_psql():
-    hostname = "localhost"
-    port = 5432
+    hostname = env().postgres_host  # "localhost"
+    port = env().postgres_port  # 5432
     if "EP_POSTGRES" in os.environ:
         hostname = os.environ.get("EP_POSTGRES")
         # print(f"PSQL: {hostname}")
@@ -144,7 +156,9 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
     # return
     if len(_threads) > 3:
         thread = _threads.pop(0)
+        train_epoch_state.timing_metric.start("psql_thread_join")
         thread.join()
+        train_epoch_state.timing_metric.stop("psql_thread_join")
 
     thread = Thread(
         target=_render_psql,
@@ -163,8 +177,8 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
 
 
 def get_url():
-    hostname = os.getenv("EP_POSTGRES", "localhost")
-    port = int(os.getenv("EP_POSTGRES_PORT", "5432"))
+    hostname = os.getenv("EP_POSTGRES", env().postgres_host)
+    port = int(os.getenv("EP_POSTGRES_PORT", env().postgres_port))
     return f"postgresql://postgres:postgres@{hostname}:{port}/equiv"
 
 
@@ -186,16 +200,23 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         # print(str(e))
         return (False, str(e))
 
+    train_epoch_state.timing_metric.start("psql_connection")
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", "localhost"),
-        port=int(os.getenv("EP_POSTGRES_PORT", "5432")),
+        host=os.getenv("EP_POSTGRES", env().postgres_host),
+        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
         autocommit=False,
+        prepare_threshold=None,
     ) as conn:
+        train_epoch_state.timing_metric.stop("psql_connection")
+        train_epoch_state.timing_metric.start("psql_queries")
         # create_param_view(conn, train_run)
 
         # start_time = time.time()
+        train_epoch_state.timing_metric.start("psql_queries_params")
         insert_or_update_train_run(conn, train_run)
+        train_epoch_state.timing_metric.stop("psql_queries_params")
+        train_epoch_state.timing_metric.start("psql_queries_epoch")
         for epoch in range(train_epoch_state.epoch):
             for metric in train_epoch_state.train_metrics:
                 conn.execute(
@@ -228,43 +249,64 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                             metric.mean(epoch),
                         ),
                     )
-        for metric in train_epoch_state.train_metrics:
-            for idx, value in enumerate(metric.mean_batches()):
-                conn.execute(
-                    """
-                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
-                """,
-                    (
+        train_epoch_state.timing_metric.stop("psql_queries_epoch")
+        train_epoch_state.timing_metric.start("psql_queries_batch")
+        with conn.cursor() as cur:
+            for metric in train_epoch_state.train_metrics:
+                for idx, value in enumerate(metric.mean_batches()):
+                    group_data = (
                         train_run_dict["train_id"],
                         idx,
                         "batch",
                         f"{metric.name()}_batch",
                         value,
-                    ),
-                )
-        # for metric in train_epoch_state.validation_metrics:
-        #     for idx, value in enumerate(metric.mean_batches()):
-        #         conn.execute(
-        #             """
-        #             INSERT INTO metrics (train_id, x, xaxis, variable, value)
-        #             VALUES (%s, %s, %s, %s, %s)
-        #             ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
-        #         """,
-        #             (
-        #                 train_run_dict["train_id"],
-        #                 idx,
-        #                 "batch",
-        #                 f"{metric.name()}_batch",
-        #                 value,
-        #             ),
-        #         )
-        # conn.commit()
-        # drop_views(conn)
-        # create_metrics_view(conn)
-        # create_metrics_and_run_info_view(conn)
+                    )
+                    query_hash = hash(group_data)
+                    if query_hash not in train_epoch_state.psql_query_cache:
+                        cur.execute(
+                            """
+                            INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+                        """,
+                            group_data,
+                        )
+                        train_epoch_state.psql_query_cache.add(query_hash)
+
+        train_epoch_state.timing_metric.stop("psql_queries_batch")
+        train_epoch_state.timing_metric.start("psql_queries_timing")
+        with conn.cursor() as cur:
+            for (
+                timing_name,
+                timing_data,
+            ) in train_epoch_state.timing_metric.data.items():
+                for idx, value in enumerate(timing_data):
+                    group_data = (
+                        train_run_dict["train_id"],
+                        idx,
+                        "batch",
+                        f"timing_{timing_name}",
+                        value,
+                    )
+                    query_hash = hash(group_data)
+                    if query_hash not in train_epoch_state.psql_query_cache:
+                        cur.execute(
+                            """
+                            INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+                        """,
+                            group_data,
+                        )
+                        train_epoch_state.psql_query_cache.add(query_hash)
+        train_epoch_state.timing_metric.stop("psql_queries_timing")
+        train_epoch_state.timing_metric.stop("psql_queries")
+        train_epoch_state.timing_metric.start("psql_commit")
+        train_epoch_state.timing_metric.start("psql_commit_with_conn")
         conn.commit()
+        train_epoch_state.timing_metric.stop("psql_commit")
+
+    train_epoch_state.timing_metric.stop("psql_commit_with_conn")
 
     return (True, "")
     # print(f"Updated psql {time.time() - start_time}s")
@@ -281,6 +323,7 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
     train_run_dict = train_run.serialize_human()
 
     if isinstance(path, Path):
+        path = path.relative_to(env().paths.artifacts)
         path = path.as_posix()
 
     value_dict = dict(
@@ -292,8 +335,8 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", "localhost"),
-        port=int(os.getenv("EP_POSTGRES_PORT", "5432")),
+        host=os.getenv("EP_POSTGRES", env().postgres_host),
+        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
         autocommit=False,
     ) as conn:
         conn.execute(
