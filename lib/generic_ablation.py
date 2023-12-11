@@ -12,4 +12,5 @@ def generic_ablation(create_config, values_dict):
         train_run = create_config(**kwargs)
         configs.append(train_run)
         request_train_run(train_run)
+
     return configs
