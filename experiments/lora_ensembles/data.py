@@ -1,4 +1,3 @@
-from typing import Dict
 from dataclasses import dataclass
 
 import transformers
@@ -6,9 +5,7 @@ import datasets
 
 import torch
 
-from lib.train_dataclasses import TrainEpochState
 from lib.dataspec import DataSpec
-from lib.metric import MetricSample
 import lib.serialize_human
 
 
@@ -57,21 +54,6 @@ class NLPDataset(torch.utils.data.Dataset):
             input_shape=torch.Size([1]),
             output_shape=torch.Size([1]),
             target_shape=torch.Size([1]),
-        )
-
-    def create_metric_sample(
-        self,
-        output: Dict[str, torch.Tensor],
-        batch: Dict[str, torch.Tensor],
-        train_epoch_state: TrainEpochState,
-    ):
-        return MetricSample(
-            output=output["logits"].detach(),
-            prediction=output["predictions"].detach(),
-            target=batch["labels"].detach(),
-            sample_id=batch["sample_ids"].detach(),
-            epoch=train_epoch_state.epoch,
-            batch=train_epoch_state.batch,
         )
 
     def __getitem__(self, idx):

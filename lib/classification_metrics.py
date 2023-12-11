@@ -12,7 +12,7 @@ def loss(output, batch):
 
 
 def calibration_error(output, batch):
-    num_classes = output.shape[-1]
+    num_classes = output["logits"].shape[-1]
     return tm.functional.classification.calibration_error(
         output["predictions"],
         batch["target"],
@@ -23,7 +23,7 @@ def calibration_error(output, batch):
 
 
 def accuracy(output, batch):
-    num_classes = output.shape[-1]
+    num_classes = output["logits"].shape[-1]
     return tm.functional.accuracy(
         output["predictions"],
         batch["target"],
@@ -45,15 +45,9 @@ def create_classification_metric_dict(n_classes):
 
 def create_classification_metric_list(n_classes):
     return [
-        lambda: Metric(
-            accuracy
-            # tm.functional.accuracy,
-            # metric_kwargs=dict(task="multiclass", num_classes=n_classes),
-        ),
-        lambda: Metric(loss, raw_output=True),
-        lambda: Metric(
-            calibration_error
-        ),  # , metric_kwargs=dict(n_classes=n_classes)),
+        lambda: Metric(accuracy),
+        lambda: Metric(loss),
+        lambda: Metric(calibration_error),
     ]
 
 
