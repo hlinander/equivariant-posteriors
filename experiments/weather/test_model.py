@@ -1,19 +1,17 @@
 #!/usr/bin/env python
 import torch
-import time
 import numpy as np
 from pathlib import Path
-import tqdm
-import onnxruntime as ort
+
+# import onnxruntime as ort
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
-from lib.metric import Metric
+from lib.metric import create_metric
 
-from lib.regression_metrics import create_regression_metrics
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
 from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
@@ -89,7 +87,7 @@ def create_config(ensemble_id):
         _version=50,
     )
     train_eval = TrainEval(
-        train_metrics=[lambda: Metric(reg_loss, raw_output=True)], validation_metrics=[]
+        train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False, num_workers=3),

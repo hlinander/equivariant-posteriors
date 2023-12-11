@@ -1,14 +1,11 @@
 #!/usr/bin/env python
 import torch
-import torchmetrics as tm
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
-
-from lib.metric import Metric
 
 from lib.generic_ablation import generic_ablation
 
@@ -17,46 +14,26 @@ import lib.model_factory as model_factory
 
 from lib.files import prepare_results
 
+from lib.metric import create_metric
+
 from experiments.lora_ensembles.model import LLama2Config
 from experiments.lora_ensembles.model import LLama2Model
 from experiments.lora_ensembles.data import NLPDataset
 from experiments.lora_ensembles.data import NLPDatasetConfig
+from experiments.lora_ensembles.metrics import (
+    accuracy,
+    calibration_error,
+    loss,
+)
 
 
 LLAMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
 
 
-def loss(output, batch):
-    return torch.nn.functional.cross_entropy(
-        output["predictions"], batch["labels"], reduction="none"
-    )
-
-
-def calibration_error(output, batch):
-    num_classes = output["logits"].shape[-1]
-    return tm.functional.classification.calibration_error(
-        output["predictions"],
-        batch["labels"],
-        n_bins=15,
-        num_classes=num_classes,
-        task="multiclass",
-    )
-
-
-def accuracy(output, batch):
-    num_classes = output["logits"].shape[-1]
-    return tm.functional.accuracy(
-        output["predictions"],
-        batch["labels"],
-        task="multiclass",
-        num_classes=num_classes,
-    )
-
-
 def create_config(ensemble_id, lora_rank):
     ce_loss = torch.nn.CrossEntropyLoss()
 
-    def loss(outputs, batch):
+    def cross_entropy_loss(outputs, batch):
         return ce_loss(outputs["logits"], batch["labels"])
 
     train_config = TrainConfig(
@@ -72,7 +49,7 @@ def create_config(ensemble_id, lora_rank):
             max_len=512,
             validation=True,
         ),
-        loss=loss,
+        loss=cross_entropy_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=0.001, lr=1e-4),
@@ -84,14 +61,14 @@ def create_config(ensemble_id, lora_rank):
     )
     train_eval = TrainEval(
         train_metrics=[
-            lambda: Metric(accuracy),
-            lambda: Metric(loss),
-            lambda: Metric(calibration_error),
+            create_metric(accuracy),
+            create_metric(loss),
+            create_metric(calibration_error),
         ],
         validation_metrics=[
-            lambda: Metric(accuracy),
-            lambda: Metric(loss),
-            lambda: Metric(calibration_error),
+            create_metric(accuracy),
+            create_metric(loss),
+            create_metric(calibration_error),
         ],
         data_visualizer=None,
     )

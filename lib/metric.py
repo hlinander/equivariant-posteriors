@@ -85,3 +85,7 @@ class Metric:
 
     def name(self):
         return self.metric_name
+
+
+def create_metric(metric_fn):
+    return lambda: Metric(metric_fn)

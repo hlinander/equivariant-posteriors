@@ -58,7 +58,7 @@ class NLPDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         data = self.tokenized_dataset[idx]
-        data["sample_ids"] = [idx]
+        data["sample_id"] = [idx]
         return data
 
     def __len__(self):
