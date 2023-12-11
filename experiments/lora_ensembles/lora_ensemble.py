@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 import torch
+import torchmetrics as tm
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
+from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
-from lib.classification_metrics import create_classification_metrics
+from lib.metric import Metric
 
 from lib.generic_ablation import generic_ablation
 
@@ -22,6 +24,33 @@ from experiments.lora_ensembles.data import NLPDatasetConfig
 
 
 LLAMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
+
+
+def loss(output, batch):
+    return torch.nn.functional.cross_entropy(
+        output["predictions"], batch["labels"], reduction="none"
+    )
+
+
+def calibration_error(output, batch):
+    num_classes = output["logits"].shape[-1]
+    return tm.functional.classification.calibration_error(
+        output["predictions"],
+        batch["labels"],
+        n_bins=15,
+        num_classes=num_classes,
+        task="multiclass",
+    )
+
+
+def accuracy(output, batch):
+    num_classes = output["logits"].shape[-1]
+    return tm.functional.accuracy(
+        output["predictions"],
+        batch["labels"],
+        task="multiclass",
+        num_classes=num_classes,
+    )
 
 
 def create_config(ensemble_id, lora_rank):
@@ -53,7 +82,19 @@ def create_config(ensemble_id, lora_rank):
         gradient_clipping=0.3,
         _version=37,
     )
-    train_eval = create_classification_metrics(None, 2)
+    train_eval = TrainEval(
+        train_metrics=[
+            lambda: Metric(accuracy),
+            lambda: Metric(loss),
+            lambda: Metric(calibration_error),
+        ],
+        validation_metrics=[
+            lambda: Metric(accuracy),
+            lambda: Metric(loss),
+            lambda: Metric(calibration_error),
+        ],
+        data_visualizer=None,
+    )
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,

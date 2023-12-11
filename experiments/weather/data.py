@@ -11,7 +11,6 @@ import shutil
 
 # from lib.models.mlp import MLPConfig
 from lib.serialization import serialize_human
-from lib.data_utils import create_metric_sample_legacy
 from lib.train_dataclasses import TrainEpochState
 from lib.metric import MetricSample
 from lib.compute_env import env

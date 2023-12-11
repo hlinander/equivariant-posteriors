@@ -28,9 +28,7 @@ class Metric:
         self,
         metric_fn: Callable[[torch.Tensor, torch.Tensor], object],
         metric_kwargs=None,
-        raw_output=False,
     ):
-        self.raw_output = raw_output
         self.values = dict()
         self.metric_fn = metric_fn
         self.metric_name = metric_fn.__name__
