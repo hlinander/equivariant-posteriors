@@ -151,7 +151,7 @@ _threads = []
 _result_queue = queue.Queue()
 
 
-def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
+def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState, block=False):
     # _render_psql(train_run, train_epoch_state)
     # return
     if len(_threads) > 3:
@@ -170,6 +170,8 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState):
     )
     thread.start()
     _threads.append(thread)
+    if block:
+        thread.join()
     try:
         return _result_queue.get(block=False)
     except queue.Empty:
@@ -193,6 +195,7 @@ def _render_psql(
 
 def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochState):
     train_run_dict = train_run.serialize_human()
+
     try:
         setup_psql()
     except psycopg.errors.OperationalError as e:
@@ -217,24 +220,9 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         insert_or_update_train_run(conn, train_run)
         train_epoch_state.timing_metric.stop("psql_queries_params")
         train_epoch_state.timing_metric.start("psql_queries_epoch")
-        for epoch in range(train_epoch_state.epoch):
-            for metric in train_epoch_state.train_metrics:
-                conn.execute(
-                    """
-                    INSERT INTO metrics (train_id, x, xaxis, variable, value)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
-                """,
-                    (
-                        train_run_dict["train_id"],
-                        epoch,
-                        "epoch",
-                        metric.name(),
-                        metric.mean(epoch),
-                    ),
-                )
-            for metric in train_epoch_state.validation_metrics:
-                if metric.mean(epoch) is not None:
+        with conn.pipeline():
+            for epoch in range(train_epoch_state.epoch):
+                for metric in train_epoch_state.train_metrics:
                     conn.execute(
                         """
                         INSERT INTO metrics (train_id, x, xaxis, variable, value)
@@ -245,13 +233,29 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                             train_run_dict["train_id"],
                             epoch,
                             "epoch",
-                            f"val_{metric.name()}",
+                            metric.name(),
                             metric.mean(epoch),
                         ),
                     )
+                for metric in train_epoch_state.validation_metrics:
+                    if metric.mean(epoch) is not None:
+                        conn.execute(
+                            """
+                            INSERT INTO metrics (train_id, x, xaxis, variable, value)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+                        """,
+                            (
+                                train_run_dict["train_id"],
+                                epoch,
+                                "epoch",
+                                f"val_{metric.name()}",
+                                metric.mean(epoch),
+                            ),
+                        )
         train_epoch_state.timing_metric.stop("psql_queries_epoch")
         train_epoch_state.timing_metric.start("psql_queries_batch")
-        with conn.cursor() as cur:
+        with conn.pipeline(), conn.cursor() as cur:
             for metric in train_epoch_state.train_metrics:
                 for idx, value in enumerate(metric.mean_batches()):
                     group_data = (
@@ -275,7 +279,7 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
 
         train_epoch_state.timing_metric.stop("psql_queries_batch")
         train_epoch_state.timing_metric.start("psql_queries_timing")
-        with conn.cursor() as cur:
+        with conn.pipeline(), conn.cursor() as cur:
             for (
                 timing_name,
                 timing_data,

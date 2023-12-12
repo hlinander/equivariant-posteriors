@@ -325,7 +325,7 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
         df = render_dataframe(train_run, state)
 
         print("Render psql...")
-        render_psql(train_run, state)
+        render_psql(train_run, state, block=True)
 
         print("Pickling dataframe...")
         df_path = get_checkpoint_path(train_run.train_config) / "df.pickle"
