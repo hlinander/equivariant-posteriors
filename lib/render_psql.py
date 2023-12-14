@@ -154,7 +154,7 @@ _result_queue = queue.Queue()
 def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState, block=False):
     # _render_psql(train_run, train_epoch_state)
     # return
-    if len(_threads) > 3:
+    if len(_threads) > 0:
         thread = _threads.pop(0)
         train_epoch_state.timing_metric.start("psql_thread_join")
         thread.join()
@@ -280,6 +280,8 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         train_epoch_state.timing_metric.stop("psql_queries_batch")
         train_epoch_state.timing_metric.start("psql_queries_timing")
         with conn.pipeline(), conn.cursor() as cur:
+            train_epoch_state.timing_metric.reset_group("timing_hash")
+            train_epoch_state.timing_metric.reset_group("timing_query")
             for (
                 timing_name,
                 timing_data,
@@ -292,8 +294,11 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                         f"timing_{timing_name}",
                         value,
                     )
+                    train_epoch_state.timing_metric.start("timing_hash")
                     query_hash = hash(group_data)
                     if query_hash not in train_epoch_state.psql_query_cache:
+                        train_epoch_state.timing_metric.stop_subgroup("timing_hash")
+                        train_epoch_state.timing_metric.start("timing_query")
                         cur.execute(
                             """
                             INSERT INTO metrics (train_id, x, xaxis, variable, value)
@@ -302,7 +307,13 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                         """,
                             group_data,
                         )
+                        train_epoch_state.timing_metric.stop_subgroup("timing_query")
+                        train_epoch_state.timing_metric.start("timing_hash")
                         train_epoch_state.psql_query_cache.add(query_hash)
+                        train_epoch_state.timing_metric.stop_subgroup("timing_hash")
+                    else:
+                        train_epoch_state.timing_metric.stop_subgroup("timing_hash")
+
         train_epoch_state.timing_metric.stop("psql_queries_timing")
         train_epoch_state.timing_metric.stop("psql_queries")
         train_epoch_state.timing_metric.start("psql_commit")

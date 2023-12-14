@@ -111,15 +111,12 @@ def train(
     visualizers = [visualize_progress, visualize_progress_batches]
     # train_epoch_state.batch = 0
     for i, batch in enumerate(dataloader):
+        train_epoch_state.timing_metric.stop("batch")
+        train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += 1
-        train_epoch_state.timing_metric.start("to_device")
         batch = {k: v.to(device) for k, v in batch.items()}
-        train_epoch_state.timing_metric.stop("to_device")
-        train_epoch_state.timing_metric.start("model_forward")
         output = model(batch)
-        train_epoch_state.timing_metric.stop("model_forward")
 
-        train_epoch_state.timing_metric.start("loss_opt_step")
         loss_val = loss(output, batch)
         optimizer.zero_grad()
         loss_val.backward()
@@ -128,7 +125,6 @@ def train(
                 model.parameters(), train_run.train_config.gradient_clipping
             )
         optimizer.step()
-        train_epoch_state.timing_metric.stop("loss_opt_step")
 
         if i == 0 and torch.cuda.is_available():
             train_epoch_state.device_memory_stats = (
