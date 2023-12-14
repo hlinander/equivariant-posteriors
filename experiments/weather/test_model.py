@@ -84,7 +84,8 @@ def create_config(ensemble_id):
         ),
         batch_size=1,
         ensemble_id=ensemble_id,
-        _version=50,
+        _version=51,
+        # _version=55,
     )
     train_eval = TrainEval(
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
@@ -93,24 +94,29 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=3),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=300,
+        epochs=150,
         save_nth_epoch=1,
         validate_nth_epoch=20,
     )
     return train_run
 
 
-if __name__ == "__main__":
-    device_id = ddp_setup()
-
+def register():
     data_factory = get_dataset_factory()
     data_factory.register(DataHPConfig, DataHP)
     model_factory = get_model_factory()
     model_factory.register(SwinHPPanguConfig, SwinHPPangu)
 
+
+if __name__ == "__main__":
+    device_id = ddp_setup()
+
+    register()
+
     ensemble_config = create_ensemble_config(create_config, 1)
     ensemble = create_ensemble(ensemble_config, device_id)
 
+    data_factory = get_dataset_factory()
     ds = data_factory.create(DataHPConfig(nside=NSIDE))
     dl = torch.utils.data.DataLoader(
         ds,
@@ -120,8 +126,8 @@ if __name__ == "__main__":
     )
 
     result_path = prepare_results(
-        Path(__file__).parent,
-        f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}_nside_{NSIDE}",
+        # Path(__file__).parent,
+        f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}_nside_{NSIDE}_lite",
         ensemble_config,
     )
     symlink_checkpoint_files(ensemble, result_path)
@@ -150,19 +156,20 @@ if __name__ == "__main__":
         )
         add_artifact(ensemble_config.members[0], name, path)
 
-    # for batch in tqdm.tqdm(dl):
-    #     batch = {k: v.to(device_id) for k, v in batch.items()}
+    for idx, batch in enumerate(dl):
+        batch = {k: v.to(device_id) for k, v in batch.items()}
 
-    #     start = time.time()
-    #     output = ensemble.members[0](batch)
-    #     model_time = time.time()
-    #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
-    # save_and_register("of_surface", output["logits_surface"])
-    # save_and_register("if_surface", batch["input_surface"])
-    # save_and_register("tf_surface", batch["target_surface"])
-    # save_and_register("of_upper", output["logits_upper"])
-    # save_and_register("if_upper", batch["input_upper"])
-    # save_and_register("tf_upper", batch["target_upper"])
+        #     start = time.time()
+        output = ensemble.members[0](batch)
+        #     model_time = time.time()
+        #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
+        save_and_register(f"{idx}_of_surface", output["logits_surface"])
+        save_and_register(f"{idx}_if_surface", batch["input_surface"])
+        save_and_register(f"{idx}_tf_surface", batch["target_surface"])
+        save_and_register(f"{idx}_of_upper", output["logits_upper"])
+        save_and_register(f"{idx}_if_upper", batch["input_upper"])
+        save_and_register(f"{idx}_tf_upper", batch["target_upper"])
+        break
 
     # save_and_register("of_surface.npy", output["logits_surface"])
     # np.save(
