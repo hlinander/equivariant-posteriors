@@ -36,7 +36,12 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         train_metric = state.train_metrics[train_indices[idx]]
         # val_metric = state.validation_metrics[val_indices[idx]]
 
-        train_means = list(enumerate(train_metric.mean_batches()))
+        batches = train_metric.mean_batches()
+        batch_factor = 1
+        if len(batches) > 1000:
+            batch_factor = len(batches) // 1000
+            batches = batches[::batch_factor]
+        train_means = list(enumerate(batches))
         # train_means = [
         # (epoch, mean) for (epoch, mean) in train_means if mean is not None
         # ]
@@ -46,8 +51,8 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         plt.title(common_metrics[idx])
         plt.xlabel("batches")
         if len(train_means) > 0:
-            x = [epoch for (epoch, mean) in train_means]
-            y = [mean for (epoch, mean) in train_means]
+            x = [batch * batch_factor for (batch, mean) in train_means]
+            y = [mean for (batch, mean) in train_means]
             plt.plot(x, y, label=f"Train {common_metrics[idx]}")
         # if len(val_means) > 0:
         # x = [epoch for (epoch, mean) in val_means]

@@ -213,6 +213,47 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
     ) as conn:
         train_epoch_state.timing_metric.stop("psql_connection")
         train_epoch_state.timing_metric.start("psql_queries")
+
+        if train_epoch_state.psql_starting_xs is None:
+            train_epoch_state.psql_starting_xs = dict()
+            row_cur = conn.execute(
+                """
+                           SELECT
+                                variable, x
+                            FROM
+                                metrics
+                            WHERE train_id=%s AND
+                                (variable, x) IN (
+                                    SELECT
+                                        variable,
+                                        MAX(x)
+                                    FROM
+                                        metrics
+                                    WHERE
+                                        train_id=%s  
+                                    GROUP BY
+                                        variable
+                                );  
+                         """,
+                (train_run_dict["train_id"], train_run_dict["train_id"]),
+            )
+            rows = row_cur.fetchall()
+            for row in rows:
+                variable, max_x = row
+                train_epoch_state.psql_starting_xs[variable] = max_x
+                print(variable, max_x)
+
+        def is_commited(variable, x):
+            if variable in train_epoch_state.psql_starting_xs:
+                if x <= train_epoch_state.psql_starting_xs[variable]:
+                    # print(variable, x, "commited")
+                    return True
+                # else:
+                # print(variable, x, "value x not commited")
+            # else:
+            #     print(variable, x, "variable not in dict")
+            return False
+
         # create_param_view(conn, train_run)
 
         # start_time = time.time()
@@ -223,6 +264,8 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         with conn.pipeline():
             for epoch in range(train_epoch_state.epoch):
                 for metric in train_epoch_state.train_metrics:
+                    if is_commited(metric.name(), epoch):
+                        continue
                     conn.execute(
                         """
                         INSERT INTO metrics (train_id, x, xaxis, variable, value)
@@ -238,6 +281,9 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                         ),
                     )
                 for metric in train_epoch_state.validation_metrics:
+                    metric_name = f"val_{metric.name()}"
+                    if is_commited(metric_name, epoch):
+                        continue
                     if metric.mean(epoch) is not None:
                         conn.execute(
                             """
@@ -249,7 +295,7 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                                 train_run_dict["train_id"],
                                 epoch,
                                 "epoch",
-                                f"val_{metric.name()}",
+                                metric_name,
                                 metric.mean(epoch),
                             ),
                         )
@@ -257,12 +303,15 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         train_epoch_state.timing_metric.start("psql_queries_batch")
         with conn.pipeline(), conn.cursor() as cur:
             for metric in train_epoch_state.train_metrics:
+                metric_name = f"{metric.name()}_batch"
                 for idx, value in enumerate(metric.mean_batches()):
+                    if is_commited(metric_name, idx):
+                        continue
                     group_data = (
                         train_run_dict["train_id"],
                         idx,
                         "batch",
-                        f"{metric.name()}_batch",
+                        metric_name,
                         value,
                     )
                     query_hash = hash(group_data)
@@ -286,12 +335,15 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                 timing_name,
                 timing_data,
             ) in train_epoch_state.timing_metric.data.items():
+                metric_name = f"timing_{timing_name}"
                 for idx, value in enumerate(timing_data):
+                    if is_commited(metric_name, idx):
+                        continue
                     group_data = (
                         train_run_dict["train_id"],
                         idx,
                         "batch",
-                        f"timing_{timing_name}",
+                        metric_name,
                         value,
                     )
                     train_epoch_state.timing_metric.start("timing_hash")
@@ -313,6 +365,8 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
                         train_epoch_state.timing_metric.stop_subgroup("timing_hash")
                     else:
                         train_epoch_state.timing_metric.stop_subgroup("timing_hash")
+        train_epoch_state.timing_metric.accumulate_group("timing_hash")
+        train_epoch_state.timing_metric.accumulate_group("timing_query")
 
         train_epoch_state.timing_metric.stop("psql_queries_timing")
         train_epoch_state.timing_metric.stop("psql_queries")

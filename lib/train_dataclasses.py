@@ -4,6 +4,7 @@ from typing import List
 from typing import Callable
 from typing import Union
 from typing import Set
+from typing import Dict
 
 from lib.metric import Metric
 from lib.timing_metric import Timing
@@ -27,6 +28,7 @@ class TrainEpochState:
     device_memory_stats: dict = None
     host_memory_stats: object = None
     psql_query_cache: Set = field(default_factory=lambda: set())
+    psql_starting_xs: Dict[str, float] = None
 
 
 @dataclass
