@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
+use std::ops::RangeInclusive;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub mod np;
@@ -28,7 +29,7 @@ struct Args {
 #[derive(Default, Debug, Clone)]
 struct Metric {
     xaxis: String,
-    orig_values: Vec<[f64; 2]>,
+    orig_values: Vec<[f64; 3]>,
     values: Vec<[f64; 2]>,
     resampled: Vec<[f64; 2]>,
 }
@@ -50,6 +51,13 @@ struct Runs {
 }
 
 #[derive(Default, Debug, Clone)]
+enum XAxis {
+    #[default]
+    Batch,
+    Time,
+}
+
+#[derive(Default, Debug, Clone)]
 struct GuiParams {
     n_average: usize,
     max_n: usize,
@@ -59,6 +67,7 @@ struct GuiParams {
     inspect_params: HashSet<String>,
     time_filter_idx: usize,
     time_filter: Option<chrono::NaiveDateTime>,
+    x_axis: XAxis,
 }
 
 #[derive(PartialEq, Eq)]
@@ -268,11 +277,25 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
                             })
                             .sum::<f64>()
                             / (-window..=window).count() as f64;
-                        [didx * idx as f64, mean_value]
+                        // let middle_x =
+                        // metric.orig_values[((didx * idx as f64) as i64).max(0) as usize][0];
+                        let middle_x = match gui_params.x_axis {
+                            XAxis::Batch => {
+                                metric.orig_values[((didx * idx as f64) as i64).max(0) as usize][0]
+                            }
+                            XAxis::Time => {
+                                metric.orig_values[((didx * idx as f64) as i64).max(0) as usize][2]
+                            }
+                        };
+
+                        [middle_x, mean_value]
                     })
                     .collect()
             } else {
-                metric.orig_values.clone()
+                match gui_params.x_axis {
+                    XAxis::Batch => metric.orig_values.iter().map(|x| [x[0], x[1]]).collect(),
+                    XAxis::Time => metric.orig_values.iter().map(|x| [x[2], x[1]]).collect(),
+                }
             };
             let fvalues: Vec<[f64; 2]> = (0..metric.values.len())
                 .map(|orig_idx| {
@@ -298,7 +321,11 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
                         })
                         .sum();
                     let mean_val = sum / window.count() as f64;
-                    [metric.values[orig_idx][0], mean_val]
+                    [
+                        metric.values[orig_idx][0],
+                        mean_val,
+                        // metric.values[orig_idx][2],
+                    ]
                 })
                 .collect();
             metric.resampled = fvalues;
@@ -654,13 +681,28 @@ impl GuiRuns {
                 {
                     self.dirty = true;
                 };
+                ui.horizontal(|ui| {
+                    if ui.button("Time").clicked() {
+                        self.gui_params.x_axis = XAxis::Time;
+                    }
+                    if ui.button("Batch").clicked() {
+                        self.gui_params.x_axis = XAxis::Batch;
+                    }
+                });
                 let param_names = param_values.keys().cloned().collect_vec();
-                self.fun_name(&param_values, param_names, ui, &filtered_values, ctx, 0);
+                self.render_parameters_one_level(
+                    &param_values,
+                    param_names,
+                    ui,
+                    &filtered_values,
+                    ctx,
+                    0,
+                );
             });
         });
     }
 
-    fn fun_name(
+    fn render_parameters_one_level(
         &mut self,
         param_values: &HashMap<String, HashSet<String>>,
         param_names: Vec<String>,
@@ -691,7 +733,7 @@ impl GuiRuns {
                     .iter()
                     .any(|name| name.split(".").count() > depth + 1)
                 {
-                    self.fun_name(
+                    self.render_parameters_one_level(
                         param_values,
                         param_group_vec,
                         ui,
@@ -852,7 +894,7 @@ impl GuiRuns {
         } else {
             ui.available_width() / 4.1
         };
-
+        let x_axis = self.gui_params.x_axis.clone();
         let plots: HashMap<_, _> = filtered_metric_names
             .into_iter()
             .map(|metric_name| {
@@ -864,6 +906,23 @@ impl GuiRuns {
                         .legend(Legend::default())
                         .width(plot_width)
                         .height(plot_height)
+                        .x_axis_formatter(match x_axis {
+                            XAxis::Time => |value, n_chars, range: &RangeInclusive<f64>| {
+                                let ts =
+                                    NaiveDateTime::from_timestamp_opt(value as i64, 0).unwrap();
+                                let delta = range.end() - range.start();
+                                if delta > (5 * 24 * 60 * 60) as f64 {
+                                    ts.format("%m/%d").to_string()
+                                } else if delta > (5 * 60 * 60) as f64 {
+                                    ts.format("%d-%Hh").to_string()
+                                } else {
+                                    ts.format("%Hh:%Mm").to_string()
+                                }
+                            },
+                            XAxis::Batch => |value, n_chars, range: &RangeInclusive<f64>| {
+                                format!("{}", value as i64).to_string()
+                            },
+                        })
                         .link_axis(
                             **metric_name_axis_id.get(&metric_name).unwrap(),
                             true,
@@ -1177,75 +1236,98 @@ async fn get_state_new(
     }
 
     if train_ids.len() > 0 {
+        let mut batch_timestamp = last_timestamp.clone();
         let q = format!(
             r#"
-        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 ORDER BY train_id, variable, xaxis, x
+        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='batch' AND (CAST(x as int) % 50 = 0 OR x < 500) ORDER BY train_id, variable, xaxis, x
         "#,
         );
-        println!("{}", q);
-        // println!("{:?}", train_ids);
         let metric_rows = sqlx::query(q.as_str())
             .bind(train_ids)
-            .bind(*last_timestamp)
+            .bind(batch_timestamp)
             .fetch_all(pool)
             .await?;
-        for (train_id, run_metric_rows) in &metric_rows
-            .into_iter()
-            .group_by(|row| row.get::<String, _>("train_id"))
-        {
-            let run = runs.get_mut(&train_id).unwrap();
-            for (variable, value_rows) in
-                &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
-            {
-                let rows: Vec<_> = value_rows.collect();
-                let max_timestamp = rows
-                    .iter()
-                    .max_by_key(|row| row.get::<NaiveDateTime, _>("created_at"))
-                    .map(|row| row.get::<NaiveDateTime, _>("created_at"));
-                if let Some(max_timestamp) = max_timestamp {
-                    if max_timestamp > *last_timestamp {
-                        *last_timestamp = max_timestamp
-                    }
-                }
-                // println!("{:?}", rows[0].columns());
-                let orig_values: Vec<_> = rows
-                    .iter()
-                    .filter_map(|row| {
-                        // println!("{:?}", row.try_get::<i32, _>("id"));
-                        if let Ok(x) = row.try_get::<f64, _>("x") {
-                            if let Ok(value) = row.try_get::<f64, _>("value") {
-                                return Some([x, value]);
-                            }
-                        }
-                        None
-                    })
-                    .collect();
-                let xaxis = rows[0].get::<String, _>("xaxis");
-                if !run.metrics.contains_key(&variable) {
-                    run.metrics.insert(
-                        variable,
-                        Metric {
-                            resampled: Vec::new(),
-                            orig_values,
-                            xaxis,
-                            values: Vec::new(),
-                        },
-                    );
-                } else {
-                    run.metrics
-                        .get_mut(&variable)
-                        .unwrap()
-                        .orig_values
-                        .extend(orig_values);
-                }
-            }
-        }
+        parse_metric_rows(metric_rows, runs, &mut batch_timestamp);
+
+        let mut epoch_timestamp = last_timestamp.clone();
+        let q = format!(
+            r#"
+        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='epoch' ORDER BY train_id, variable, xaxis, x
+        "#,
+        );
+        let metric_rows = sqlx::query(q.as_str())
+            .bind(train_ids)
+            .bind(epoch_timestamp)
+            .fetch_all(pool)
+            .await?;
+        parse_metric_rows(metric_rows, runs, &mut epoch_timestamp);
+        *last_timestamp = batch_timestamp.max(epoch_timestamp);
     }
     Ok(())
     // Ok(Runs {
     //     filtered_runs: runs.clone(),
     //     runs,
     // })
+}
+
+fn parse_metric_rows(
+    metric_rows: Vec<sqlx::postgres::PgRow>,
+    runs: &mut HashMap<String, Run>,
+    last_timestamp: &mut NaiveDateTime,
+) {
+    for (train_id, run_metric_rows) in &metric_rows
+        .into_iter()
+        .group_by(|row| row.get::<String, _>("train_id"))
+    {
+        let run = runs.get_mut(&train_id).unwrap();
+        for (variable, value_rows) in
+            &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
+        {
+            let rows: Vec<_> = value_rows.collect();
+            let max_timestamp = rows
+                .iter()
+                .max_by_key(|row| row.get::<NaiveDateTime, _>("created_at"))
+                .map(|row| row.get::<NaiveDateTime, _>("created_at"));
+            if let Some(max_timestamp) = max_timestamp {
+                if max_timestamp > *last_timestamp {
+                    *last_timestamp = max_timestamp
+                }
+            }
+            // println!("{:?}", rows[0].columns());
+            let orig_values: Vec<_> = rows
+                .iter()
+                .filter_map(|row| {
+                    // println!("{:?}", row.try_get::<i32, _>("id"));
+                    if let Ok(x) = row.try_get::<f64, _>("x") {
+                        if let Ok(value) = row.try_get::<f64, _>("value") {
+                            if let Ok(created_at) = row.try_get::<NaiveDateTime, _>("created_at") {
+                                return Some([x, value, created_at.timestamp() as f64]);
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect();
+            let xaxis = rows[0].get::<String, _>("xaxis");
+            if !run.metrics.contains_key(&variable) {
+                run.metrics.insert(
+                    variable,
+                    Metric {
+                        resampled: Vec::new(),
+                        orig_values,
+                        xaxis,
+                        values: Vec::new(),
+                    },
+                );
+            } else {
+                run.metrics
+                    .get_mut(&variable)
+                    .unwrap()
+                    .orig_values
+                    .extend(orig_values);
+            }
+        }
+    }
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
@@ -1333,6 +1415,7 @@ fn main() -> Result<(), sqlx::Error> {
                     artifact_filters: HashSet::new(),
                     time_filter: None,
                     time_filter_idx: 0,
+                    x_axis: XAxis::Batch,
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([(
