@@ -19,7 +19,8 @@ class DataCommonsenseQaConfig:
     model_checkpoint: str = "meta-llama/Llama-2-7b-hf"
     max_len: int = 256
     validation: bool = False
-
+    num_samples: int = None
+    
     def serialize_human(self):
         return lib.serialize_human.serialize_human(self.__dict__)
 
@@ -36,6 +37,12 @@ class DataCommonsenseQa(Dataset):
         dataset_split = 'validation' if data_config.validation else 'train'
         self.dataset = raw_dataset[dataset_split]
 
+        # If num_samples is specified and is a positive integer, slice the dataset
+        if data_config.num_samples and isinstance(data_config.num_samples, int) and data_config.num_samples > 0:
+            self.dataset = self.dataset.select(range(data_config.num_samples))
+        else:
+            self.dataset = self.dataset
+
         # Apply the formatting to the dataset
         formatted_dataset = self.dataset.map(self._format_question_answer)
 
@@ -51,7 +58,6 @@ class DataCommonsenseQa(Dataset):
         self.tokenized_dataset = formatted_dataset.map(
             self._preprocess, batched=True, remove_columns=col_to_delete
         )
-        #self.tokenized_dataset = self.tokenized_dataset.rename_column("answerKey", "label")
 
         self.tokenized_dataset.set_format("torch")
         self.collate_fn = transformers.DataCollatorWithPadding(tokenizer=self.tokenizer)
@@ -70,6 +76,7 @@ class DataCommonsenseQa(Dataset):
         
         # Return a dictionary with the formatted question-answer pair
         return {'formatted_question_answer': formatted_question_answer}
+    
 
     def _preprocess(self, batch):
         # Extract the text to be tokenized. 
