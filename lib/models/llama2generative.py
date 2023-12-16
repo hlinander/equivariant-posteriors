@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import transformers
 import peft
 import torch
@@ -14,7 +14,7 @@ class LLama2GenerativeConfig:
     lora_rank: int = 16
     lora_alpha: float = 16
     lora_dropout: float = 0.0
-    target_modules: List[str] = ["q_proj", "v_proj"]
+    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
 
     def serialize_human(self):
         return lib.serialize_human.serialize_human(self.__dict__)

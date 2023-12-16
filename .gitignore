@@ -16,3 +16,4 @@ slurm_log/
 slurm_tmp/
 locks/
 experiments/lora_ensembles/hf_env.sh
+distributed_training_requests/*
