@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import os
 
+from generative_llm_losses import generative_next_token_loss, generative_single_token_loss
+
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
@@ -20,34 +22,31 @@ from lib.data_registry import DataCommonsenseQaConfig, DataCommonsenseQa
 from lib.models.llama2generative import LLama2GenerativeConfig
 
 
-
-
-# Define Loss Function for Generative Task
-def generative_loss(outputs, batch):
-    input_ids = batch['input_ids']
-    attention_mask = batch['attention_mask']
-
-    # Set input_ids for masked tokens to -100 so they are not used in loss computation
-    input_ids[attention_mask == 0] = -100
-
-    # labels
-    labels = input_ids.clone()
-    labels[:, :-1] = input_ids.clone()[:, 1:]
-    labels[:, -1] = -100  # Ignore the loss for the last token
-
-    # loss
-    logits = outputs["logits"]
-    # Reshape logits to [batch_size * sequence_length, num_classes]
-    # Reshape labels to [batch_size * sequence_length]
-    return F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
-
 # LLAMA Checkpoint
 LLAMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
 
 # Configuration for Training
-def create_config(ensemble_id, lora_rank=16):
+def create_config(
+        ensemble_id, 
+        checkpoint=LLAMA_CHECKPOINT,
+        lora_rank=16,
+        lora_alpha=16,
+        lora_dropout=0.0,
+        lora_l2=0.1,
+        regular_l2=0,
+        target_modules= ["q_proj", "v_proj"],
+        ):
+    
     train_config = TrainConfig(
-        model_config=LLama2GenerativeConfig(checkpoint=LLAMA_CHECKPOINT, lora_rank=lora_rank),
+        model_config=LLama2GenerativeConfig(
+            checkpoint=checkpoint, 
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_l2=lora_l2,
+            target_modules=target_modules, 
+            ),
+
         train_data_config=DataCommonsenseQaConfig(
             dataset="commonsense_qa",
             model_checkpoint=LLAMA_CHECKPOINT,
@@ -62,10 +61,10 @@ def create_config(ensemble_id, lora_rank=16):
             validation=True,
             num_samples = 1,
         ),
-        loss=generative_loss,
+        loss=generative_next_token_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
-            kwargs=dict(weight_decay=0.00, lr=1e-4),
+            kwargs=dict(weight_decay=regular_l2 , lr=1e-4),
         ),
         batch_size=1,
         ensemble_id=ensemble_id,
@@ -84,38 +83,6 @@ def create_config(ensemble_id, lora_rank=16):
     return train_run
 
 
-def evaluate(model, eval_dataset, tokenizer, print_sample=True):
-    model.eval()  # Set the model to evaluation mode
-    total_loss = 0
-    total_correct = 0
-    total_examples = 0
-    tokenizer = eval_dataset.tokenizer
-
-    device = next(model.parameters()).device
-    eval_loader = DataLoader(eval_dataset, batch_size=32)  # Adjust batch size as needed
-
-    with torch.no_grad():
-        for batch in eval_loader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)  # Assuming labels are part of your batch
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            logits = outputs.logits
-            loss = outputs.loss
-
-            total_loss += loss.item()
-            total_correct += (logits.argmax(dim=-1) == labels).sum().item()
-            total_examples += labels.numel()
-
-            if print_sample:
-                # Print one sample token-by-token (from the first batch only)
-                print_sample_comparison(input_ids[0], logits[0], labels[0], tokenizer)
-
-    avg_loss = total_loss / len(eval_loader)
-    accuracy = total_correct / total_examples
-    print(f"Evaluation Results: Average Loss = {avg_loss}, Accuracy = {accuracy}")
-
 def print_sample_comparison(input_ids, logits, labels, tokenizer):
     print("Sample Token-by-Token Comparison:")
     for j in range(input_ids.size(0)):
@@ -127,14 +94,14 @@ def print_sample_comparison(input_ids, logits, labels, tokenizer):
             print(f"Token {j}: True: '{true_token}', Predicted: '{predicted_token}'")
 
 def evaluate(model, eval_dataset, print_sample=True):
-    model.eval()  # Set the model to evaluation mode
+    model.eval() 
     total_loss = 0
     total_correct = 0
     total_examples = 0
     tokenizer = eval_dataset.tokenizer
 
     device = next(model.parameters()).device
-    eval_loader = DataLoader(eval_dataset, batch_size=4)  # Adjust batch size as needed
+    eval_loader = DataLoader(eval_dataset, batch_size=4)  
 
     with torch.no_grad():
         for batch in eval_loader:
@@ -158,7 +125,7 @@ def evaluate(model, eval_dataset, print_sample=True):
             filtered_logits = logits[valid_labels_mask]
             filtered_labels = labels[valid_labels_mask]
 
-            loss = generative_loss(outputs, reshaped_batch)
+            loss = generative_next_token_loss(outputs, reshaped_batch)
 
             total_loss += loss.item()
             total_correct += (filtered_logits.argmax(dim=-1) == filtered_labels).sum().item()
@@ -181,9 +148,9 @@ def print_sample_comparison(input_ids, logits, labels, tokenizer):
         if true_token_id != -100:  # Ignore padding tokens
             predicted_token = tokenizer.decode([predicted_token_id])
             true_token = tokenizer.decode([true_token_id])
-            print(f"Token {j}: True: '{true_token}', Predicted: '{predicted_token}'")
+            print(f"Token {j}: True token id: '{true_token_id}', True: '{true_token}', Predicted: '{predicted_token}'")
 
-
+    
 def main():
     print("Start")
     if torch.cuda.is_available():
