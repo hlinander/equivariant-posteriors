@@ -104,7 +104,7 @@ enum ArtifactHandler {
     },
 }
 
-fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &str) {
+fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &str, args: &Args) {
     match handler {
         ArtifactHandler::NPYArtifact {
             arrays,
@@ -112,7 +112,7 @@ fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &
             views: _,
         } => {
             // if arrays.contains_key(run_id) {
-            let args = Args::parse();
+            // let args = Args::parse();
             let base_path = std::path::Path::new(&args.artifacts);
             let full_path = base_path.join(std::path::Path::new(path));
             let mpath = full_path.clone();
@@ -218,7 +218,7 @@ struct GuiRuns {
     data_status: DataStatus,
     gui_params: GuiParams,
     artifact_handlers: HashMap<String, ArtifactHandler>,
-    // texture: Option<egui::TextureHandle>,
+    args: Args, // texture: Option<egui::TextureHandle>,
 }
 
 fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
@@ -1092,7 +1092,7 @@ impl GuiRuns {
                     for (artifact_name, path) in run.artifacts.iter() {
                         if artifact_type == get_artifact_type(path) {
                             // println!("{}", artifact_type);
-                            add_artifact(handler, run_id, artifact_name, path);
+                            add_artifact(handler, run_id, artifact_name, path, &self.args);
                         }
                     }
                 }
@@ -1426,6 +1426,7 @@ fn main() -> Result<(), sqlx::Error> {
                         views: HashMap::new(),
                     },
                 )]),
+                args,
             })
         }),
     );
