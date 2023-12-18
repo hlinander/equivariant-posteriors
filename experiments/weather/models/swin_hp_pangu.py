@@ -812,5 +812,4 @@ class SwinHPPangu(nn.Module):
         return dict(
             logits_surface=x_surface,
             logits_upper=x_upper[:, :, :13, :],
-            predictions=None,
         )
