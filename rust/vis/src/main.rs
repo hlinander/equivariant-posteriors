@@ -471,10 +471,12 @@ impl eframe::App for GuiRuns {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_time_selector(ui);
             ui.separator();
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                self.render_artifacts(ui, &run_ensemble_color);
-                self.render_plots(ui, metric_names, run_ensemble_color);
-            });
+            egui::ScrollArea::vertical()
+                .id_source("central_space")
+                .show(ui, |ui| {
+                    self.render_artifacts(ui, &run_ensemble_color);
+                    self.render_plots(ui, metric_names, run_ensemble_color);
+                });
         });
         self.initialized = true;
         ctx.request_repaint();
@@ -1020,32 +1022,37 @@ impl GuiRuns {
     }
 
     fn render_artifact_selector(&mut self, ui: &mut egui::Ui) {
-        for artifact_name in self
-            .runs
-            .time_filtered_runs
-            // .active_runs
-            .iter()
-            .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
-            .flatten()
-            .unique()
-            .sorted()
-        {
-            if ui
-                .add(
-                    egui::Button::new(artifact_name)
-                        .selected(self.gui_params.artifact_filters.contains(artifact_name)),
-                )
-                .clicked()
-            {
-                if self.gui_params.artifact_filters.contains(artifact_name) {
-                    self.gui_params.artifact_filters.remove(artifact_name);
-                } else {
-                    self.gui_params
-                        .artifact_filters
-                        .insert(artifact_name.clone());
+        egui::ScrollArea::vertical()
+            .id_source("artifact_selector")
+            .show(ui, |ui| {
+                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                for artifact_name in self
+                    .runs
+                    .time_filtered_runs
+                    // .active_runs
+                    .iter()
+                    .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
+                    .flatten()
+                    .unique()
+                    .sorted()
+                {
+                    if ui
+                        .add(
+                            egui::Button::new(artifact_name)
+                                .selected(self.gui_params.artifact_filters.contains(artifact_name)),
+                        )
+                        .clicked()
+                    {
+                        if self.gui_params.artifact_filters.contains(artifact_name) {
+                            self.gui_params.artifact_filters.remove(artifact_name);
+                        } else {
+                            self.gui_params
+                                .artifact_filters
+                                .insert(artifact_name.clone());
+                        }
+                    }
                 }
-            }
-        }
+            });
     }
 
     fn render_artifacts(
