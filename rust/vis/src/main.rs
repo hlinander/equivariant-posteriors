@@ -1022,7 +1022,8 @@ impl GuiRuns {
     fn render_artifact_selector(&mut self, ui: &mut egui::Ui) {
         for artifact_name in self
             .runs
-            .active_runs
+            .time_filtered_runs
+            // .active_runs
             .iter()
             .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
             .flatten()
