@@ -1,3 +1,4 @@
+import os
 import plotext as plt
 import shutil
 import psutil
@@ -275,10 +276,11 @@ def plot_device_memory_stats(plt, memory_stats: dict, device):
     current = [bytes_to_mb(memory_stats[key]["current"]) for key in keys]
     peak = [bytes_to_mb(memory_stats[key]["peak"]) for key in keys]
     max = [bytes_to_mb(device_stats.total_memory) for key in keys]
+    num_gpus = int(os.getenv("EP_NUM_GPUS", "1"))
+    plt.text(f"Device ({num_gpus} gpus)", 0, 0)
     plt.multiple_bar(
         keys, [current, peak, max], label=["current", "peak", "max"], orientation="v"
     )
-    plt.title("Device")
 
 
 def plot_host_memory_stats(

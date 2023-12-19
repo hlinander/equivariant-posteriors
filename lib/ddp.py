@@ -24,6 +24,9 @@ def ddp_setup(backend=None) -> str:
         print(f"Using device {device}")
         return device
 
+    if "EP_TORCHRUN" not in os.environ:
+        return "cpu"
+
     if backend is None:
         if torch.cuda.is_available():
             backend = "nccl"
@@ -31,7 +34,7 @@ def ddp_setup(backend=None) -> str:
             backend = "gloo"
 
     torch.distributed.init_process_group(
-        backend=backend, init_method="env://", timeout=timedelta(seconds=10)
+        backend=backend, init_method="env://", timeout=timedelta(seconds=300)
     )
     device_id = int(os.environ["LOCAL_RANK"])
     if backend == "nccl":

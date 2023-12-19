@@ -63,6 +63,7 @@ def request_train_run(train_run: TrainRun):
 @dataclass
 class DistributedTrainRun:
     train_run: TrainRun
+    hash: str
     lock: FileLock
 
 
@@ -122,7 +123,7 @@ def fetch_requested_train_run(train_only_from_configs: List[TrainRun] = None):
             print(f"Aquired lock {get_lock_from_hash(hash)}")
             if get_request_path_from_hash(hash).is_file():
                 train_run = get_train_run_from_hash(hash)
-                return DistributedTrainRun(train_run=train_run, lock=lock)
+                return DistributedTrainRun(train_run=train_run, lock=lock, hash=hash)
             else:
                 lock.release()
         except Timeout:

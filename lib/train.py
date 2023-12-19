@@ -77,16 +77,20 @@ def validate(
 
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
+            # print(f"[Rank {ddp.get_rank()}] Validation batch")
             batch = {k: v.to(device) for k, v in batch.items()}
+            # print(f"[Rank {ddp.get_rank()}] Validation batch device")
             output = model(batch)
+            # print(f"[Rank {ddp.get_rank()}] Validation post model")
             # metric_sample = dataloader.dataset.create_metric_sample(
             #     output=output, batch=batch, train_epoch_state=train_epoch_state
             # )
-            metric_sample = MetricSample(
-                output=output, batch=batch, epoch=train_epoch_state.epoch
-            )
-            for metric in train_epoch_state.validation_metrics:
-                metric(metric_sample)
+            if ddp.get_rank() == 0:
+                metric_sample = MetricSample(
+                    output=output, batch=batch, epoch=train_epoch_state.epoch
+                )
+                for metric in train_epoch_state.validation_metrics:
+                    metric(metric_sample)
 
 
 def train(
@@ -126,6 +130,9 @@ def train(
             )
         optimizer.step()
 
+        if ddp.get_rank() > 0:
+            continue
+
         if i == 0 and torch.cuda.is_available():
             train_epoch_state.device_memory_stats = (
                 torch.cuda.memory_stats_as_nested_dict()
@@ -141,7 +148,7 @@ def train(
 
         try:
             now = time.time()
-            if now > train_epoch_state.next_visualization and ddp.get_rank() == 0:
+            if now > train_epoch_state.next_visualization:
                 write_status_file(
                     SerializeConfig(
                         train_run=train_run, train_epoch_state=train_epoch_state
@@ -285,7 +292,7 @@ def load_or_create_state(train_run: TrainRun, device_id):
     return state
 
 
-def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
+def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id):
     train_epoch_spec = TrainEpochSpec(
         loss=train_run.train_config.loss,
         device_id=device_id,
@@ -295,37 +302,34 @@ def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     print("Run epochs...")
+    while state.epoch < train_run.epochs:
+        train(train_run, state, train_epoch_spec)
+        validate(state, train_epoch_spec, train_run)
+        state.epoch += 1
+        if ddp.get_rank() == 0:
+            serialize(serialize_config)
+        if train_run.compute_config.distributed:
+            torch.distributed.barrier()
+
+    if ddp.get_rank() > 0:
+        return
+
+    print("Render dataframe...")
+    df = render_dataframe(train_run, state)
+
+    print("Render psql...")
+    render_psql(train_run, state, block=True)
+
+    print("Pickling dataframe...")
+    df_path = get_checkpoint_path(train_run.train_config) / "df.pickle"
+    if not Path(df_path).is_file():
+        df.to_pickle(path=df_path)
+
+    print("Done.")
+
+
+def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
     checkpoint_path = get_lock_path(train_run.train_config)
     lock = FileLock(f"{checkpoint_path}", 1)
     with lock:
-        while state.epoch < train_run.epochs:
-            train(train_run, state, train_epoch_spec)
-            validate(state, train_epoch_spec, train_run)
-            state.epoch += 1
-            serialize(serialize_config)
-            # last_postgres_result = render_psql(train_run, state)
-            # try:
-            #     now = time.time()
-            #     if now > next_visualization:
-            #         next_visualization = now + 1
-            #         if ddp.get_rank() == 0:
-            #             visualize_progress(
-            #                 state, train_run, last_postgres_result, device_id
-            #             )
-            # except Exception as e:
-            #     logging.error("Visualization failed")
-            #     logging.error(str(e))
-            #     print(traceback.format_exc())
-
-        print("Render dataframe...")
-        df = render_dataframe(train_run, state)
-
-        print("Render psql...")
-        render_psql(train_run, state, block=True)
-
-        print("Pickling dataframe...")
-        df_path = get_checkpoint_path(train_run.train_config) / "df.pickle"
-        if not Path(df_path).is_file():
-            df.to_pickle(path=df_path)
-
-    print("Done.")
+        do_training_unlocked(train_run, state, device_id)

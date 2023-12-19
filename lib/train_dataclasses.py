@@ -1,3 +1,4 @@
+import os
 import torch
 from dataclasses import dataclass, field
 from typing import List
@@ -96,6 +97,7 @@ class TrainConfig:
             batch_size=self.batch_size,
             ensemble_id=self.ensemble_id,
             extra=lib.serialize_human.serialize_human(self.extra),
+            gradient_clipping=self.gradient_clipping,
         )
 
     def ensemble_dict(self):
@@ -117,10 +119,22 @@ class TrainEval:
         )
 
 
+def get_num_gpus():
+    cuda_devices = os.getenv("CUDA_VISIBLE_DEVICES", None)
+    if cuda_devices is not None:
+        return len(cuda_devices.split(","))
+    return 0
+
+
+def is_distributed():
+    return get_num_gpus() > 1
+
+
 @dataclass
 class ComputeConfig:
-    distributed: bool
     num_workers: int
+    distributed: bool = field(default_factory=is_distributed)
+    num_gpus: int = field(default_factory=get_num_gpus)
 
     def serialize_human(self):
         return self.__dict__

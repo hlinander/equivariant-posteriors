@@ -5,6 +5,7 @@ import torch
 from lib.dataspec import DataSpec
 import lib.serialize_human
 from typing import List
+import lib.ddp as ddp
 
 
 # Define LLaMA 2 Configuration
@@ -28,7 +29,7 @@ class LLaMA2Generative(torch.nn.Module):
         self.config = model_config
         self.base_model = transformers.AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_config.checkpoint,
-            device_map=0,
+            device_map=ddp.get_rank(),
         )
 
         self.peft_config = peft.LoraConfig(
@@ -80,19 +81,23 @@ class LLaMA2Generative(torch.nn.Module):
 
         return lora_l2_loss
 
-    def state_dict(self):
+    def state_dict(self, **kwargs):
         """Override state_dict with only adapter weights"""
-        return peft.get_peft_model_state_dict(self.model)
+        state_dict = peft.get_peft_model_state_dict(self.model)
+        updated_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key.replace("lora_A.weight", "lora_A.default.weight")
+            new_key = new_key.replace("lora_B.weight", "lora_B.default.weight")
+            updated_state_dict[new_key] = value
+        prefix = ""
+        # if "prefix" in kwargs:
+        #     prefix = kwargs["prefix"]
+        updated_state_dict = {f"{prefix}{k}": v for k, v in updated_state_dict.items()}
+        return updated_state_dict
 
     def load_state_dict(self, state_dict, strict=False):
         """Correct key mismatches in the state_dict due to naming differences in LoRA layers.
         Specifically, this modifies the keys to include the '.default.' segment where necessary,
         aligning the keys in the provided state_dict with the format expected by the PEFT model.
         """
-        updated_state_dict = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("lora_A.weight", "lora_A.default.weight")
-            new_key = new_key.replace("lora_B.weight", "lora_B.default.weight")
-            updated_state_dict[new_key] = value
-
-        self.model.load_state_dict(updated_state_dict, strict=False)
+        self.model.load_state_dict(state_dict, strict=False)

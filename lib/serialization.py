@@ -65,8 +65,13 @@ def serialize(config: SerializeConfig):
         # Save if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
             return
+    if config.train_run.compute_config.distributed:
+        model = train_epoch_state.model.module.state_dict()
+    else:
+        model = train_epoch_state.model.state_dict()
+
     file_data = FileStructure(
-        model=train_epoch_state.model.state_dict(),
+        model=model,
         optimizer=train_epoch_state.optimizer.state_dict(),
         epoch=train_epoch_state.epoch,
         train_metrics=serialize_metrics(train_epoch_state.train_metrics),
@@ -126,8 +131,9 @@ def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=device_id_list, find_unused_parameters=True
         )
-
-    model.load_state_dict(state_dict)
+        model.module.load_state_dict(state_dict)
+    else:
+        model.load_state_dict(state_dict)
 
     if train_config.model_pre_train_hook is not None:
         model = train_config.model_pre_train_hook(model, config.train_run)
