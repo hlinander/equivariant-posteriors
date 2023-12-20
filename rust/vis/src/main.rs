@@ -183,14 +183,14 @@ fn image_from_ndarray_healpix(
     let ndim = local_index.len();
     for y in 0..height {
         for x in 0..width {
-            let lon_x = x as f64 / width as f64 * 8.0;
-            let lat_y = (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * 2.0;
-            let (lon, lat) = cdshealpix::unproj(lon_x, lat_y);
-            // let (lon, lat) = (
-            //     x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
-            //     (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
-            //         / 2.0,
-            // );
+            // let lon_x = x as f64 / width as f64 * 8.0;
+            // let lat_y = (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * 2.0;
+            // let (lon, lat) = cdshealpix::unproj(lon_x, lat_y);
+            let (lon, lat) = (
+                x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
+                -(y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
+                    / 2.0,
+            );
             let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
             let depth = cdshealpix::depth(nside);
             let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
