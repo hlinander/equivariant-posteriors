@@ -7,6 +7,7 @@ use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
+use std::borrow::Cow;
 use tokio::task::JoinHandle;
 // use sqlx::types::JsonValue
 use std::collections::HashMap;
@@ -102,9 +103,16 @@ enum ArtifactHandler {
         arrays: HashMap<ArtifactId, NPYArray>,
         views: HashMap<ArtifactId, NPYArtifactView>,
     },
+    ImageArtifact {
+        images: HashMap<ArtifactId, String>,
+    },
 }
 
 fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &str, args: &Args) {
+    let artifact_id = ArtifactId {
+        train_id: run_id.to_string(),
+        name: name.to_string(),
+    };
     match handler {
         ArtifactHandler::NPYArtifact {
             arrays,
@@ -116,10 +124,6 @@ fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &
             let base_path = std::path::Path::new(&args.artifacts);
             let full_path = base_path.join(std::path::Path::new(path));
             let mpath = full_path.clone();
-            let artifact_id = ArtifactId {
-                train_id: run_id.to_string(),
-                name: name.to_string(),
-            };
             // if !arrays.contains_key(&artifact_id) {
             match arrays.get(&artifact_id) {
                 None => {
@@ -160,6 +164,15 @@ fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &
                 Some(NPYArray::Loaded(_array)) => {}
             }
         }
+        ArtifactHandler::ImageArtifact { images } => match images.get(&artifact_id) {
+            Some(_) => {}
+            None => {
+                let base_path = std::path::Path::new(&args.artifacts);
+                let full_path = base_path.join(std::path::Path::new(path));
+
+                images.insert(artifact_id, full_path.to_string_lossy().to_string());
+            }
+        },
     }
 }
 
@@ -453,8 +466,8 @@ impl eframe::App for GuiRuns {
 
         egui::SidePanel::left("Controls")
             .resizable(true)
-            .default_width(300.0)
-            .min_width(300.0)
+            .default_width(200.0)
+            .min_width(200.0)
             // .width_range(100.0..=600.0)
             .show(ctx, |ui| {
                 self.render_parameters(ui, param_values, filtered_values, ctx);
@@ -582,6 +595,50 @@ fn show_artifacts(
                     }
                 });
             }
+        }
+        ArtifactHandler::ImageArtifact { images } => {
+            let max_size = egui::Vec2::new(ui.available_width() / 2.1, ui.available_height() / 2.1);
+            let available_artifact_names: Vec<&String> = images.keys().map(|id| &id.name).collect();
+            ui.horizontal_wrapped(|ui| {
+                // ui.set_max_width(ui.available_width());
+                // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                for (artifact_name, filtered_arrays) in gui_params
+                    .artifact_filters
+                    .iter()
+                    .filter(|name| available_artifact_names.contains(name))
+                    .map(|name| {
+                        (
+                            name,
+                            images.iter().filter(|(key, _v)| {
+                                key.name == *name && filtered_runs.contains(&key.train_id)
+                            }),
+                        )
+                    })
+                {
+                    for (artifact_id, uri) in filtered_arrays {
+                        ui.push_id(uri, |ui| {
+                            ui.vertical(|ui| {
+                                let label = label_from_active_inspect_params(
+                                    runs.get(&artifact_id.train_id).unwrap(),
+                                    &gui_params,
+                                );
+                                ui.colored_label(
+                                    run_ensemble_color
+                                        .get(&artifact_id.train_id)
+                                        .unwrap()
+                                        .clone(),
+                                    format!("{}: {}", artifact_id.name, label),
+                                );
+                                // ui.allocate_space(max_size);
+                                ui.add(
+                                    egui::Image::from_uri(format!("file://{}", uri))
+                                        .fit_to_exact_size(max_size),
+                                );
+                            });
+                        });
+                    }
+                }
+            });
         }
     }
 }
@@ -1404,7 +1461,8 @@ fn main() -> Result<(), sqlx::Error> {
     let _ = eframe::run_native(
         "Visualizer",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             Box::<GuiRuns>::new(GuiRuns {
                 runs: Default::default(),
                 dirty: true,
@@ -1426,14 +1484,22 @@ fn main() -> Result<(), sqlx::Error> {
                     x_axis: XAxis::Batch,
                 },
                 // texture: None,
-                artifact_handlers: HashMap::from([(
-                    "npy".to_string(),
-                    ArtifactHandler::NPYArtifact {
-                        arrays: HashMap::new(),
-                        textures: HashMap::new(),
-                        views: HashMap::new(),
-                    },
-                )]),
+                artifact_handlers: HashMap::from([
+                    (
+                        "npy".to_string(),
+                        ArtifactHandler::NPYArtifact {
+                            arrays: HashMap::new(),
+                            textures: HashMap::new(),
+                            views: HashMap::new(),
+                        },
+                    ),
+                    (
+                        "png".to_string(),
+                        ArtifactHandler::ImageArtifact {
+                            images: HashMap::new(),
+                        },
+                    ),
+                ]),
                 args,
             })
         }),
