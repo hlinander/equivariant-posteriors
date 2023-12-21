@@ -122,13 +122,13 @@ def train(
         output = model(batch)
 
         loss_val = loss(output, batch)
-        optimizer.zero_grad()
         loss_val.backward()
         if train_run.train_config.gradient_clipping is not None:
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(), train_run.train_config.gradient_clipping
             )
         optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
 
         if ddp.get_rank() > 0:
             continue
