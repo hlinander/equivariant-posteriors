@@ -443,6 +443,30 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
     print(f"[Database] Added artifact {name}: {path}")
 
 
+def has_artifact(train_run: TrainRun, name: str):
+    # train_run_dict = train_run.serialize_human()
+    try:
+        setup_psql()
+    except psycopg.errors.OperationalError as e:
+        print("[Database] Could not connect to database, artifact not added.")
+        return (False, str(e))
+
+    train_run_dict = train_run.serialize_human()
+    with psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=os.getenv("EP_POSTGRES", env().postgres_host),
+        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        autocommit=False,
+    ) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM artifacts WHERE train_id=%(train_id)s AND name=%(name)s
+            """,
+            dict(train_id=train_run_dict["train_id"], name=name),
+        )
+        return rows.fetchone() is not None
+
+
 def add_ensemble_artifact(
     ensemble_config: EnsembleConfig, name: str, path: Union[str, Path]
 ):
