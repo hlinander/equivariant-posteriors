@@ -381,6 +381,30 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
     # print(f"Updated psql {time.time() - start_time}s")
 
 
+def add_parameter(train_run: TrainRun, name: str, value: str):
+    # train_run_dict = train_run.serialize_human()
+    try:
+        setup_psql()
+    except psycopg.errors.OperationalError as e:
+        print("[Database] Could not connect to database, artifact not added.")
+        return (False, str(e))
+
+    train_run_dict = train_run.serialize_human()
+
+    with psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=os.getenv("EP_POSTGRES", env().postgres_host),
+        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        autocommit=False,
+    ) as conn:
+        insert_param(
+            conn, train_run_dict["train_id"], train_run_dict["ensemble_id"], name, value
+        )
+    print(
+        f"[Database] Added parameter {name}: {value} for {train_run_dict['train_id']}"
+    )
+
+
 def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
     # train_run_dict = train_run.serialize_human()
     try:

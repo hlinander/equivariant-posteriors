@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from typing import Dict
 import torch
 import numpy as np
 from pathlib import Path
@@ -18,17 +17,20 @@ from lib.regression_metrics import create_regression_metrics
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.ensemble import create_ensemble
+from lib.ensemble import request_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.files import prepare_results
+from lib.render_psql import add_artifact, add_parameter
 from lib.serialization import serialize_human
 
 # from lib.data_factory import register_dataset, get_factory
 import lib.data_factory as data_factory
 import lib.model_factory as model_factory
+from lib.models.mlp import MLPConfig
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from lib.data_utils import create_sample_legacy
-from lib.train_dataclasses import TrainEpochState
+from lib.distributed_trainer import distributed_train
 
 
 class CliffordLinear(torch.nn.Module):
@@ -184,7 +186,7 @@ class DataCable(torch.utils.data.Dataset):
         )
 
     def __getitem__(self, idx):
-        endpoints = np.random.rand(2, 2) * 5
+        endpoints = np.random.rand(2, 2) * 1.0
         x = (
             np.linspace(endpoints[0, 0], endpoints[1, 0], 100, dtype=np.float32)[
                 :, None
@@ -222,8 +224,8 @@ def create_config(ensemble_id):
         return loss(outputs["logits"], batch["target"])
 
     train_config = TrainConfig(
-        # model_config=MLPConfig(widths=[256, 256, 256]),
-        model_config=CliffordModelConfig(widths=[256, 256]),
+        model_config=MLPConfig(widths=[512, 512, 512]),
+        # model_config=CliffordModelConfig(widths=[256, 256]),
         train_data_config=DataCableConfig(npoints=100),
         val_data_config=DataCableConfig(npoints=100),
         loss=reg_loss,
@@ -233,14 +235,14 @@ def create_config(ensemble_id):
         ),
         batch_size=256,
         ensemble_id=ensemble_id,
-        _version=33,
+        _version=34,
     )
     train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False, num_workers=10),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=300,
+        epochs=200,
         save_nth_epoch=1,
         validate_nth_epoch=5,
     )
@@ -248,7 +250,7 @@ def create_config(ensemble_id):
 
 
 if __name__ == "__main__":
-    device_id = ddp_setup()
+    # device_id = ddp_setup()
 
     # clifford_structure = torch.tensor(
     #     np.load(Path(__file__).parent / "./clifford_110_structure.npz"),
@@ -269,7 +271,13 @@ if __name__ == "__main__":
     mf = model_factory.get_factory()
     mf.register(CliffordModelConfig, CliffordModel)
     ensemble_config = create_ensemble_config(create_config, 1)
+    request_ensemble(ensemble_config)
+    distributed_train(ensemble_config.members)
+
+    device_id = ddp_setup()
     ensemble = create_ensemble(ensemble_config, device_id)
+    n_params = sum(p.numel() for p in ensemble.members[0].parameters())
+    add_parameter(ensemble_config.members[0], "parameters", f"{n_params}")
 
     ds = data_factory.get_factory().create(DataCableConfig(npoints=100))
     dl = torch.utils.data.DataLoader(
@@ -280,7 +288,6 @@ if __name__ == "__main__":
     )
 
     result_path = prepare_results(
-        Path(__file__).parent,
         f"{Path(__file__).stem}",
         ensemble_config,
     )
@@ -288,10 +295,13 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    for xs, ys, ids in tqdm.tqdm(dl):
-        xs = xs.to(device_id)
+    np.random.seed(42)
+    for batch in tqdm.tqdm(dl):
+        ys = batch["target"]
+        xs = batch["input"]
 
-        output = ensemble.members[0](xs)["logits"].cpu().detach().numpy()
+        batch = {k: v.to(device_id) for k, v in batch.items()}
+        output = ensemble.members[0](batch)["logits"].cpu().detach().numpy()
         fig, axs = plt.subplots(3, 3, figsize=(10, 10))
         for idx, (start_deltas, delta, target) in enumerate(
             zip(xs.cpu().numpy(), output, ys.numpy())
@@ -307,7 +317,9 @@ if __name__ == "__main__":
                 start[:, 0] + delta[:, 0],
                 start[:, 1] + delta[:, 1],
                 "r-",
-                label="clifford",
+                label=ensemble_config.members[
+                    0
+                ].train_config.model_config.__class__.__name__,
             )
             ax.plot(
                 start[:, 0] + target[:, 0],
@@ -317,6 +329,8 @@ if __name__ == "__main__":
             )
             ax.legend()
             ax.set_title(f"{length_cable(start + target)}, {99 * 0.05}")
-            fig.suptitle("80 iteration constraint resolve")
-            fig.savefig("clifford_test.pdf")
+        fig.suptitle("80 iteration constraint resolve")
+        path = result_path / "clifford_test.png"
+        fig.savefig(path)
+        add_artifact(ensemble_config.members[0], "clifford_rope_test", path)
         raise Exception("exit")
