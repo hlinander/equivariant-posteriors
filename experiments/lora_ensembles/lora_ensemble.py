@@ -17,6 +17,7 @@ from lib.ensemble import request_ensemble
 from lib.models.llama2generative import LLaMA2GenerativeConfig
 from lib.metric import create_metric
 from lib.files import prepare_results
+from lib.data_registry import DataCommonsenseQaConfig
 
 from lib.distributed_trainer import distributed_train
 
@@ -24,7 +25,8 @@ from experiments.lora_ensembles.metrics import accuracy, calibration_error
 
 
 # LLaMA Checkpoint
-LLaMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
+# LLaMA_CHECKPOINT = "meta-llama/Llama-2-7b-hf"
+LLaMA_CHECKPOINT = "meta-llama/Llama-2-13b-hf"
 
 
 # Configuration for Training
