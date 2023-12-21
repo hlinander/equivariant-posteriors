@@ -12,7 +12,7 @@ from lib.compute_env import env
 # import ssl
 
 # ssl._create_default_https_context = ssl._create_unverified_context
-WEATHER_BASE = Path(os.getenv("WEATHER", env().paths.datasets / "era5_lite"))
+WEATHER_BASE = Path(os.getenv("WEATHER_DATASET", env().paths.datasets / "era5_lite"))
 ERA5_GRIB_DATA_PATH = WEATHER_BASE / "era5_grib_monthly"
 
 
@@ -83,6 +83,7 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if not sample_config.surface_path().is_file():
+        print(f"[Does not exist] {sample_config.surface_path()}")
         print(f"Downloading {sample_config}")
         print(f"Target {ERA5_GRIB_DATA_PATH}")
         get_surface_variables(

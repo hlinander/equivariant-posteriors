@@ -125,9 +125,15 @@ class DataHP(torch.utils.data.Dataset):
         return e5s
 
     def __getitem__(self, idx):
-        fs_cache_path = env().paths.datasets / "era5_lite_np_cache" / f"{idx}"
+        fs_cache_path = (
+            env().paths.datasets
+            / f"era5_lite_np_cache_nside_{self.config.nside}"
+            / f"{idx}"
+        )
         fs_cache_path_tmp = (
-            env().paths.datasets / "era5_lite_np_cache" / f"{idx}_constructing"
+            env().paths.datasets
+            / f"era5_lite_np_cache_nside_{self.config.nside}"
+            / f"{idx}_constructing"
         )
         names = dict(
             input_surface="surface.npy",
