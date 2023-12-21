@@ -148,6 +148,7 @@ class TrainRun:
     epochs: int
     save_nth_epoch: int
     validate_nth_epoch: int
+    visualize_terminal: bool = True
 
     def serialize_human(self):
         return dict(
@@ -158,6 +159,7 @@ class TrainRun:
             train_eval=self.train_eval.serialize_human(),
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,
+            visualize_terminal=self.visualize_terminal,
         )
 
 

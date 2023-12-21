@@ -113,11 +113,11 @@ def train(
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
     visualizers = [visualize_progress, visualize_progress_batches]
-    # train_epoch_state.batch = 0
     for i, batch in enumerate(dataloader):
         train_epoch_state.timing_metric.stop("batch")
         train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += 1
+
         batch = {k: v.to(device) for k, v in batch.items()}
         output = model(batch)
 
@@ -158,17 +158,18 @@ def train(
                 last_postgres_result = render_psql(train_run, train_epoch_state)
                 train_epoch_state.timing_metric.stop("psql")
                 train_epoch_state.next_visualization = now + 5
-                train_epoch_state.next_visualizer = (
-                    train_epoch_state.next_visualizer + 1
-                ) % 2
-                train_epoch_state.timing_metric.start("visualize")
-                visualizers[train_epoch_state.next_visualizer](
-                    train_epoch_state,
-                    train_run,
-                    last_postgres_result,
-                    train_epoch_spec.device_id,
-                )
-                train_epoch_state.timing_metric.stop("visualize")
+                if train_run.visualize_terminal:
+                    train_epoch_state.next_visualizer = (
+                        train_epoch_state.next_visualizer + 1
+                    ) % 2
+                    train_epoch_state.timing_metric.start("visualize")
+                    visualizers[train_epoch_state.next_visualizer](
+                        train_epoch_state,
+                        train_run,
+                        last_postgres_result,
+                        train_epoch_spec.device_id,
+                    )
+                    train_epoch_state.timing_metric.stop("visualize")
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
