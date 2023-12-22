@@ -1,9 +1,9 @@
 {
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/02f05fc";
   inputs.helix-pkg.url = "github:helix-editor/helix";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
   inputs.fenix = {
     url = "github:nix-community/fenix";
     inputs.nixpkgs.follows = "nixpkgs";
@@ -227,6 +227,7 @@
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
       devinputs = with pkgs; [
+      lazygit
       linuxPackages_latest.perf
         glfw3
         glm
