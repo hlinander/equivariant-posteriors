@@ -251,7 +251,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=10),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=50,
+        epochs=200,
         save_nth_epoch=1,
         validate_nth_epoch=5,
         visualize_terminal=False,
