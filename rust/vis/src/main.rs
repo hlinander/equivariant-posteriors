@@ -63,6 +63,7 @@ struct GuiParams {
     n_average: usize,
     max_n: usize,
     param_filters: HashMap<String, HashSet<String>>,
+    param_name_filter: String,
     metric_filters: HashSet<String>,
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
@@ -349,7 +350,7 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 impl eframe::App for GuiRuns {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.initialized {
-            ctx.set_zoom_factor(2.0);
+            ctx.set_zoom_factor(1.0);
         }
         self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
         self.runs.active_runs_time_ordered = self
@@ -723,6 +724,12 @@ impl GuiRuns {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.vertical(|ui| {
                 if ui
+                    .add(egui::TextEdit::singleline(
+                        &mut self.gui_params.param_name_filter,
+                    ))
+                    .changed()
+                {}
+                if ui
                     .add(
                         egui::Slider::new(&mut self.gui_params.n_average, 0usize..=200usize)
                             .logarithmic(true),
@@ -774,7 +781,10 @@ impl GuiRuns {
             .iter()
             // .keys()
             .sorted()
-            .group_by(|param_name| param_name.split(".").nth(depth).unwrap_or(param_name));
+            .group_by(|param_name| {
+                param_name.split(".").take(depth + 1).join(".")
+                // .unwrap_or(param_name)
+            });
         for (param_group_name, param_group) in &groups {
             let param_group_vec = param_group
                 .cloned()
@@ -787,62 +797,80 @@ impl GuiRuns {
                     // }
                 })
                 .collect_vec();
-            ui.collapsing(param_group_name, |ui| {
-                if param_group_vec
-                    .iter()
-                    .any(|name| name.split(".").count() > depth + 1)
-                {
-                    self.render_parameters_one_level(
-                        param_values,
-                        param_group_vec,
-                        ui,
-                        filtered_values,
-                        ctx,
-                        depth + 1,
-                    );
-                } else {
-                    for param_name in &param_group_vec {
-                        // ui.
-                        // ui.separator();
-                        let frame_border = if self.gui_params.inspect_params.contains(param_name) {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                        // ui.allocate_ui(egui::Vec2::new(0.0, 0.0), |ui| {})
-                        let param_frame = egui::Frame::none()
-                            // .fill(egui::Color32::GREEN)
-                            .stroke(egui::Stroke::new(frame_border, egui::Color32::GREEN))
-                            .show(ui, |ui| {
-                                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                                // ui.label(param_name);
-                                ui.horizontal_wrapped(|ui| {
-                                    self.render_parameter_values(
-                                        &param_values,
-                                        &param_name,
-                                        &filtered_values,
-                                        ctx,
-                                        ui,
-                                    );
+            if param_group_vec
+                .iter()
+                .all(|name| !name.contains(self.gui_params.param_name_filter.as_str()))
+            {
+                continue;
+            }
+            // ui.collapsing(param_group_name, |ui| {
+            egui::CollapsingHeader::new(&param_group_name)
+                // .default_open(self.gui_params.param_name_filter.len() > 1)
+                .default_open(!param_group_name.ends_with("_id"))
+                .show(ui, |ui| {
+                    if param_group_vec
+                        .iter()
+                        .any(|name| name.split(".").count() > depth + 1)
+                    {
+                        // println!(
+                        //     "{:?}: {}",
+                        //     param_group_vec, self.gui_params.param_name_filter
+                        // );
+                        self.render_parameters_one_level(
+                            param_values,
+                            param_group_vec,
+                            ui,
+                            filtered_values,
+                            ctx,
+                            depth + 1,
+                        );
+                    } else {
+                        for param_name in &param_group_vec {
+                            if !param_name.contains(self.gui_params.param_name_filter.as_str()) {
+                                continue;
+                            }
+                            // ui.
+                            // ui.separator();
+                            let frame_border =
+                                if self.gui_params.inspect_params.contains(param_name) {
+                                    1.0
+                                } else {
+                                    0.0
+                                };
+                            // ui.allocate_ui(egui::Vec2::new(0.0, 0.0), |ui| {})
+                            let param_frame = egui::Frame::none()
+                                // .fill(egui::Color32::GREEN)
+                                .stroke(egui::Stroke::new(frame_border, egui::Color32::GREEN))
+                                .show(ui, |ui| {
+                                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                    // ui.label(param_name);
+                                    ui.horizontal_wrapped(|ui| {
+                                        self.render_parameter_values(
+                                            &param_values,
+                                            &param_name,
+                                            &filtered_values,
+                                            ctx,
+                                            ui,
+                                        );
+                                    });
                                 });
-                            });
-                        // println!("{:?}", param_frame.response.sense);
-                        if param_frame
-                            .response
-                            .interact(egui::Sense::click())
-                            .clicked()
-                        {
-                            if self.gui_params.inspect_params.contains(param_name) {
-                                self.gui_params.inspect_params.remove(param_name);
-                            } else {
-                                self.gui_params
-                                    .inspect_params
-                                    .insert(param_name.to_string());
+                            // println!("{:?}", param_frame.response.sense);
+                            if param_frame
+                                .response
+                                .interact(egui::Sense::click())
+                                .clicked()
+                            {
+                                if self.gui_params.inspect_params.contains(param_name) {
+                                    self.gui_params.inspect_params.remove(param_name);
+                                } else {
+                                    self.gui_params
+                                        .inspect_params
+                                        .insert(param_name.to_string());
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
         }
     }
 
@@ -855,7 +883,19 @@ impl GuiRuns {
         ui: &mut egui::Ui,
     ) {
         let param_name = param_name.replace("#", ".");
-        for value in param_values.get(&param_name).unwrap().iter().sorted() {
+        for value in param_values
+            .get(&param_name)
+            .unwrap()
+            .iter()
+            .sorted_by(|name1, name2| {
+                if let Ok(float1) = name1.parse::<f32>() {
+                    if let Ok(float2) = name2.parse::<f32>() {
+                        return float1.partial_cmp(&float2).unwrap();
+                    }
+                }
+                name1.cmp(name2)
+            })
+        {
             let active_filter = self
                 .gui_params
                 .param_filters
@@ -1234,77 +1274,23 @@ async fn get_state_new(
 ) -> Result<(), sqlx::Error> {
     // Query to get the table structure
     // TODO: WHERE train_id not in runs.keys()
-    let run_rows = sqlx::query(
-        r#"
-        SELECT * FROM runs ORDER BY train_id
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-    // Print each column's details
-    // let mut runs: HashMap<String, Run> = HashMap::new();
-    for (train_id, db_params) in &run_rows
-        .into_iter()
-        .group_by(|row| row.get::<String, _>("train_id"))
-    {
-        let mut created_at: Option<chrono::NaiveDateTime> = None;
+    get_state_parameters(pool, runs).await?;
+    get_state_artifacts(train_ids, pool, runs).await?;
+    get_state_metrics(train_ids, last_timestamp, pool, runs).await?;
+    Ok(())
+}
 
-        let params: HashMap<_, _> = db_params
-            .map(|row| {
-                if created_at.is_none() {
-                    created_at = row.get("created_at");
-                }
-                (
-                    row.get::<String, _>("variable"),
-                    row.get::<String, _>("value_text"),
-                )
-            })
-            .collect();
-        if !runs.contains_key(&train_id) {
-            runs.insert(
-                train_id,
-                Run {
-                    params,
-                    metrics: HashMap::new(),
-                    artifacts: HashMap::new(),
-                    created_at: created_at.expect("No datetime for run parameters"),
-                },
-            );
-        }
-    }
-
-    let artifact_rows = sqlx::query(
-        r#"
-        SELECT * FROM artifacts ORDER BY train_id
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    for (train_id, rows) in &artifact_rows
-        .into_iter()
-        .group_by(|row| row.get::<String, _>("train_id"))
-    {
-        for row in rows {
-            let incoming_name: String = row.try_get("name").unwrap_or_default();
-            let incoming_path: String = row.try_get("path").unwrap_or_default();
-            if let Some(run) = runs.get_mut(&train_id) {
-                if let Some(path) = run.artifacts.get_mut(&incoming_name) {
-                    *path = incoming_path;
-                } else {
-                    run.artifacts.insert(incoming_name, incoming_path);
-                }
-            } else {
-                println!("[Artifact] No run_id {}", train_id);
-            }
-        }
-    }
-
-    if train_ids.len() > 0 {
+async fn get_state_metrics(
+    train_ids: &Vec<String>,
+    last_timestamp: &mut NaiveDateTime,
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    runs: &mut HashMap<String, Run>,
+) -> Result<(), sqlx::Error> {
+    Ok(if train_ids.len() > 0 {
         let mut batch_timestamp = last_timestamp.clone();
         let q = format!(
             r#"
-        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='batch' AND (CAST(x as int) % 50 = 0 OR x < 500) ORDER BY train_id, variable, xaxis, x
+        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='batch' AND (CAST(x as int) % 1000 = 0 OR x < 500) ORDER BY train_id, variable, xaxis, x
         "#,
         );
         let metric_rows = sqlx::query(q.as_str())
@@ -1327,12 +1313,86 @@ async fn get_state_new(
             .await?;
         parse_metric_rows(metric_rows, runs, &mut epoch_timestamp);
         *last_timestamp = batch_timestamp.max(epoch_timestamp);
-    }
-    Ok(())
-    // Ok(Runs {
-    //     filtered_runs: runs.clone(),
-    //     runs,
-    // })
+    })
+}
+
+async fn get_state_artifacts(
+    train_ids: &Vec<String>,
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    runs: &mut HashMap<String, Run>,
+) -> Result<(), sqlx::Error> {
+    let artifact_rows = sqlx::query(
+        r#"
+        SELECT * FROM artifacts WHERE train_id = ANY($1) ORDER BY train_id
+        "#,
+    )
+    .bind(train_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(
+        for (train_id, rows) in &artifact_rows
+            .into_iter()
+            .group_by(|row| row.get::<String, _>("train_id"))
+        {
+            for row in rows {
+                let incoming_name: String = row.try_get("name").unwrap_or_default();
+                let incoming_path: String = row.try_get("path").unwrap_or_default();
+                if let Some(run) = runs.get_mut(&train_id) {
+                    if let Some(path) = run.artifacts.get_mut(&incoming_name) {
+                        *path = incoming_path;
+                    } else {
+                        run.artifacts.insert(incoming_name, incoming_path);
+                    }
+                } else {
+                    println!("[Artifact] No run_id {}", train_id);
+                }
+            }
+        },
+    )
+}
+
+async fn get_state_parameters(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    runs: &mut HashMap<String, Run>,
+) -> Result<(), sqlx::Error> {
+    let run_rows = sqlx::query(
+        r#"
+        SELECT * FROM runs ORDER BY train_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(
+        for (train_id, db_params) in &run_rows
+            .into_iter()
+            .group_by(|row| row.get::<String, _>("train_id"))
+        {
+            let mut created_at: Option<chrono::NaiveDateTime> = None;
+
+            let params: HashMap<_, _> = db_params
+                .map(|row| {
+                    if created_at.is_none() {
+                        created_at = row.get("created_at");
+                    }
+                    (
+                        row.get::<String, _>("variable"),
+                        row.get::<String, _>("value_text"),
+                    )
+                })
+                .collect();
+            if !runs.contains_key(&train_id) {
+                runs.insert(
+                    train_id,
+                    Run {
+                        params,
+                        metrics: HashMap::new(),
+                        artifacts: HashMap::new(),
+                        created_at: created_at.expect("No datetime for run parameters"),
+                    },
+                );
+            }
+        },
+    )
 }
 
 fn parse_metric_rows(
@@ -1431,9 +1491,15 @@ fn main() -> Result<(), sqlx::Error> {
         loop {
             // Fetch data from database
             println!("Getting state...");
-            get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
-                .await
-                .expect("Get state:");
+            // get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
+            //     .await
+            //     .expect("Get state:");
+            get_state_parameters(&pool, &mut runs).await;
+            tx.send(runs.clone()).expect("Failed to send data");
+            get_state_artifacts(&train_ids, &pool, &mut runs).await;
+            tx.send(runs.clone()).expect("Failed to send data");
+            get_state_metrics(&train_ids, &mut last_timestamp, &pool, &mut runs).await;
+
             // println!("{:?}", runs);
             println!("Done.");
             // Send data to UI thread
@@ -1455,7 +1521,7 @@ fn main() -> Result<(), sqlx::Error> {
     // });
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([350.0, 200.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 800.0]),
         ..Default::default()
     };
     let _ = eframe::run_native(
@@ -1482,6 +1548,7 @@ fn main() -> Result<(), sqlx::Error> {
                     time_filter: None,
                     time_filter_idx: 0,
                     x_axis: XAxis::Batch,
+                    param_name_filter: "".to_string(),
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
