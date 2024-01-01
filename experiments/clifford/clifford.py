@@ -43,7 +43,7 @@ from lib.serialization import (
 
 
 class CliffordLinear(torch.nn.Module):
-    def __init__(self, dim_in, dim_out):
+    def __init__(self, dim_in, dim_out, act_dim):
         super().__init__()
         self.a = torch.nn.Parameter(
             torch.zeros(dim_out, dim_in, 8, dtype=torch.float32)
@@ -53,7 +53,7 @@ class CliffordLinear(torch.nn.Module):
                 np.load(Path(__file__).parent / "./clifford_110_structure.npz"),
             ).float()
         )
-        self.act_linear = torch.nn.Linear(8, 8, bias=False)
+        self.act_linear = torch.nn.Linear(8, act_dim, bias=False)
         self.f.requires_grad = False
         torch.nn.init.normal_(self.a, 0.0, math.sqrt(1.0 / (8 * dim_in)))
 
@@ -71,6 +71,7 @@ class CliffordLinear(torch.nn.Module):
 @dataclass
 class CliffordModelConfig:
     widths: List[int]
+    act_dim: int
 
     def serialize_human(self):
         return serialize_human(self.__dict__)
@@ -82,12 +83,19 @@ class CliffordModel(torch.nn.Module):
         self.config = config
         assert data_spec.input_shape[-1] == 2
         assert data_spec.output_shape[-1] == 2
-        self.cl_in = CliffordLinear(data_spec.input_shape[0], config.widths[0])
+        self.cl_in = CliffordLinear(
+            data_spec.input_shape[0], config.widths[0], config.act_dim
+        )
         in_out = list(zip(config.widths[0:], config.widths[1:]))
         self.cmlps = torch.nn.ModuleList(
-            [CliffordLinear(in_dim, out_dim) for in_dim, out_dim in in_out]
+            [
+                CliffordLinear(in_dim, out_dim, config.act_dim)
+                for in_dim, out_dim in in_out
+            ]
         )
-        self.cl_out = CliffordLinear(config.widths[-1], data_spec.output_shape[0])
+        self.cl_out = CliffordLinear(
+            config.widths[-1], data_spec.output_shape[0], config.act_dim
+        )
         clifford_blades = json.loads(
             open(Path(__file__).parent / "clifford_110_blades.json").read()
         )
@@ -234,7 +242,9 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
 
     train_config = TrainConfig(
         # model_config=MLPConfig(widths=[512, 512, 512]),
-        model_config=CliffordModelConfig(widths=[clifford_width] * clifford_depth),
+        model_config=CliffordModelConfig(
+            widths=[clifford_width] * clifford_depth, act_dim=1
+        ),
         train_data_config=DataCableConfig(npoints=100),
         val_data_config=DataCableConfig(npoints=100),
         loss=reg_loss,
@@ -283,10 +293,15 @@ if __name__ == "__main__":
     configs = generic_ablation(
         create_config,
         dict(
-            clifford_depth=[1, 2, 3],
-            clifford_width=[32, 64, 128, 256, 512],
+            clifford_depth=[1, 2],
+            clifford_width=[256, 128, 64],
             ensemble_id=[0],
         ),
+        # dict(
+        #     clifford_depth=[1, 2, 3],
+        #     clifford_width=[32, 64, 128, 256, 512],
+        #     ensemble_id=[0],
+        # ),
     )
     distributed_train(configs)
     # ensemble_config = create_ensemble_config(create_config, 1)
