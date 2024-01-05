@@ -173,6 +173,26 @@ def deserialize_model(config: DeserializeConfig):
     )
 
 
+def get_serialization_epoch(config: DeserializeConfig):
+    train_config = config.train_run.train_config
+    checkpoint_path = get_checkpoint_path(train_config)
+    if (
+        not (checkpoint_path / "model").is_file()
+        or not (checkpoint_path / "epoch").is_file()
+    ):
+        return None
+    else:
+        print(f"{checkpoint_path}")
+
+    try:
+        model_epoch = torch.load(checkpoint_path / "epoch")
+    except Exception as e:
+        print(f"Failed to get_serialization_epoch: {e}")
+        return None
+
+    return model_epoch
+
+
 def deserialize(config: DeserializeConfig):
     train_config = config.train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config)

@@ -14,7 +14,7 @@ from lib.paths import get_checkpoint_path, get_lock_path
 
 from lib.train_distributed import fetch_requested_train_run, report_done
 from lib.serialization import (
-    deserialize_model,
+    get_serialization_epoch,
     DeserializeConfig,
 )
 
@@ -66,12 +66,14 @@ def distributed_train(requested_configs: List[TrainRun] = None):
         if distributed_train_run is not None:
             try:
                 last_aquired_training = time.time()
-                deserialized_model = deserialize_model(
-                    DeserializeConfig(distributed_train_run.train_run, device_id)
-                )
                 if (
-                    deserialized_model is None
-                    or deserialized_model.epoch < distributed_train_run.train_run.epochs
+                    get_serialization_epoch(
+                        DeserializeConfig(
+                            train_run=distributed_train_run.train_run,
+                            device_id=device_id,
+                        )
+                    )
+                    < distributed_train_run.train_run.epochs
                 ):
                     do_train_run(distributed_train_run, device_id)
                 else:
