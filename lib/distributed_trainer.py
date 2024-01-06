@@ -66,14 +66,15 @@ def distributed_train(requested_configs: List[TrainRun] = None):
         if distributed_train_run is not None:
             try:
                 last_aquired_training = time.time()
-                if (
-                    get_serialization_epoch(
-                        DeserializeConfig(
-                            train_run=distributed_train_run.train_run,
-                            device_id=device_id,
-                        )
+                serialized_epoch = get_serialization_epoch(
+                    DeserializeConfig(
+                        train_run=distributed_train_run.train_run,
+                        device_id=device_id,
                     )
-                    < distributed_train_run.train_run.epochs
+                )
+                if (
+                    serialized_epoch is None
+                    or serialized_epoch < distributed_train_run.train_run.epochs
                 ):
                     do_train_run(distributed_train_run, device_id)
                 else:
