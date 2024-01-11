@@ -39,6 +39,7 @@ def create_config(
     lora_l2=0.1,
     regular_l2=0,
     target_modules=["q_proj", "v_proj"],
+    epochs=4,
 ):
     train_config = TrainConfig(
         model_config=LLaMA2GenerativeConfig(
@@ -91,11 +92,12 @@ def create_config(
         data_visualizer=None,
     )
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=True, num_workers=2, num_gpus=2),
+        compute_config=ComputeConfig(distributed=False, num_workers=2, num_gpus=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=2,
+        epochs=epochs,
         save_nth_epoch=1,
+        keep_epoch_checkpoints=True,
         validate_nth_epoch=1,
     )
     return train_run

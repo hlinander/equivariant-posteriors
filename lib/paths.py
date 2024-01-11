@@ -1,6 +1,7 @@
 from pathlib import Path
 from lib.stable_hash import stable_hash
 from lib.compute_env import env
+from lib.train_dataclasses import TrainConfig
 
 
 def get_or_create_checkpoint_path(train_config) -> Path:
@@ -23,3 +24,8 @@ def get_checkpoint_path(train_config) -> Path:
     checkpoint_dir.mkdir(exist_ok=True, parents=True)
     checkpoint = checkpoint_dir / f"checkpoint_{config_hash}"
     return checkpoint
+
+
+def get_model_epoch_checkpoint_path(train_config: TrainConfig, epoch: int):
+    checkpoint_path = get_checkpoint_path(train_config)
+    return checkpoint_path / f"model_epoch_{epoch:04d}"

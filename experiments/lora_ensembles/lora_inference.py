@@ -5,6 +5,7 @@ import torch
 
 from lib.serialization import DeserializeConfig, get_checkpoint_path, deserialize_model
 from lib.train_dataclasses import TrainRun
+from lib.paths import get_model_epoch_checkpoint_path
 
 
 @dataclass
@@ -30,6 +31,22 @@ def deserialize_model_state_dict(config: DeserializeConfig):
         )
 
         model_epoch = torch.load(checkpoint_path / "epoch")
+
+        if model_epoch != config.train_run.epochs:
+            model_epoch_checkpoint = get_model_epoch_checkpoint_path(
+                config.train_run.train_config, config.train_run.epochs
+            )
+            if not (model_epoch_checkpoint).is_file():
+                raise Exception(
+                    f"The requested epoch ({config.train_run.epochs}) is not available in {model_epoch_checkpoint}."
+                )
+            model_state_dict = torch.load(
+                model_epoch_checkpoint, map_location=torch.device(config.device_id)
+            )
+            print(
+                f"Loaded earlier epoch {config.train_run.epochs}, the latest epoch is {model_epoch}."
+            )
+
     except Exception as e:
         print(f"Failed to deserialize_model: {e}")
         return None

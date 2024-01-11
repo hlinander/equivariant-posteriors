@@ -8,7 +8,11 @@ from lib.train_dataclasses import TrainRun
 import lib.data_factory as data_factory
 from lib.metric import Metric
 from lib.timing_metric import Timing
-from lib.paths import get_checkpoint_path, get_or_create_checkpoint_path
+from lib.paths import (
+    get_checkpoint_path,
+    get_or_create_checkpoint_path,
+    get_model_epoch_checkpoint_path,
+)
 import lib.model_factory as model_factory
 from lib.data_utils import get_sampler
 from lib.ddp import get_rank
@@ -81,6 +85,16 @@ def serialize(config: SerializeConfig):
     )
 
     checkpoint_path = get_or_create_checkpoint_path(train_config)
+
+    if config.train_run.keep_epoch_checkpoints:
+        model_epoch_checkpoint = get_model_epoch_checkpoint_path(
+            config.train_run.train_config, train_epoch_state.epoch
+        )
+        torch.save(model, f"{model_epoch_checkpoint}_tmp")
+        shutil.move(
+            checkpoint_path / f"{model_epoch_checkpoint}_tmp",
+            checkpoint_path / model_epoch_checkpoint,
+        )
     for key, value in file_data.__dict__.items():
         torch.save(value, checkpoint_path / f"{key}_tmp")
         shutil.move(checkpoint_path / f"{key}_tmp", checkpoint_path / key)

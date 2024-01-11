@@ -20,3 +20,9 @@ slurm_tmp/
 locks/
 experiments/lora_ensembles/hf_env.sh
 distributed_training_requests/*
+LLM
+artifacts
+rust/vis/target
+rust/vis/flamegraph.svg
+rust/vis/perf.data
+rust/vis/perf.data.old

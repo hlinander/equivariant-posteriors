@@ -85,7 +85,7 @@ def print_sample_comparison(input_ids, logits, labels, tokenizer):
 
 
 def create_inference_config(ensemble_id):
-    config = create_config(ensemble_id)
+    config = create_config(ensemble_id, epochs=1)
     config.compute_config.distributed = False
     config.compute_config.num_gpus = 1
     return config
