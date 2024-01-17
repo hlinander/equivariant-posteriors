@@ -227,6 +227,7 @@
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
       devinputs = with pkgs; [
+      gitui
       lazygit
       linuxPackages_latest.perf
         glfw3

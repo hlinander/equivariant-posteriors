@@ -20,3 +20,14 @@ pub fn load_npy(path: &Path) -> std::io::Result<ndarray::ArrayD<f32>> {
     let nda = to_array_d(data.clone(), shape.clone(), order);
     Ok((nda))
 }
+
+pub fn load_npy_bytes(bytes: &Vec<u8>) -> std::io::Result<ndarray::ArrayD<f32>> {
+    // let bytes = std::fs::read(path)?;
+    let reader = npyz::NpyFile::new(&bytes[..])?;
+    let shape = reader.shape().to_vec();
+    let order = reader.order();
+    let data = reader.into_vec::<f32>()?;
+
+    let nda = to_array_d(data.clone(), shape.clone(), order);
+    Ok((nda))
+}

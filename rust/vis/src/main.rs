@@ -8,6 +8,8 @@ use itertools::Itertools;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::Cow;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 // use sqlx::types::JsonValue
 use std::collections::HashMap;
@@ -19,7 +21,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 pub mod np;
 use colorous::CIVIDIS;
 use ndarray_stats::QuantileExt;
-use np::load_npy;
+use np::load_npy_bytes;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -93,9 +95,94 @@ struct NPYArtifactView {
 }
 
 enum NPYArray {
-    Loading(JoinHandle<std::io::Result<ndarray::ArrayD<f32>>>),
+    Loading(BinaryArtifact),
     Loaded(ndarray::ArrayD<f32>),
     Error(String),
+}
+
+enum BinaryArtifact {
+    Loading(JoinHandle<Result<Vec<u8>, String>>),
+    Loaded(Vec<u8>),
+    Error(String),
+}
+
+fn download_artifact(
+    train_id: String,
+    name: String,
+    path: String,
+    tx_path_mutex: Arc<Mutex<Sender<(String, String, String)>>>,
+    rx_artifact_mutex: Arc<Mutex<Receiver<Result<Vec<u8>, String>>>>,
+) -> BinaryArtifact {
+    BinaryArtifact::Loading(tokio::spawn(async move {
+        let uri = if !path.starts_with("/") {
+            println!("path: {}", path);
+            let end = path.split("results/").last().unwrap();
+            println!("end of split: {}", end);
+            format!(
+                "/mimer/NOBACKUP/groups/naiss2023-6-319/eqp/artifacts/results/{}",
+                end
+            )
+        } else {
+            path.clone()
+        };
+        let tx_db_artifact_path = tx_path_mutex.lock_owned().await;
+        // println!(
+        // "[db] Requesting download {} {}",
+        // train_id.clone(),
+        // name.clone()
+        // );
+        tx_db_artifact_path.send((train_id.clone(), name.clone(), uri));
+        // println!(
+        // "[db] Waiting for download {} {}",
+        // train_id.clone(),
+        // name.clone()
+        // );
+        let rx_db_artifact = rx_artifact_mutex.lock_owned().await;
+        let rx_res = rx_db_artifact.recv();
+        // println!(
+        // "[db] Download complete {} {}",
+        // train_id.clone(),
+        // name.clone()
+        // );
+        match rx_res {
+            Ok(artifact_binary_res) => match artifact_binary_res {
+                Ok(artifact_binary) => {
+                    return Ok(artifact_binary);
+                }
+                Err(artifact_binary_err) => {
+                    return Err(artifact_binary_err.to_string());
+                }
+            },
+            Err(err) => {
+                return Err(err.to_string());
+            }
+        }
+    }))
+}
+
+fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
+    let mut new_binary_artifact: Option<BinaryArtifact> = None;
+    match binary_artifact {
+        BinaryArtifact::Loading(join_handle) => {
+            // println!("[ARTIFACTS] Loading ....");
+            if join_handle.is_finished() {
+                let data_res = tokio::runtime::Handle::current()
+                    .block_on(join_handle)
+                    .unwrap();
+                match data_res {
+                    Ok(data) => {
+                        new_binary_artifact = Some(BinaryArtifact::Loaded(data));
+                    }
+                    Err(err) => new_binary_artifact = Some(BinaryArtifact::Error(err.to_string())),
+                }
+            }
+        }
+        BinaryArtifact::Loaded(_) => {}
+        BinaryArtifact::Error(_) => {}
+    }
+    if let Some(new_binary_artifact) = new_binary_artifact {
+        *binary_artifact = new_binary_artifact;
+    }
 }
 
 enum ArtifactHandler {
@@ -105,11 +192,20 @@ enum ArtifactHandler {
         views: HashMap<ArtifactId, NPYArtifactView>,
     },
     ImageArtifact {
-        images: HashMap<ArtifactId, String>,
+        // images: HashMap<ArtifactId, String>,
+        binaries: HashMap<ArtifactId, BinaryArtifact>,
     },
 }
 
-fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &str, args: &Args) {
+fn add_artifact(
+    handler: &mut ArtifactHandler,
+    run_id: &str,
+    name: &str,
+    path: &str,
+    args: &Args,
+    tx_path_mutex: &mut Arc<Mutex<Sender<(String, String, String)>>>,
+    rx_artifact_mutex: &Arc<Mutex<Receiver<Result<Vec<u8>, String>>>>,
+) {
     let artifact_id = ArtifactId {
         train_id: run_id.to_string(),
         name: name.to_string(),
@@ -119,59 +215,63 @@ fn add_artifact(handler: &mut ArtifactHandler, run_id: &str, name: &str, path: &
             arrays,
             textures: _,
             views: _,
-        } => {
-            // if arrays.contains_key(run_id) {
-            // let args = Args::parse();
-            let base_path = std::path::Path::new(&args.artifacts);
-            let full_path = base_path.join(std::path::Path::new(path));
-            let mpath = full_path.clone();
-            // if !arrays.contains_key(&artifact_id) {
-            match arrays.get(&artifact_id) {
-                None => {
-                    let shoop = tokio::spawn(async move {
-                        let path = full_path.as_path();
-                        load_npy(path)
-                    });
-                    arrays.insert(artifact_id, NPYArray::Loading(shoop));
-                }
-                Some(NPYArray::Loading(array_join_handle)) => {
-                    if array_join_handle.is_finished() {
-                        let Some(NPYArray::Loading(array_join_handle)) =
-                            arrays.remove(&artifact_id)
-                        else {
-                            panic!();
-                        };
-                        let npyarray = tokio::runtime::Handle::current()
-                            .block_on(array_join_handle)
-                            .unwrap();
-                        match npyarray {
-                            Ok(new_array) => {
-                                // let array = arrays.get_mut(run_id).unwrap();
-                                // *array = new_array;
-                                arrays.insert(artifact_id, NPYArray::Loaded(new_array));
+        } => match arrays.get_mut(&artifact_id) {
+            None => {
+                arrays.insert(
+                    artifact_id.clone(),
+                    NPYArray::Loading(download_artifact(
+                        artifact_id.train_id.clone(),
+                        artifact_id.name.clone(),
+                        path.to_string(),
+                        tx_path_mutex.clone(),
+                        rx_artifact_mutex.clone(),
+                    )),
+                );
+            }
+            Some(npyarray) => {
+                let mut new_npyarray = None;
+                match npyarray {
+                    NPYArray::Loading(binary_artifact) => {
+                        poll_artifact_download(binary_artifact);
+                        match binary_artifact {
+                            BinaryArtifact::Loading(_) => {}
+                            BinaryArtifact::Loaded(binary_data) => {
+                                match load_npy_bytes(binary_data) {
+                                    Ok(nparray) => {
+                                        new_npyarray = Some(NPYArray::Loaded(nparray));
+                                    }
+                                    Err(err) => {
+                                        new_npyarray = Some(NPYArray::Error(err.to_string()));
+                                    }
+                                }
                             }
-                            Err(err) => {
-                                arrays.insert(
-                                    artifact_id,
-                                    NPYArray::Error(
-                                        format!("{} [{}]", err, mpath.display()).to_string(),
-                                    ),
-                                );
+                            BinaryArtifact::Error(err) => {
+                                new_npyarray = Some(NPYArray::Error(err.to_string()));
                             }
                         }
                     }
+                    _ => {}
                 }
-                Some(NPYArray::Error(_err)) => {}
-                Some(NPYArray::Loaded(_array)) => {}
+                if let Some(new_npyarray) = new_npyarray {
+                    *npyarray = new_npyarray;
+                }
             }
-        }
-        ArtifactHandler::ImageArtifact { images } => match images.get(&artifact_id) {
-            Some(_) => {}
+        },
+        ArtifactHandler::ImageArtifact { binaries } => match binaries.get_mut(&artifact_id) {
+            Some(binary_artifact) => {
+                poll_artifact_download(binary_artifact);
+            }
             None => {
-                let base_path = std::path::Path::new(&args.artifacts);
-                let full_path = base_path.join(std::path::Path::new(path));
-
-                images.insert(artifact_id, full_path.to_string_lossy().to_string());
+                binaries.insert(
+                    artifact_id.clone(),
+                    download_artifact(
+                        artifact_id.train_id.clone(),
+                        artifact_id.name.clone(),
+                        path.to_string(),
+                        tx_path_mutex.clone(),
+                        rx_artifact_mutex.clone(),
+                    ),
+                );
             }
         },
     }
@@ -228,6 +328,8 @@ struct GuiRuns {
     db_reciever: Receiver<HashMap<String, Run>>,
     recomputed_reciever: Receiver<HashMap<String, Run>>,
     dirty_sender: Sender<(GuiParams, HashMap<String, Run>)>,
+    tx_db_artifact_path: Arc<Mutex<Sender<(String, String, String)>>>,
+    rx_db_artifact: Arc<Mutex<Receiver<Result<Vec<u8>, String>>>>,
     initialized: bool,
     data_status: DataStatus,
     gui_params: GuiParams,
@@ -597,9 +699,10 @@ fn show_artifacts(
                 });
             }
         }
-        ArtifactHandler::ImageArtifact { images } => {
+        ArtifactHandler::ImageArtifact { binaries } => {
             let max_size = egui::Vec2::new(ui.available_width() / 2.1, ui.available_height() / 2.1);
-            let available_artifact_names: Vec<&String> = images.keys().map(|id| &id.name).collect();
+            let available_artifact_names: Vec<&String> =
+                binaries.keys().map(|id| &id.name).collect();
             ui.horizontal_wrapped(|ui| {
                 // ui.set_max_width(ui.available_width());
                 // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
@@ -610,14 +713,14 @@ fn show_artifacts(
                     .map(|name| {
                         (
                             name,
-                            images.iter().filter(|(key, _v)| {
+                            binaries.iter().filter(|(key, _v)| {
                                 key.name == *name && filtered_runs.contains(&key.train_id)
                             }),
                         )
                     })
                 {
-                    for (artifact_id, uri) in filtered_arrays {
-                        ui.push_id(uri, |ui| {
+                    for (artifact_id, binary_artifact) in filtered_arrays {
+                        ui.push_id(artifact_id, |ui| {
                             ui.vertical(|ui| {
                                 let label = label_from_active_inspect_params(
                                     runs.get(&artifact_id.train_id).unwrap(),
@@ -631,10 +734,27 @@ fn show_artifacts(
                                     format!("{}: {}", artifact_id.name, label),
                                 );
                                 // ui.allocate_space(max_size);
-                                ui.add(
-                                    egui::Image::from_uri(format!("file://{}", uri))
-                                        .fit_to_exact_size(max_size),
-                                );
+                                if let Some(binary) = binaries.get(&artifact_id) {
+                                    match binary {
+                                        BinaryArtifact::Loaded(binary_data) => {
+                                            ui.add(
+                                                // egui::Image::from_uri(format!("file://{}", uri))
+                                                //     .fit_to_exact_size(max_size),
+                                                egui::Image::from_bytes(
+                                                    "bytes://test",
+                                                    binary_data.clone(),
+                                                )
+                                                .fit_to_exact_size(max_size),
+                                            );
+                                        }
+                                        BinaryArtifact::Loading(_) => {
+                                            ui.label("Loading...");
+                                        }
+                                        BinaryArtifact::Error(err) => {
+                                            ui.label(err);
+                                        }
+                                    }
+                                }
                             });
                         });
                     }
@@ -1194,10 +1314,21 @@ impl GuiRuns {
                     .iter()
                     .map(|run_id| (run_id, self.runs.runs.get(run_id).unwrap()))
                 {
-                    for (artifact_name, path) in run.artifacts.iter() {
+                    for (artifact_name, path) in run.artifacts.iter().filter(|&(art_name, _)| {
+                        self.gui_params.artifact_filters.contains(art_name)
+                    }) {
+                        // println!("[artifacts] filtered {} {}", run_id, artifact_name);
                         if artifact_type == get_artifact_type(path) {
                             // println!("{}", artifact_type);
-                            add_artifact(handler, run_id, artifact_name, path, &self.args);
+                            add_artifact(
+                                handler,
+                                run_id,
+                                artifact_name,
+                                path,
+                                &self.args,
+                                &mut self.tx_db_artifact_path,
+                                &self.rx_db_artifact,
+                            );
                         }
                     }
                 }
@@ -1355,6 +1486,7 @@ async fn get_state_parameters(
     pool: &sqlx::Pool<sqlx::Postgres>,
     runs: &mut HashMap<String, Run>,
 ) -> Result<(), sqlx::Error> {
+    // println!("[db] in get_state_parameters");
     let run_rows = sqlx::query(
         r#"
         SELECT * FROM runs ORDER BY train_id
@@ -1362,6 +1494,7 @@ async fn get_state_parameters(
     )
     .fetch_all(pool)
     .await?;
+    // println!("[db] parameters query done");
     Ok(
         for (train_id, db_params) in &run_rows
             .into_iter()
@@ -1464,6 +1597,8 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_gui_dirty, rx_gui_dirty) = mpsc::channel();
     let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::channel();
     let (tx_db_filters, rx_db_filters) = mpsc::channel();
+    let (tx_db_artifact, rx_db_artifact) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<(String, String, String)>();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rt_handle = rt.handle().clone();
     let _guard = rt.enter();
@@ -1476,37 +1611,33 @@ fn main() -> Result<(), sqlx::Error> {
                 .expect("Failed to send recomputed runs.");
         }
     });
-    // Connect to the database
-    // std::thread::spawn(move || {
     rt_handle.spawn(async move {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        println!("[db] connecting...");
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)
             .await
             .expect("Can't connect to database");
+        println!("[db] connected!");
         let mut train_ids = Vec::new();
         let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
         let mut runs: HashMap<String, Run> = Default::default();
         loop {
-            // Fetch data from database
-            println!("Getting state...");
-            // get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp)
-            //     .await
-            //     .expect("Get state:");
-            get_state_parameters(&pool, &mut runs).await;
-            tx.send(runs.clone()).expect("Failed to send data");
-            get_state_artifacts(&train_ids, &pool, &mut runs).await;
-            tx.send(runs.clone()).expect("Failed to send data");
-            get_state_metrics(&train_ids, &mut last_timestamp, &pool, &mut runs).await;
+            if runs.is_empty() {
+                get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp).await;
+            } else {
+                // println!("[db] parameters...");
+                get_state_parameters(&pool, &mut runs).await;
+                tx.send(runs.clone()).expect("Failed to send data");
+                // println!("[db] artifacts...");
+                get_state_artifacts(&train_ids, &pool, &mut runs).await;
+                tx.send(runs.clone()).expect("Failed to send data");
+                // println!("[db] metrics...");
+                get_state_metrics(&train_ids, &mut last_timestamp, &pool, &mut runs).await;
+            }
 
-            // println!("{:?}", runs);
-            println!("Done.");
-            // Send data to UI thread
-            // if let Ok(runs) = runs e
             tx.send(runs.clone()).expect("Failed to send data");
-            // }
-            // Wait some time before fetching again
             for _ in 0..100 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 if let Ok(new_train_ids) = rx_db_filters.try_recv() {
@@ -1516,6 +1647,69 @@ fn main() -> Result<(), sqlx::Error> {
                     break;
                 }
             }
+        }
+    });
+    rt_handle.spawn(async move {
+        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&database_url)
+            .await
+            .expect("Can't connect to database");
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if let Ok((train_id, name, path)) = rx_db_artifact_path.try_recv() {
+                let blobs_rows = sqlx::query(
+                    r#"
+                SELECT pg_read_binary_file($1)
+                "#,
+                )
+                .bind(path)
+                .fetch_one(&pool)
+                .await;
+                if let Ok(row) = blobs_rows {
+                    tx_db_artifact.send(Ok(row.get::<Vec<u8>, _>("pg_read_binary_file")));
+                } else if let Err(error) = blobs_rows {
+                    tx_db_artifact.send(Err(error.to_string()));
+                }
+                // let blobs_rows = sqlx::query(
+                //     r#"
+                // SELECT * FROM blobs WHERE train_id = $1 AND name = $2 ORDER BY train_id
+                // "#,
+                // )
+                // .bind::<String>(train_id.clone())
+                // .bind::<String>(name.clone())
+                // .fetch_one(&pool)
+                // .await;
+                // if let Ok(row) = blobs_rows {
+                //     tx_db_artifact.send(row.get::<Vec<u8>, _>("data"));
+                // } else {
+                //     let insert_blob_query = sqlx::query(
+                //     r#"
+                //     INSERT INTO blobs (train_id, name, path, data) VALUES ($1, $2, $3, pg_read_binary_file($4))
+                // "#,
+                // ).bind(train_id)
+                // .bind(name)
+                // .bind::<String>(path.clone())
+                // .bind(path)
+                // .execute(&pool).await;
+                // let blobs_rows = sqlx::query(
+                //     r#"
+                // SELECT * FROM blobs WHERE train_id = $1 AND name = $2 ORDER BY train_id
+                // "#,
+                // )
+                // .bind::<String>(train_id.clone())
+                // .bind::<String>(name.clone())
+                // .fetch_one(&pool)
+                // .await;
+
+                // }
+
+                // for (train_id, rows) in &artifact_rows {}
+
+                // tx_db_artifact.send().expect("Failed to send data");
+            }
+            // get_state_parameters(&pool, &mut runs).await;
         }
     });
     // });
@@ -1563,11 +1757,14 @@ fn main() -> Result<(), sqlx::Error> {
                     (
                         "png".to_string(),
                         ArtifactHandler::ImageArtifact {
-                            images: HashMap::new(),
+                            // images: HashMap::new(),
+                            binaries: HashMap::new(),
                         },
                     ),
                 ]),
                 args,
+                tx_db_artifact_path: Arc::new(Mutex::new(tx_db_artifact_path)),
+                rx_db_artifact: Arc::new(Mutex::new(rx_db_artifact)),
             })
         }),
     );
