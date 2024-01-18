@@ -758,41 +758,53 @@ fn show_artifacts(
                     })
                 {
                     for (artifact_id, binary_artifact) in filtered_arrays {
-                        ui.push_id(artifact_id, |ui| {
-                            ui.vertical(|ui| {
-                                let label = label_from_active_inspect_params(
-                                    runs.get(&artifact_id.train_id).unwrap(),
-                                    &gui_params,
-                                );
-                                ui.colored_label(
-                                    run_ensemble_color
-                                        .get(&artifact_id.train_id)
-                                        .unwrap()
-                                        .clone(),
-                                    format!("{}: {}", artifact_id.name, label),
-                                );
-                                // ui.allocate_space(max_size);
-                                if let Some(binary) = binaries.get(&artifact_id) {
-                                    match binary {
+                        ui.allocate_ui(max_size, |ui| {
+                            ui.push_id(artifact_id, |ui| {
+                                ui.vertical(|ui| {
+                                    let label = label_from_active_inspect_params(
+                                        runs.get(&artifact_id.train_id).unwrap(),
+                                        &gui_params,
+                                    );
+                                    ui.colored_label(
+                                        run_ensemble_color
+                                            .get(&artifact_id.train_id)
+                                            .unwrap()
+                                            .clone(),
+                                        format!("{}: {}", artifact_id.name, label),
+                                    );
+                                    // ui.allocate_space(max_size);
+                                    // if let Some(binary) = binaries.get(&artifact_id) {
+                                    match binary_artifact {
                                         BinaryArtifact::Loaded(binary_data) => {
                                             ui.add(
-                                                // egui::Image::from_uri(format!("file://{}", uri))
-                                                //     .fit_to_exact_size(max_size),
                                                 egui::Image::from_bytes(
-                                                    "bytes://test",
+                                                    format!(
+                                                        "bytes://{}:{}",
+                                                        artifact_id.train_id, artifact_id.name
+                                                    ),
                                                     binary_data.clone(),
                                                 )
                                                 .fit_to_exact_size(max_size),
                                             );
                                         }
-                                        BinaryArtifact::Loading(_) => {
-                                            ui.label("Loading...");
+                                        BinaryArtifact::Loading((_, status)) => {
+                                            if status.status.size > 0 {
+                                                ui.label(format!(
+                                                    "{:.1}/{:.1}",
+                                                    status.status.downloaded as f32 / 1e6,
+                                                    status.status.size as f32 / 1e6
+                                                ));
+                                                ui.add(egui::ProgressBar::new(
+                                                    status.status.downloaded as f32
+                                                        / status.status.size as f32,
+                                                ));
+                                            }
                                         }
                                         BinaryArtifact::Error(err) => {
                                             ui.label(err);
                                         }
                                     }
-                                }
+                                });
                             });
                         });
                     }
@@ -1701,7 +1713,7 @@ fn main() -> Result<(), sqlx::Error> {
             .await
             .expect("Can't connect to database");
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             if let Ok((train_id, name, path)) = rx_db_artifact_path.try_recv() {
                 let size_res = sqlx::query(
                     r#"
