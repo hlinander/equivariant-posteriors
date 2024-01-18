@@ -1715,10 +1715,11 @@ fn main() -> Result<(), sqlx::Error> {
                     let filesize = row.get::<i64, _>("size");
                     println!("[f] File {} size {}", &path, &filesize);
                     let mut offset = 0;
-                    let chunk_size = 1_000_000;
+                    let mut chunk_size = 1_000_000;
                     let mut buffer: Vec<u8> = vec![0; filesize as usize];
                     while offset < filesize {
                         let length = chunk_size.min(filesize - offset);
+                        let query_time = std::time::Instant::now();
                         let blobs_rows = sqlx::query(
                             r#"
                             SELECT pg_read_binary_file($1, $2, $3) 
@@ -1729,6 +1730,12 @@ fn main() -> Result<(), sqlx::Error> {
                         .bind(&length)
                         .fetch_one(&pool)
                         .await;
+                        let elapsed_seconds = query_time.elapsed().as_secs_f32();
+                        if elapsed_seconds < 0.5 {
+                            chunk_size *= 2;
+                        } else if elapsed_seconds > 2.0 {
+                            chunk_size /= 2;
+                        }
                         if let Ok(row) = blobs_rows {
                             let dst =
                                 &mut buffer[offset as usize..offset as usize + length as usize];
@@ -1748,44 +1755,7 @@ fn main() -> Result<(), sqlx::Error> {
                     }
                     tx_db_artifact.send(ArtifactTransfer::Done(buffer));
                 }
-                // let blobs_rows = sqlx::query(
-                //     r#"
-                // SELECT * FROM blobs WHERE train_id = $1 AND name = $2 ORDER BY train_id
-                // "#,
-                // )
-                // .bind::<String>(train_id.clone())
-                // .bind::<String>(name.clone())
-                // .fetch_one(&pool)
-                // .await;
-                // if let Ok(row) = blobs_rows {
-                //     tx_db_artifact.send(row.get::<Vec<u8>, _>("data"));
-                // } else {
-                //     let insert_blob_query = sqlx::query(
-                //     r#"
-                //     INSERT INTO blobs (train_id, name, path, data) VALUES ($1, $2, $3, pg_read_binary_file($4))
-                // "#,
-                // ).bind(train_id)
-                // .bind(name)
-                // .bind::<String>(path.clone())
-                // .bind(path)
-                // .execute(&pool).await;
-                // let blobs_rows = sqlx::query(
-                //     r#"
-                // SELECT * FROM blobs WHERE train_id = $1 AND name = $2 ORDER BY train_id
-                // "#,
-                // )
-                // .bind::<String>(train_id.clone())
-                // .bind::<String>(name.clone())
-                // .fetch_one(&pool)
-                // .await;
-
-                // }
-
-                // for (train_id, rows) in &artifact_rows {}
-
-                // tx_db_artifact.send().expect("Failed to send data");
             }
-            // get_state_parameters(&pool, &mut runs).await;
         }
     });
     // });
