@@ -15,21 +15,25 @@ from lib.metric import create_metric
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
 from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
-from experiments.weather.models.swin_hp_pangu import SwinHPPangu
+
+# from experiments.weather.models.swin_hp_pangu import SwinHPPangu
 
 # from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
-from lib.ensemble import create_ensemble
+from lib.ensemble import request_ensemble
 from lib.ensemble import symlink_checkpoint_files
 from lib.files import prepare_results
 
 from lib.data_factory import get_factory as get_dataset_factory
-from lib.model_factory import get_factory as get_model_factory
+
+# from lib.model_factory import get_factory as get_model_factory
 
 from lib.render_psql import add_artifact
 
-from experiments.weather.data import DataHP
+from lib.distributed_trainer import distributed_train
+
+# from experiments.weather.data import DataHP
 from experiments.weather.data import DataHPConfig
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
@@ -87,14 +91,14 @@ def create_config(ensemble_id):
         ensemble_id=ensemble_id,
         # gradient_clipping=0.3,
         # _version=57,
-        _version=1,
+        _version=3,
         # _version=55,
     )
     train_eval = TrainEval(
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False, num_workers=5),
+        compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
         train_config=train_config,
         train_eval=train_eval,
         epochs=150,
@@ -105,11 +109,11 @@ def create_config(ensemble_id):
     return train_run
 
 
-def register():
-    data_factory = get_dataset_factory()
-    data_factory.register(DataHPConfig, DataHP)
-    model_factory = get_model_factory()
-    model_factory.register(SwinHPPanguConfig, SwinHPPangu)
+# def register():
+# data_factory = get_dataset_factory()
+# data_factory.register(DataHPConfig, DataHP)
+# model_factory = get_model_factory()
+# model_factory.register(SwinHPPanguConfig, SwinHPPangu)
 
 
 if __name__ == "__main__":
@@ -126,10 +130,13 @@ if __name__ == "__main__":
 
     torch._C._cuda_attach_out_of_memory_observer(oom_observer)
 
-    register()
+    # register()
 
     ensemble_config = create_ensemble_config(create_config, 1)
-    ensemble = create_ensemble(ensemble_config, device_id)
+    request_ensemble(ensemble_config)
+    distributed_train(ensemble_config.members)
+    exit(0)
+    # ensemble = create_ensemble(ensemble_config, device_id)
 
     data_factory = get_dataset_factory()
     ds = data_factory.create(DataHPConfig(nside=NSIDE))

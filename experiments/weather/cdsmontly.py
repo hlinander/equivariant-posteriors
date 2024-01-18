@@ -134,7 +134,7 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
     return ERA5Sample(surface=surface_ds, upper=upper_ds)
 
 
-def get_surface_variables(target, year="2018", month="09", time="00:00"):
+def get_surface_variables(target, year="2018", month="09", time="00:00", day=None):
     # urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     c = cdsapi.Client(verify=False, quiet=False)
     c.retrieve(
@@ -157,7 +157,7 @@ def get_surface_variables(target, year="2018", month="09", time="00:00"):
     )
 
 
-def get_upper_variables(target, year="2018", month="09", time="12:00"):
+def get_upper_variables(target, year="2018", month="09", time="12:00", day=None):
     # urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     c = cdsapi.Client(verify=False, quiet=False)
     c.retrieve(

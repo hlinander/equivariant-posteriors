@@ -1,6 +1,4 @@
-import time
 import json
-from typing import Dict
 import torch
 import numpy as np
 from datetime import datetime, timedelta
@@ -10,9 +8,7 @@ import shutil
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
 
 # from lib.models.mlp import MLPConfig
-from lib.serialization import serialize_human
-from lib.train_dataclasses import TrainEpochState
-from lib.metric import MetricSample
+from lib.serialize_human import serialize_human
 from lib.compute_env import env
 
 from dataclasses import dataclass
@@ -81,6 +77,7 @@ class DataHP(torch.utils.data.Dataset):
         )
 
     def e5_to_numpy(self, e5xr):
+        stats = deserialize_dataset_statistics(self.config.nside)
         npix = healpix.nside2npix(self.config.nside)
         hlong, hlat = healpix.pix2ang(
             self.config.nside, np.arange(0, npix, 1), lonlat=True, nest=True
@@ -94,13 +91,17 @@ class DataHP(torch.utils.data.Dataset):
                 latitude=xlat, longitude=xlong, kwargs={"fill_value": None}
             )
             hp_image = np.array(xhp.to_array().to_numpy(), dtype=np.float32)
-            hp_image = (hp_image - hp_image.mean(axis=1, keepdims=True)) / hp_image.std(
-                axis=1, keepdims=True
-            )
+            # hp_image = (hp_image - hp_image.mean(axis=1, keepdims=True)) / hp_image.std(
+            # axis=1, keepdims=True
+            # )
             return hp_image
 
         hp_surface = interpolate(e5xr.surface)
         hp_upper = interpolate(e5xr.upper)
+        hp_surface = (hp_surface - stats.item()["mean_surface"]) / stats.item()[
+            "std_surface"
+        ]
+        hp_upper = (hp_upper - stats.item()["mean_upper"]) / stats.item()["std_upper"]
         # max_vals = np.amax(hp_image, axis=1, keepdims=True)
         # hp_image = hp_image / max_vals
         # breakpoint()
@@ -124,17 +125,17 @@ class DataHP(torch.utils.data.Dataset):
         e5s = cdstest.get_era5_sample(e5sc)
         return e5s
 
+    def get_cache_dir(self):
+        return (
+            env().paths.datasets
+            / f"era5_lite_np_cache_normalized_nside_{self.config.nside}"
+        )
+
     def __getitem__(self, idx):
-        fs_cache_path = (
-            env().paths.datasets
-            / f"era5_lite_np_cache_nside_{self.config.nside}"
-            / f"{idx}"
-        )
-        fs_cache_path_tmp = (
-            env().paths.datasets
-            / f"era5_lite_np_cache_nside_{self.config.nside}"
-            / f"{idx}_constructing"
-        )
+        if idx >= len(self):
+            raise IndexError()
+        fs_cache_path = self.get_cache_dir() / f"{idx}"
+        fs_cache_path_tmp = self.get_cache_dir() / f"{idx}_constructing"
         names = dict(
             input_surface="surface.npy",
             input_upper="upper.npy",
@@ -150,10 +151,13 @@ class DataHP(torch.utils.data.Dataset):
         else:
             e5s_input_config = day_index_to_era5_config(idx, 2007, 2017)
             e5s_target_config = cdstest.add_timedelta(e5s_input_config, days=1)
+            # print("Get ERA5 sample")
             e5s = cdstest.get_era5_sample(e5s_input_config)
             e5target = cdstest.get_era5_sample(e5s_target_config)
+            # print("Get ERA5 sample done")
             hp_surface, hp_upper = self.e5_to_numpy(e5s)
             hp_target_surface, hp_target_upper = self.e5_to_numpy(e5target)
+            # print("To numpy done")
             data_dict = dict(
                 input_surface=hp_surface,
                 input_upper=hp_upper,
@@ -173,6 +177,7 @@ class DataHP(torch.utils.data.Dataset):
 
             if not fs_cache_path.is_dir():
                 shutil.move(fs_cache_path_tmp, fs_cache_path)
+            # print("Write done")
 
             item_dict.update(data_dict)
 
@@ -180,3 +185,64 @@ class DataHP(torch.utils.data.Dataset):
 
     def __len__(self):
         return days_between_years(2007, 2017)
+
+
+def deserialize_dataset_statistics(nside):
+    ds = DataHP(DataHPConfig(nside=nside))
+    return np.load(ds.get_cache_dir() / "statistics.npy", allow_pickle=True)
+
+
+def serialize_dataset_statistics(nside):
+    ds = DataHP(DataHPConfig(nside=nside))
+
+    mean_surface = None
+    mean_x2_surface = None
+    mean_upper = None
+    mean_x2_upper = None
+
+    n_samples = 0
+    for idx, sample in enumerate(ds):
+        # print("Start mean")
+        if mean_surface is None:
+            mean_surface = sample["input_surface"].mean(axis=1, keepdims=True)
+            mean_upper = sample["input_upper"].mean(axis=1, keepdims=True)
+            mean_x2_surface = (sample["input_surface"] ** 2).mean(axis=1, keepdims=True)
+            mean_x2_upper = (sample["input_upper"] ** 2).mean(axis=1, keepdims=True)
+        else:
+            mean_surface += sample["input_surface"].mean(axis=1, keepdims=True)
+            mean_upper += sample["input_upper"].mean(axis=1, keepdims=True)
+            mean_x2_surface += (sample["input_surface"] ** 2).mean(
+                axis=1, keepdims=True
+            )
+            mean_x2_upper += (sample["input_upper"] ** 2).mean(axis=1, keepdims=True)
+        n_samples += 1
+
+        # E((X - E(x))^2) = E(X^2 - 2XE(x)+ E(x)^2) = E(X^2 - 2 E(X)E(X) + E(x)^2) = E(X^2) - E(X)^2
+        # std_surface = np.sqrt(mean_x2_surface / n_samples - (mean_surface / n_samples) ** 2)
+        print(f"{idx}")
+        # print("End mean")
+        # print(f"mean surface: {mean_surface / n_samples}, std surface: {std_surface}")
+        # hp_image = (hp_image - hp_image.mean(axis=1, keepdims=True)) / hp_image.std(
+        # axis=1, keepdims=True
+        # )
+        # break
+
+    mean_surface = mean_surface / n_samples
+    mean_upper = mean_upper / n_samples
+    mean_x2_surface = mean_x2_surface / n_samples
+    mean_x2_upper = mean_x2_upper / n_samples
+
+    std_surface = np.sqrt(mean_x2_surface - (mean_surface) ** 2)
+    std_upper = np.sqrt(mean_x2_upper - (mean_upper) ** 2)
+    statistics_dict = dict(
+        mean_surface=mean_surface,
+        mean_upper=mean_upper,
+        mean_x2_surface=mean_x2_surface,
+        mean_x2_upper=mean_x2_upper,
+        std_surface=std_surface,
+        std_upper=std_upper,
+        n_samples=n_samples,
+    )
+    np.save(ds.get_cache_dir() / "statistics.npy", statistics_dict)
+    print(f"Saved npy {ds.get_cache_dir() / 'statistics.npy'}")
+    # stats = np.load(ds.get_cache_dir() / "statistics.npy", allow_pickle=True)
