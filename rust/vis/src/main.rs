@@ -2,9 +2,10 @@ use chrono::NaiveDateTime;
 use clap::Parser;
 use eframe::egui;
 use egui::{epaint, Stroke};
-use egui_plot::{Legend, PlotPoints};
+use egui_plot::{Axis, Legend, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
+use ndarray::s;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::Cow;
@@ -94,6 +95,16 @@ struct NPYArtifactView {
     index: Vec<usize>,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
+struct NPYTabularArtifactView {
+    artifact_id: ArtifactId,
+    x: usize,
+    y: usize,
+    c: usize,
+    log_x: bool,
+    log_y: bool, // index: Vec<usize>,
+}
+
 enum NPYArray {
     Loading(BinaryArtifact),
     Loaded(ndarray::ArrayD<f32>),
@@ -138,20 +149,21 @@ fn download_artifact(
             path.clone()
         };
         let tx_db_artifact_path = tx_path_mutex.lock_owned().await;
-        // println!(
-        // "[db] Requesting download {} {}",
-        // train_id.clone(),
-        // name.clone()
-        // );
+        println!(
+            "[db] Requesting download {} {}",
+            train_id.clone(),
+            name.clone()
+        );
         tx_db_artifact_path.send((train_id.clone(), name.clone(), uri));
-        // println!(
-        // "[db] Waiting for download {} {}",
-        // train_id.clone(),
-        // name.clone()
-        // );
+        println!(
+            "[db] Waiting for download {} {}",
+            train_id.clone(),
+            name.clone()
+        );
         let rx_db_artifact = rx_artifact_mutex.lock_owned().await;
         loop {
             let rx_res = rx_db_artifact.recv();
+            // println!("[db] recv {:?}", rx_res);
             match rx_res {
                 Ok(artifact_binary_res) => match artifact_binary_res {
                     ArtifactTransfer::Done(artifact_binary) => {
@@ -210,10 +222,14 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
 }
 
 enum ArtifactHandler {
-    NPYArtifact {
+    NPYHealPixArtifact {
         textures: HashMap<NPYArtifactView, egui::TextureHandle>,
         arrays: HashMap<ArtifactId, NPYArray>,
         views: HashMap<ArtifactId, NPYArtifactView>,
+    },
+    NPYTabularArtifact {
+        arrays: HashMap<ArtifactId, NPYArray>,
+        views: HashMap<ArtifactId, NPYTabularArtifactView>,
     },
     ImageArtifact {
         // images: HashMap<ArtifactId, String>,
@@ -235,52 +251,11 @@ fn add_artifact(
         name: name.to_string(),
     };
     match handler {
-        ArtifactHandler::NPYArtifact {
+        ArtifactHandler::NPYHealPixArtifact {
             arrays,
             textures: _,
             views: _,
-        } => match arrays.get_mut(&artifact_id) {
-            None => {
-                arrays.insert(
-                    artifact_id.clone(),
-                    NPYArray::Loading(download_artifact(
-                        artifact_id.train_id.clone(),
-                        artifact_id.name.clone(),
-                        path.to_string(),
-                        tx_path_mutex.clone(),
-                        rx_artifact_mutex.clone(),
-                    )),
-                );
-            }
-            Some(npyarray) => {
-                let mut new_npyarray = None;
-                match npyarray {
-                    NPYArray::Loading(binary_artifact) => {
-                        poll_artifact_download(binary_artifact);
-                        match binary_artifact {
-                            BinaryArtifact::Loading(_) => {}
-                            BinaryArtifact::Loaded(binary_data) => {
-                                match load_npy_bytes(binary_data) {
-                                    Ok(nparray) => {
-                                        new_npyarray = Some(NPYArray::Loaded(nparray));
-                                    }
-                                    Err(err) => {
-                                        new_npyarray = Some(NPYArray::Error(err.to_string()));
-                                    }
-                                }
-                            }
-                            BinaryArtifact::Error(err) => {
-                                new_npyarray = Some(NPYArray::Error(err.to_string()));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                if let Some(new_npyarray) = new_npyarray {
-                    *npyarray = new_npyarray;
-                }
-            }
-        },
+        } => handle_add_npy(arrays, &artifact_id, path, tx_path_mutex, rx_artifact_mutex),
         ArtifactHandler::ImageArtifact { binaries } => match binaries.get_mut(&artifact_id) {
             Some(binary_artifact) => {
                 poll_artifact_download(binary_artifact);
@@ -298,6 +273,58 @@ fn add_artifact(
                 );
             }
         },
+        ArtifactHandler::NPYTabularArtifact { arrays, views } => {
+            handle_add_npy(arrays, &artifact_id, path, tx_path_mutex, rx_artifact_mutex)
+        }
+    }
+}
+
+fn handle_add_npy(
+    arrays: &mut HashMap<ArtifactId, NPYArray>,
+    artifact_id: &ArtifactId,
+    path: &str,
+    tx_path_mutex: &mut Arc<Mutex<Sender<(String, String, String)>>>,
+    rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
+) {
+    match arrays.get_mut(artifact_id) {
+        None => {
+            arrays.insert(
+                artifact_id.clone(),
+                NPYArray::Loading(download_artifact(
+                    artifact_id.train_id.clone(),
+                    artifact_id.name.clone(),
+                    path.to_string(),
+                    tx_path_mutex.clone(),
+                    rx_artifact_mutex.clone(),
+                )),
+            );
+        }
+        Some(npyarray) => {
+            let mut new_npyarray = None;
+            match npyarray {
+                NPYArray::Loading(binary_artifact) => {
+                    poll_artifact_download(binary_artifact);
+                    match binary_artifact {
+                        BinaryArtifact::Loading(_) => {}
+                        BinaryArtifact::Loaded(binary_data) => match load_npy_bytes(binary_data) {
+                            Ok(nparray) => {
+                                new_npyarray = Some(NPYArray::Loaded(nparray));
+                            }
+                            Err(err) => {
+                                new_npyarray = Some(NPYArray::Error(err.to_string()));
+                            }
+                        },
+                        BinaryArtifact::Error(err) => {
+                            new_npyarray = Some(NPYArray::Error(err.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if let Some(new_npyarray) = new_npyarray {
+                *npyarray = new_npyarray;
+            }
+        }
     }
 }
 
@@ -476,7 +503,7 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 impl eframe::App for GuiRuns {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.initialized {
-            ctx.set_zoom_factor(1.0);
+            ctx.set_zoom_factor(2.0);
         }
         self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
         self.runs.active_runs_time_ordered = self
@@ -517,6 +544,7 @@ impl eframe::App for GuiRuns {
             // self.recompute();
         }
         if let Ok(new_runs) = self.recomputed_reciever.try_recv() {
+            println!("[app] recieved recomputed runs");
             self.runs.runs = new_runs;
             if self.data_status == DataStatus::FirstDataArrived && self.runs.runs.len() > 0 {
                 self.data_status = DataStatus::FirstDataProcessed;
@@ -526,6 +554,7 @@ impl eframe::App for GuiRuns {
             for train_id in new_runs.keys() {
                 if !self.runs.runs.contains_key(train_id) {
                     let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
+                    println!("[app] recieved new runs, sending to compute...");
                     self.db_train_runs_sender
                         .send(new_active)
                         .expect("Failed to send train runs to db thread");
@@ -656,7 +685,7 @@ fn show_artifacts(
     run_ensemble_color: &HashMap<String, egui::Color32>,
 ) {
     match handler {
-        ArtifactHandler::NPYArtifact {
+        ArtifactHandler::NPYHealPixArtifact {
             arrays,
             textures,
             views,
@@ -690,21 +719,7 @@ fn show_artifacts(
                             for (artifact_id, array) in array_group {
                                 match array {
                                     NPYArray::Loading(binary_artifact) => {
-                                        if let BinaryArtifact::Loading((_, status)) =
-                                            binary_artifact
-                                        {
-                                            if status.status.size > 0 {
-                                                ui.label(format!(
-                                                    "{:.1}/{:.1}",
-                                                    status.status.downloaded as f32 / 1e6,
-                                                    status.status.size as f32 / 1e6
-                                                ));
-                                                ui.add(egui::ProgressBar::new(
-                                                    status.status.downloaded as f32
-                                                        / status.status.size as f32,
-                                                ));
-                                            }
-                                        }
+                                        render_artifact_download_progress(binary_artifact, ui);
                                     }
                                     NPYArray::Loaded(array) => {
                                         // ui.allocate_ui()
@@ -811,6 +826,86 @@ fn show_artifacts(
                 }
             });
         }
+        ArtifactHandler::NPYTabularArtifact { arrays, views } => {
+            let plot_width = ui.available_width() * 0.48;
+            let plot_height = ui.available_width() * 0.48 * 0.5;
+            let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
+            // println!("render tabular");
+            for (artifact_name, filtered_arrays) in gui_params
+                .artifact_filters
+                .iter()
+                .filter(|name| available_artifact_names.contains(name))
+                .map(|name| {
+                    (
+                        name,
+                        arrays.iter().filter(|(key, _v)| {
+                            key.name == *name && filtered_runs.contains(&key.train_id)
+                        }),
+                    )
+                })
+            {
+                // println!("looper");
+                for (artifact_id, array) in filtered_arrays {
+                    match array {
+                        NPYArray::Loading(binary_artifact) => {
+                            render_artifact_download_progress(binary_artifact, ui);
+                            // println!("loading");
+                        }
+                        NPYArray::Loaded(array) => {
+                            // println!("loaded");
+                            // ui.allocate_ui()
+                            ui.allocate_ui(
+                                egui::Vec2::from([plot_width, plot_height + 200.0]),
+                                |ui| {
+                                    render_npy_artifact_tabular(
+                                        ui,
+                                        runs,
+                                        artifact_id,
+                                        gui_params,
+                                        run_ensemble_color,
+                                        views,
+                                        array,
+                                        // textures,
+                                        plot_width,
+                                        // npy_axis_id,
+                                    );
+                                },
+                            );
+                        }
+                        NPYArray::Error(err) => {
+                            // println!("error");
+                            ui.label(err);
+                            // ui.colored_label(egui::Color32::RED, err);
+                            // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_artifact_download_progress(binary_artifact: &BinaryArtifact, ui: &mut egui::Ui) {
+    match binary_artifact {
+        BinaryArtifact::Loading((_, status)) => {
+            ui.label("waiting for first sync...");
+            if status.status.size > 0 {
+                ui.label(format!(
+                    "{:.1}/{:.1}",
+                    status.status.downloaded as f32 / 1e6,
+                    status.status.size as f32 / 1e6
+                ));
+                ui.add(egui::ProgressBar::new(
+                    status.status.downloaded as f32 / status.status.size as f32,
+                ));
+            }
+        }
+        BinaryArtifact::Loaded(data) => {
+            ui.label("loaded!");
+        }
+        BinaryArtifact::Error(err) => {
+            ui.label(err);
+        }
     }
 }
 
@@ -883,6 +978,127 @@ fn render_npy_artifact(
             });
     });
 }
+
+fn render_npy_artifact_tabular(
+    ui: &mut egui::Ui,
+    runs: &HashMap<String, Run>,
+    artifact_id: &ArtifactId,
+    gui_params: &GuiParams,
+    run_ensemble_color: &HashMap<String, egui::Color32>,
+    views: &mut HashMap<ArtifactId, NPYTabularArtifactView>,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    plot_width: f32,
+) {
+    ui.vertical(|ui| {
+        let label =
+            label_from_active_inspect_params(runs.get(&artifact_id.train_id).unwrap(), &gui_params);
+        ui.colored_label(
+            run_ensemble_color
+                .get(&artifact_id.train_id)
+                .unwrap()
+                .clone(),
+            format!("{}: {}", artifact_id.name, label),
+        );
+        let view = views
+            .entry(artifact_id.clone())
+            .or_insert(NPYTabularArtifactView {
+                artifact_id: artifact_id.clone(),
+                x: 0,
+                y: 0,
+                c: 0,
+                log_x: false,
+                log_y: false, // index: vec![0; array.shape().len() - 1],
+            });
+        // for (dim_idx, dim) in array
+        //     .shape()
+        //     .iter()
+        //     .enumerate()
+        //     .take(array.shape().len() - 1)
+        // {
+        let n_rows = array.shape()[0];
+        let n_cols = array.shape()[1];
+        ui.add(egui::Slider::new(&mut view.x, 0..=(n_cols - 1)));
+        ui.add(egui::Slider::new(&mut view.y, 0..=(n_cols - 1)));
+        ui.add(egui::Slider::new(&mut view.c, 0..=(n_cols - 1)));
+        ui.checkbox(&mut view.log_x, "log x-axis");
+        ui.checkbox(&mut view.log_y, "log x-axis");
+        // }
+        // ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
+        // texture.set(img, egui::TextureOptions::default());
+        // ui.image((texture.id(), texture.size_vec2()));
+        let plot = Plot::new(artifact_id)
+            .width(plot_width)
+            .height(plot_width / 2.0)
+            .auto_bounds_x()
+            .auto_bounds_y()
+            // .data_aspect(1.0)
+            // .view_aspect(1.0)
+            .show_grid(true)
+            // .link_axis(npy_axis_id, true, true)
+            // .link_cursor(npy_axis_id, true, true)
+            .show(ui, |plot_ui| {
+                let xs = array.slice(s![.., view.x]);
+                let ys = array.slice(s![.., view.y]);
+                let xy = ndarray::concatenate![
+                    ndarray::Axis(1),
+                    xs.insert_axis(ndarray::Axis(1)),
+                    ys.insert_axis(ndarray::Axis(1))
+                ];
+                // xs.view()
+                // println!("{:?}", xy.shape());
+                let x_shaper = |x: f32| {
+                    if view.log_x {
+                        if x > 0.000001 {
+                            x.log10()
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        x
+                    }
+                };
+                let y_shaper = |y: f32| {
+                    if view.log_y {
+                        if y > 0.000001 {
+                            y.log10()
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        y
+                    }
+                };
+                let xy = xy
+                    .outer_iter()
+                    .map(|row| {
+                        [
+                            x_shaper(*row.get(0).unwrap()) as f64,
+                            y_shaper(*row.get(1).unwrap()) as f64,
+                        ]
+                    })
+                    .collect_vec();
+                // let ys = array.slice_collapse(s![.., view.y]);
+                // let xy = ndarray::stack(ndarray::Axis(1), &[xs, ys]).unwrap();
+                // println!("{:?}", xy.shape());
+                // let xy = xs
+                //     .to_slice()
+                //     .unwrap()
+                //     .iter()
+                //     .zip(ys.to_slice().unwrap())
+                //     .map(|x| [*x.0 as f64, *x.1 as f64])
+                //     .collect_vec();
+                // println!("{:?}", v);
+                // let v = xy.iter().next();
+                // xs.fold_axis(, , )
+                plot_ui.points(Points::new(xy));
+                // plot_ui.image(pi);
+            });
+    });
+}
+
 impl GuiRuns {
     fn render_parameters(
         &mut self,
@@ -1452,12 +1668,39 @@ async fn get_state_new(
     runs: &mut HashMap<String, Run>,
     train_ids: &Vec<String>,
     last_timestamp: &mut NaiveDateTime,
+    tx_runs: Option<&Sender<HashMap<String, Run>>>,
 ) -> Result<(), sqlx::Error> {
     // Query to get the table structure
     // TODO: WHERE train_id not in runs.keys()
     get_state_parameters(pool, runs).await?;
     get_state_artifacts(train_ids, pool, runs).await?;
-    get_state_metrics(train_ids, last_timestamp, pool, runs).await?;
+    get_state_metrics(
+        train_ids,
+        last_timestamp,
+        pool,
+        runs,
+        tx_runs,
+        "metrics_batch_order_100".to_string(),
+    )
+    .await?;
+    get_state_metrics(
+        train_ids,
+        last_timestamp,
+        pool,
+        runs,
+        tx_runs,
+        "metrics_batch_order_10".to_string(),
+    )
+    .await?;
+    get_state_metrics(
+        train_ids,
+        last_timestamp,
+        pool,
+        runs,
+        tx_runs,
+        "metrics".to_string(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -1466,34 +1709,117 @@ async fn get_state_metrics(
     last_timestamp: &mut NaiveDateTime,
     pool: &sqlx::Pool<sqlx::Postgres>,
     runs: &mut HashMap<String, Run>,
+    tx_runs: Option<&Sender<HashMap<String, Run>>>,
+    metric_table: String,
 ) -> Result<(), sqlx::Error> {
     Ok(if train_ids.len() > 0 {
         let mut batch_timestamp = last_timestamp.clone();
-        let q = format!(
-            r#"
-        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='batch' AND (CAST(x as int) % 1000 = 0 OR x < 500) ORDER BY train_id, variable, xaxis, x
+        let mut chunk_size = 1000i32;
+        loop {
+            let q = format!(
+                r#"
+        SELECT * FROM {}
+            WHERE train_id = ANY($2) 
+                AND created_at > $3 
+              --  AND xaxis='batch' 
+             --   AND id > $4
+              --  AND (CAST(x as int) % 1000 = 0 OR x < 500) 
+            -- // ORDER BY train_id, variable, xaxis, x, created_at
+            -- train_id, xaxis, created_at, variable, x
+            LIMIT $4
+            -- OFFSET $4
         "#,
-        );
-        let metric_rows = sqlx::query(q.as_str())
-            .bind(train_ids)
-            .bind(batch_timestamp)
-            .fetch_all(pool)
-            .await?;
-        parse_metric_rows(metric_rows, runs, &mut batch_timestamp);
+                metric_table
+            );
+            // println!("[db] requesting {} rows at {}", chunk_size, offset);
+            let query_string = |pre: Option<String>, q: String| {
+                if let Some(pre) = pre {
+                    format!("{} {}", pre, q)
+                } else {
+                    q
+                }
+            };
+            // {
+            //     // sqlx::query("SET track_io_timing = ON;")
+            //     //     .execute(pool)
+            //     //     .await
+            //     //     .unwrap();
+            //     let q2 = query_string(Some("EXPLAIN ANALYZE".to_string()), q.clone());
+            //     let query = sqlx::query(q2.as_str())
+            //         .bind(train_ids)
+            //         .bind(batch_timestamp)
+            //         // .bind(last_id)
+            //         .bind(chunk_size);
+            //     // .bind(offset);
+            //     let rows = query.fetch_all(pool).await?;
+            //     for row in rows {
+            //         let plan: String = row.get(0);
+            //         println!("{}", plan);
+            //     }
+            // }
+            // println!("{:?}", query);
+            let q1 = query_string(None, q.clone());
+            let query_time = std::time::Instant::now();
+            let query = sqlx::query(q1.as_str())
+                .bind(metric_table.clone())
+                .bind(train_ids)
+                .bind(batch_timestamp)
+                // .bind(last_id)
+                .bind(chunk_size);
+            // .bind(offset);
+            let metric_rows = query.fetch_all(pool).await?;
+            let query_elapsed_time = query_time.elapsed().as_secs_f32();
+            let received_rows = metric_rows.len();
+            parse_metric_rows(metric_rows, runs, &mut batch_timestamp);
+            println!("[db] recieved {}", received_rows);
+            if let Some(tx) = tx_runs {
+                tx.send(runs.clone()).expect("send failed");
+                println!("[db] sent {}", received_rows);
+            }
+            // offset += chunk_size;
+            if received_rows < chunk_size as usize {
+                break;
+            }
+            if query_elapsed_time < 0.5 {
+                chunk_size *= 2;
+            } else if query_elapsed_time > 2.0 {
+                chunk_size /= 2;
+            }
+        }
 
         let mut epoch_timestamp = last_timestamp.clone();
         let q = format!(
             r#"
-        SELECT * FROM metrics WHERE train_id = ANY($1) AND created_at > $2 AND xaxis='epoch' ORDER BY train_id, variable, xaxis, x
+        SELECT * FROM metrics 
+            WHERE train_id = ANY($1) 
+                AND created_at > $2 
+                AND xaxis='epoch' 
+            ORDER BY train_id, variable, xaxis, x
+            LIMIT $3
+            -- OFFSET $4
         "#,
         );
-        let metric_rows = sqlx::query(q.as_str())
-            .bind(train_ids)
-            .bind(epoch_timestamp)
-            .fetch_all(pool)
-            .await?;
-        parse_metric_rows(metric_rows, runs, &mut epoch_timestamp);
-        *last_timestamp = batch_timestamp.max(epoch_timestamp);
+        loop {
+            let metric_rows = sqlx::query(q.as_str())
+                .bind(train_ids)
+                .bind(epoch_timestamp)
+                .bind(chunk_size)
+                // .bind(offset)
+                .fetch_all(pool)
+                .await?;
+            let received_rows = metric_rows.len();
+            parse_metric_rows(metric_rows, runs, &mut epoch_timestamp);
+            *last_timestamp = batch_timestamp.max(epoch_timestamp);
+            println!("[db] recieved {}", received_rows);
+            if let Some(tx) = tx_runs {
+                tx.send(runs.clone()).expect("send failed");
+                println!("[db] sent {}", received_rows);
+            }
+            // offset += chunk_size;
+            if received_rows < chunk_size as usize {
+                break;
+            }
+        }
     })
 }
 
@@ -1638,6 +1964,7 @@ fn parse_metric_rows(
     }
 }
 
+#[derive(Debug)]
 enum ArtifactTransfer {
     Done(Vec<u8>),
     Loading(usize, usize),
@@ -1652,7 +1979,8 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx, rx) = mpsc::channel();
     let (tx_gui_dirty, rx_gui_dirty) = mpsc::channel();
     let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::channel();
-    let (tx_db_filters, rx_db_filters) = mpsc::channel();
+    let (tx_db_filters, rx_db_filters) = mpsc::channel::<Vec<String>>();
+    let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_db_filters));
     let (tx_db_artifact, rx_db_artifact) = mpsc::channel::<ArtifactTransfer>();
     let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<(String, String, String)>();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1676,32 +2004,31 @@ fn main() -> Result<(), sqlx::Error> {
             .await
             .expect("Can't connect to database");
         println!("[db] connected!");
-        let mut train_ids = Vec::new();
+        let mut train_ids: Vec<String> = Vec::new();
         let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
         let mut runs: HashMap<String, Run> = Default::default();
         loop {
-            if runs.is_empty() {
-                get_state_new(&pool, &mut runs, &train_ids, &mut last_timestamp).await;
-            } else {
-                // println!("[db] parameters...");
-                get_state_parameters(&pool, &mut runs).await;
+            let update_params = async {
+                loop {
+                    {
+                        let rx = rx_db_filters_am.lock().unwrap();
+                        if let Ok(new_train_ids) = rx.try_recv() {
+                            println!("new train ids");
+                            return new_train_ids;
+                        }
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                }
+            };
+            tokio::select! {
+            _ = update_state(&mut runs, &pool, &train_ids, &mut last_timestamp, &tx) => {
                 tx.send(runs.clone()).expect("Failed to send data");
-                // println!("[db] artifacts...");
-                get_state_artifacts(&train_ids, &pool, &mut runs).await;
-                tx.send(runs.clone()).expect("Failed to send data");
-                // println!("[db] metrics...");
-                get_state_metrics(&train_ids, &mut last_timestamp, &pool, &mut runs).await;
+            },
+            new_train_ids = update_params => { train_ids = new_train_ids;
+                last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+                runs = HashMap::new();
             }
 
-            tx.send(runs.clone()).expect("Failed to send data");
-            for _ in 0..100 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                if let Ok(new_train_ids) = rx_db_filters.try_recv() {
-                    train_ids = new_train_ids;
-                    last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
-                    runs = HashMap::new();
-                    break;
-                }
             }
         }
     });
@@ -1723,49 +2050,54 @@ fn main() -> Result<(), sqlx::Error> {
                 .bind(&path)
                 .fetch_one(&pool)
                 .await;
-                if let Ok(row) = size_res {
-                    let filesize = row.get::<i64, _>("size");
-                    println!("[f] File {} size {}", &path, &filesize);
-                    let mut offset = 0;
-                    let mut chunk_size = 1_000_000;
-                    let mut buffer: Vec<u8> = vec![0; filesize as usize];
-                    while offset < filesize {
-                        let length = chunk_size.min(filesize - offset);
-                        let query_time = std::time::Instant::now();
-                        let blobs_rows = sqlx::query(
-                            r#"
+                match size_res {
+                    Ok(row) => {
+                        let filesize = row.get::<i64, _>("size");
+                        println!("[f] File {} size {}", &path, &filesize);
+                        let mut offset = 0;
+                        let mut chunk_size = 1_000_000;
+                        let mut buffer: Vec<u8> = vec![0; filesize as usize];
+                        while offset < filesize {
+                            let length = chunk_size.min(filesize - offset);
+                            let query_time = std::time::Instant::now();
+                            let blobs_rows = sqlx::query(
+                                r#"
                             SELECT pg_read_binary_file($1, $2, $3) 
                             "#,
-                        )
-                        .bind(&path)
-                        .bind(&offset)
-                        .bind(&length)
-                        .fetch_one(&pool)
-                        .await;
-                        let elapsed_seconds = query_time.elapsed().as_secs_f32();
-                        if elapsed_seconds < 0.5 {
-                            chunk_size *= 2;
-                        } else if elapsed_seconds > 2.0 {
-                            chunk_size /= 2;
+                            )
+                            .bind(&path)
+                            .bind(&offset)
+                            .bind(&length)
+                            .fetch_one(&pool)
+                            .await;
+                            let elapsed_seconds = query_time.elapsed().as_secs_f32();
+                            if elapsed_seconds < 0.5 {
+                                chunk_size *= 2;
+                            } else if elapsed_seconds > 2.0 {
+                                chunk_size /= 2;
+                            }
+                            if let Ok(row) = blobs_rows {
+                                let dst =
+                                    &mut buffer[offset as usize..offset as usize + length as usize];
+                                dst.copy_from_slice(
+                                    row.get::<Vec<u8>, _>("pg_read_binary_file").as_slice(),
+                                );
+                                offset += length;
+                                println!("[f] Read chunk {} at {}", length, offset);
+                                tx_db_artifact.send(ArtifactTransfer::Loading(
+                                    offset as usize,
+                                    filesize as usize,
+                                ));
+                            } else if let Err(error) = blobs_rows {
+                                tx_db_artifact.send(ArtifactTransfer::Err(error.to_string()));
+                                break;
+                            }
                         }
-                        if let Ok(row) = blobs_rows {
-                            let dst =
-                                &mut buffer[offset as usize..offset as usize + length as usize];
-                            dst.copy_from_slice(
-                                row.get::<Vec<u8>, _>("pg_read_binary_file").as_slice(),
-                            );
-                            offset += length;
-                            println!("[f] Read chunk {} at {}", length, offset);
-                            tx_db_artifact.send(ArtifactTransfer::Loading(
-                                offset as usize,
-                                filesize as usize,
-                            ));
-                        } else if let Err(error) = blobs_rows {
-                            tx_db_artifact.send(ArtifactTransfer::Err(error.to_string()));
-                            break;
-                        }
+                        tx_db_artifact.send(ArtifactTransfer::Done(buffer));
                     }
-                    tx_db_artifact.send(ArtifactTransfer::Done(buffer));
+                    Err(err) => {
+                        tx_db_artifact.send(ArtifactTransfer::Err(err.to_string()));
+                    }
                 }
             }
         }
@@ -1806,9 +2138,16 @@ fn main() -> Result<(), sqlx::Error> {
                 artifact_handlers: HashMap::from([
                     (
                         "npy".to_string(),
-                        ArtifactHandler::NPYArtifact {
+                        ArtifactHandler::NPYHealPixArtifact {
                             arrays: HashMap::new(),
                             textures: HashMap::new(),
+                            views: HashMap::new(),
+                        },
+                    ),
+                    (
+                        "tabular".to_string(),
+                        ArtifactHandler::NPYTabularArtifact {
+                            arrays: HashMap::new(),
                             views: HashMap::new(),
                         },
                     ),
@@ -1828,4 +2167,74 @@ fn main() -> Result<(), sqlx::Error> {
     );
 
     Ok(())
+}
+
+async fn get_new_runids(
+    rx_db_filters: &Receiver<Vec<String>>,
+    train_ids: &mut Vec<String>,
+    last_timestamp: &mut NaiveDateTime,
+    runs: &mut HashMap<String, Run>,
+) {
+    loop {
+        // {
+        if let Ok(new_train_ids) = rx_db_filters.try_recv() {
+            //     *train_ids = new_train_ids;
+            //     *last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
+            //     *runs = HashMap::new();
+            //     return;
+            //     // break;
+        }
+        // }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+}
+
+async fn update_state(
+    runs: &mut HashMap<String, Run>,
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    train_ids: &Vec<String>,
+    last_timestamp: &mut NaiveDateTime,
+    tx: &Sender<HashMap<String, Run>>,
+) {
+    if runs.is_empty() {
+        if let Err(err) = get_state_new(pool, runs, train_ids, last_timestamp, Some(tx)).await {
+            println!("{}", err.to_string());
+        }
+    } else {
+        // println!("[db] parameters...");
+        get_state_parameters(pool, runs).await;
+        tx.send(runs.clone()).expect("Failed to send data");
+        // println!("[db] artifacts...");
+        get_state_artifacts(train_ids, pool, runs).await;
+        tx.send(runs.clone()).expect("Failed to send data");
+        // println!("[db] metrics...");
+        get_state_metrics(
+            train_ids,
+            last_timestamp,
+            pool,
+            runs,
+            Some(tx),
+            "metrics_batch_order_100".to_string(),
+        )
+        .await;
+        get_state_metrics(
+            train_ids,
+            last_timestamp,
+            pool,
+            runs,
+            Some(tx),
+            "metrics_batch_order_10".to_string(),
+        )
+        .await;
+        get_state_metrics(
+            train_ids,
+            last_timestamp,
+            pool,
+            runs,
+            Some(tx),
+            "metrics".to_string(),
+        )
+        .await
+        .expect("Batch level metrics:");
+    }
 }

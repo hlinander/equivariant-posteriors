@@ -360,6 +360,7 @@
           pkgs.nix
           pkgs.glibcLocales
           pkgs.which
+          pkgs.gnused
         ];
         # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
