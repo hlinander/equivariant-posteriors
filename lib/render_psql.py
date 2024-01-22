@@ -35,14 +35,15 @@ def dict_to_normalized_json(input_dict):
 def setup_psql():
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
-    if "EP_POSTGRES" in os.environ:
-        hostname = os.environ.get("EP_POSTGRES")
-        # print(f"PSQL: {hostname}")
-    if "EP_POSTGRES_PORT" in os.environ:
-        try:
-            port = int(os.environ.get("EP_POSTGRES_PORT"))
-        except ValueError:
-            pass
+    # if "EP_POSTGRES" in os.environ:
+    #     hostname = os.environ.get("EP_POSTGRES")
+    #     # print(f"PSQL: {hostname}")
+    # if "EP_POSTGRES_PORT" in os.environ:
+    #     try:
+    #         port = int(os.environ.get("EP_POSTGRES_PORT"))
+    #     except ValueError:
+    #         pass
+    print(f"[db] Connection to {hostname}:{port}")
     with psycopg.connect(
         "dbname=postgres user=postgres password=postgres",
         host=hostname,
@@ -179,8 +180,10 @@ def render_psql(train_run: TrainRun, train_epoch_state: TrainEpochState, block=F
 
 
 def get_url():
-    hostname = os.getenv("EP_POSTGRES", env().postgres_host)
-    port = int(os.getenv("EP_POSTGRES_PORT", env().postgres_port))
+    # hostname = os.getenv("EP_POSTGRES", env().postgres_host)
+    # port = int(os.getenv("EP_POSTGRES_PORT", env().postgres_port))
+    hostname = env().postgres_host
+    port = env().postgres_port
     return f"postgresql://postgres:postgres@{hostname}:{port}/equiv"
 
 
@@ -206,8 +209,8 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
     train_epoch_state.timing_metric.start("psql_connection")
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", env().postgres_host),
-        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        host=env().postgres_host,
+        port=int(env().postgres_port),
         autocommit=False,
         prepare_threshold=None,
     ) as conn:
@@ -387,14 +390,15 @@ def add_parameter(train_run: TrainRun, name: str, value: str):
         setup_psql()
     except psycopg.errors.OperationalError as e:
         print("[Database] Could not connect to database, artifact not added.")
+        print(f"{e}")
         return (False, str(e))
 
     train_run_dict = train_run.serialize_human()
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", env().postgres_host),
-        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        host=env().postgres_host,
+        port=int(env().postgres_port),
         autocommit=False,
     ) as conn:
         insert_param(
@@ -411,6 +415,7 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
         setup_psql()
     except psycopg.errors.OperationalError as e:
         print("[Database] Could not connect to database, artifact not added.")
+        print(f"{e}")
         return (False, str(e))
 
     train_run_dict = train_run.serialize_human()
@@ -428,8 +433,8 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
 
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", env().postgres_host),
-        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        host=env().postgres_host,
+        port=int(env().postgres_port),
         autocommit=False,
     ) as conn:
         conn.execute(
@@ -454,8 +459,8 @@ def has_artifact(train_run: TrainRun, name: str):
     train_run_dict = train_run.serialize_human()
     with psycopg.connect(
         "dbname=equiv user=postgres password=postgres",
-        host=os.getenv("EP_POSTGRES", env().postgres_host),
-        port=int(os.getenv("EP_POSTGRES_PORT", env().postgres_port)),
+        host=env().postgres_host,
+        port=int(env().postgres_port),
         autocommit=False,
     ) as conn:
         rows = conn.execute(

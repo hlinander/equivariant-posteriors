@@ -21,8 +21,10 @@ from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
 # from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
+from lib.ensemble import create_ensemble
 from lib.ensemble import request_ensemble
 from lib.ensemble import symlink_checkpoint_files
+from lib.ensemble import is_ensemble_serialized
 from lib.files import prepare_results
 
 from lib.data_factory import get_factory as get_dataset_factory
@@ -101,7 +103,7 @@ def create_config(ensemble_id):
         compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=150,
+        epochs=250,
         save_nth_epoch=1,
         validate_nth_epoch=20,
         visualize_terminal=False,
@@ -133,10 +135,12 @@ if __name__ == "__main__":
     # register()
 
     ensemble_config = create_ensemble_config(create_config, 1)
-    request_ensemble(ensemble_config)
-    distributed_train(ensemble_config.members)
-    exit(0)
+    if not is_ensemble_serialized(ensemble_config):
+        request_ensemble(ensemble_config)
+        distributed_train(ensemble_config.members)
+        exit(0)
     # ensemble = create_ensemble(ensemble_config, device_id)
+    ensemble = create_ensemble(ensemble_config, device_id)
 
     data_factory = get_dataset_factory()
     ds = data_factory.create(DataHPConfig(nside=NSIDE))
