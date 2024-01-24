@@ -1,8 +1,8 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use clap::Parser;
 use eframe::egui;
 use egui::{epaint, Stroke};
-use egui_plot::{Axis, Legend, PlotPoints, Points};
+use egui_plot::{Axis, Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::s;
@@ -36,6 +36,7 @@ struct Metric {
     orig_values: Vec<[f64; 3]>,
     values: Vec<[f64; 2]>,
     resampled: Vec<[f64; 2]>,
+    last_value: chrono::NaiveDateTime,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -381,6 +382,8 @@ struct GuiRuns {
     dirty_sender: Sender<(GuiParams, HashMap<String, Run>)>,
     tx_db_artifact_path: Arc<Mutex<Sender<(String, String, String)>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
+    rx_batch_status: Receiver<(usize, usize)>,
+    batch_status: (usize, usize),
     initialized: bool,
     data_status: DataStatus,
     gui_params: GuiParams,
@@ -638,7 +641,24 @@ impl eframe::App for GuiRuns {
                 self.render_artifact_selector(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_time_selector(ui);
+            ui.horizontal(|ui| {
+                if ui.button("Time").clicked() {
+                    self.gui_params.x_axis = XAxis::Time;
+                }
+                if ui.button("Batch").clicked() {
+                    self.gui_params.x_axis = XAxis::Batch;
+                }
+                self.render_time_selector(ui);
+                if let Ok(batch_status) = self.rx_batch_status.try_recv() {
+                    self.batch_status = batch_status;
+                }
+                if self.batch_status.1 > 0 {
+                    ui.add(egui::ProgressBar::new(
+                        self.batch_status.0 as f32 / self.batch_status.1 as f32,
+                    ));
+                }
+            });
+
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_source("central_space")
@@ -1133,14 +1153,6 @@ impl GuiRuns {
                 {
                     self.dirty = true;
                 };
-                ui.horizontal(|ui| {
-                    if ui.button("Time").clicked() {
-                        self.gui_params.x_axis = XAxis::Time;
-                    }
-                    if ui.button("Batch").clicked() {
-                        self.gui_params.x_axis = XAxis::Batch;
-                    }
-                });
                 let param_names = param_values.keys().cloned().collect_vec();
                 self.render_parameters_one_level(
                     &param_values,
@@ -1380,6 +1392,16 @@ impl GuiRuns {
             ui.available_width() / 4.1
         };
         let x_axis = self.gui_params.x_axis.clone();
+        let formatter = match x_axis {
+            XAxis::Time => |name: &str, value: &PlotPoint| {
+                let ts = NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
+                let xstr = ts.format("%y/%m/%d - %H:%M").to_string();
+                format!("time: {}\ny: {}", xstr, value.y)
+            },
+            XAxis::Batch => {
+                |name: &str, value: &PlotPoint| format!("x:{:.3}\ny:{:.3}", value.x, value.y)
+            }
+        };
         let plots: HashMap<_, _> = filtered_metric_names
             .into_iter()
             .map(|metric_name| {
@@ -1391,6 +1413,18 @@ impl GuiRuns {
                         .legend(Legend::default())
                         .width(plot_width)
                         .height(plot_height)
+                        // .label_formatter(match x_axis {
+                        //     XAxis::Time => |name, value: &PlotPoint| {
+                        //         let ts =
+                        //             NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
+                        //         let xstr = ts.format("%y/%m/%d-%Hh-%Mm").to_string();
+                        //         format!("time: {}\ny: {}", xstr, value.y)
+                        //     },
+                        //     XAxis::Batch => |name, value: &PlotPoint| {
+                        //         format!("x:{:.3}\ny:{:.3}", value.x, value.y)
+                        //     },
+                        // })
+                        .label_formatter(formatter)
                         .x_axis_formatter(match x_axis {
                             XAxis::Time => |value, n_chars, range: &RangeInclusive<f64>| {
                                 let ts =
@@ -1460,11 +1494,21 @@ impl GuiRuns {
                                 if let Some(metric) = run.metrics.get(&metric_name) {
                                     let label =
                                         label_from_active_inspect_params(run, &self.gui_params);
+                                    let running = metric.last_value
+                                        > chrono::Utc::now()
+                                            .naive_utc()
+                                            .checked_sub_signed(chrono::Duration::minutes(5))
+                                            .unwrap();
+                                    let label = if running {
+                                        format!("{} (r)", label)
+                                    } else {
+                                        label
+                                    };
                                     plot_ui.line(
                                         Line::new(PlotPoints::from(metric.resampled.clone()))
                                             .name(&label)
                                             .stroke(Stroke::new(
-                                                2.0,
+                                                2.0 * if running { 2.0 } else { 1.0 },
                                                 *run_ensemble_color.get(run_id).unwrap(),
                                             )),
                                     );
@@ -1669,38 +1713,47 @@ async fn get_state_new(
     train_ids: &Vec<String>,
     last_timestamp: &mut NaiveDateTime,
     tx_runs: Option<&Sender<HashMap<String, Run>>>,
+    tx_batch_status: &Sender<(usize, usize)>,
 ) -> Result<(), sqlx::Error> {
     // Query to get the table structure
     // TODO: WHERE train_id not in runs.keys()
+    tx_batch_status.send((0, 3));
     get_state_parameters(pool, runs).await?;
     get_state_artifacts(train_ids, pool, runs).await?;
+    let mut every_100_last_timestamp = last_timestamp.clone();
     get_state_metrics(
         train_ids,
-        last_timestamp,
+        &mut every_100_last_timestamp,
         pool,
         runs,
         tx_runs,
         "metrics_batch_order_100".to_string(),
     )
     .await?;
+    tx_batch_status.send((1, 3));
+    let mut every_10_last_timestamp = last_timestamp.clone();
     get_state_metrics(
         train_ids,
-        last_timestamp,
+        &mut every_10_last_timestamp,
         pool,
         runs,
         tx_runs,
         "metrics_batch_order_10".to_string(),
     )
     .await?;
+    tx_batch_status.send((2, 3));
+    let mut batch_last_timestamp = every_10_last_timestamp.clone();
     get_state_metrics(
         train_ids,
-        last_timestamp,
+        &mut batch_last_timestamp,
         pool,
         runs,
         tx_runs,
         "metrics".to_string(),
     )
     .await?;
+    *last_timestamp = batch_last_timestamp;
+    tx_batch_status.send((3, 3));
     Ok(())
 }
 
@@ -1928,6 +1981,7 @@ fn parse_metric_rows(
                 }
             }
             // println!("{:?}", rows[0].columns());
+            let old_orig_values = run.metrics.get(&variable);
             let orig_values: Vec<_> = rows
                 .iter()
                 .filter_map(|row| {
@@ -1935,7 +1989,13 @@ fn parse_metric_rows(
                     if let Ok(x) = row.try_get::<f64, _>("x") {
                         if let Ok(value) = row.try_get::<f64, _>("value") {
                             if let Ok(created_at) = row.try_get::<NaiveDateTime, _>("created_at") {
-                                return Some([x, value, created_at.timestamp() as f64]);
+                                let new_value = [x, value, created_at.timestamp() as f64];
+                                if let Some(old_orig_values) = old_orig_values {
+                                    if old_orig_values.orig_values.contains(&new_value) {
+                                        return None;
+                                    }
+                                }
+                                return Some(new_value);
                             }
                         }
                     }
@@ -1951,6 +2011,7 @@ fn parse_metric_rows(
                         orig_values,
                         xaxis,
                         values: Vec::new(),
+                        last_value: *last_timestamp,
                     },
                 );
             } else {
@@ -1959,6 +2020,12 @@ fn parse_metric_rows(
                     .unwrap()
                     .orig_values
                     .extend(orig_values);
+                run.metrics
+                    .get_mut(&variable)
+                    .unwrap()
+                    .orig_values
+                    .sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+                run.metrics.get_mut(&variable).unwrap().last_value = *last_timestamp;
             }
         }
     }
@@ -1983,6 +2050,7 @@ fn main() -> Result<(), sqlx::Error> {
     let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_db_filters));
     let (tx_db_artifact, rx_db_artifact) = mpsc::channel::<ArtifactTransfer>();
     let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<(String, String, String)>();
+    let (tx_batch_status, rx_batch_status) = mpsc::channel::<(usize, usize)>();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rt_handle = rt.handle().clone();
     let _guard = rt.enter();
@@ -2008,6 +2076,7 @@ fn main() -> Result<(), sqlx::Error> {
         let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
         let mut runs: HashMap<String, Run> = Default::default();
         loop {
+            let loop_time = std::time::Instant::now();
             let update_params = async {
                 loop {
                     {
@@ -2021,14 +2090,17 @@ fn main() -> Result<(), sqlx::Error> {
                 }
             };
             tokio::select! {
-            _ = update_state(&mut runs, &pool, &train_ids, &mut last_timestamp, &tx) => {
+            _ = update_state(&mut runs, &pool, &train_ids, &mut last_timestamp, &tx, &tx_batch_status) => {
                 tx.send(runs.clone()).expect("Failed to send data");
             },
             new_train_ids = update_params => { train_ids = new_train_ids;
                 last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
                 runs = HashMap::new();
             }
-
+            }
+            let elapsed_loop_time = loop_time.elapsed();
+            if elapsed_loop_time.as_secs_f32() < 1.0 { 
+                tokio::time::sleep(std::time::Duration::from_secs(1) - elapsed_loop_time).await;
             }
         }
     });
@@ -2162,6 +2234,8 @@ fn main() -> Result<(), sqlx::Error> {
                 args,
                 tx_db_artifact_path: Arc::new(Mutex::new(tx_db_artifact_path)),
                 rx_db_artifact: Arc::new(Mutex::new(rx_db_artifact)),
+                rx_batch_status,
+                batch_status: (0, 0),
             })
         }),
     );
@@ -2195,13 +2269,24 @@ async fn update_state(
     train_ids: &Vec<String>,
     last_timestamp: &mut NaiveDateTime,
     tx: &Sender<HashMap<String, Run>>,
+    tx_batch_status: &Sender<(usize, usize)>,
 ) {
     if runs.is_empty() {
-        if let Err(err) = get_state_new(pool, runs, train_ids, last_timestamp, Some(tx)).await {
+        if let Err(err) = get_state_new(
+            pool,
+            runs,
+            train_ids,
+            last_timestamp,
+            Some(tx),
+            tx_batch_status,
+        )
+        .await
+        {
             println!("{}", err.to_string());
         }
     } else {
         // println!("[db] parameters...");
+        tx_batch_status.send((0, 3));
         get_state_parameters(pool, runs).await;
         tx.send(runs.clone()).expect("Failed to send data");
         // println!("[db] artifacts...");
@@ -2217,6 +2302,7 @@ async fn update_state(
             "metrics_batch_order_100".to_string(),
         )
         .await;
+        tx_batch_status.send((1, 3));
         get_state_metrics(
             train_ids,
             last_timestamp,
@@ -2226,6 +2312,7 @@ async fn update_state(
             "metrics_batch_order_10".to_string(),
         )
         .await;
+        tx_batch_status.send((2, 3));
         get_state_metrics(
             train_ids,
             last_timestamp,
@@ -2236,5 +2323,6 @@ async fn update_state(
         )
         .await
         .expect("Batch level metrics:");
+        tx_batch_status.send((3, 3));
     }
 }
