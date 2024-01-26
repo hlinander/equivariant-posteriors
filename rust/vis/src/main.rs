@@ -45,6 +45,7 @@ struct Run {
     artifacts: HashMap<String, String>,
     metrics: HashMap<String, Metric>,
     created_at: chrono::NaiveDateTime,
+    // last_update: 
 }
 
 #[derive(Default, Debug, Clone)]
@@ -634,13 +635,15 @@ impl eframe::App for GuiRuns {
         egui::SidePanel::right("Metrics")
             .resizable(true)
             .default_width(300.0)
-            .width_range(100.0..=300.0)
+            .width_range(100.0..=500.0)
             .show(ctx, |ui| {
                 self.render_metrics(ui, &metric_names);
                 ui.separator();
                 self.render_artifact_selector(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical(|ui| {
+                
             ui.horizontal(|ui| {
                 if ui.button("Time").clicked() {
                     self.gui_params.x_axis = XAxis::Time;
@@ -652,11 +655,13 @@ impl eframe::App for GuiRuns {
                 if let Ok(batch_status) = self.rx_batch_status.try_recv() {
                     self.batch_status = batch_status;
                 }
+            });
                 if self.batch_status.1 > 0 {
                     ui.add(egui::ProgressBar::new(
                         self.batch_status.0 as f32 / self.batch_status.1 as f32,
                     ));
                 }
+
             });
 
             ui.separator();
@@ -1310,13 +1315,16 @@ impl GuiRuns {
             } else {
                 ctx.style().visuals.widgets.inactive.bg_fill
             };
-            if ui
+            let button = ui
                 .add(
                     egui::Button::new(value)
                         .stroke(egui::Stroke::new(1.0, color))
                         .selected(active_filter),
-                )
-                .clicked()
+                );
+            if button.clicked_by(egui::PointerButton::Middle) {
+                ui.output_mut(|output| {output.copied_text = value.clone();});
+            }
+            else if button.clicked()
             {
                 if self
                     .gui_params
@@ -1720,6 +1728,15 @@ async fn get_state_new(
     tx_batch_status.send((0, 3));
     get_state_parameters(pool, runs).await?;
     get_state_artifacts(train_ids, pool, runs).await?;
+    let mut epoch_last_timestamp = last_timestamp.clone();
+    get_state_epoch_metrics(
+        train_ids,
+        &mut epoch_last_timestamp,
+        pool,
+        runs,
+        tx_runs,
+    )
+    .await?;
     let mut every_100_last_timestamp = last_timestamp.clone();
     get_state_metrics(
         train_ids,
@@ -1752,7 +1769,7 @@ async fn get_state_new(
         "metrics".to_string(),
     )
     .await?;
-    *last_timestamp = batch_last_timestamp;
+    *last_timestamp = batch_last_timestamp.min(epoch_last_timestamp);
     tx_batch_status.send((3, 3));
     Ok(())
 }
@@ -1765,26 +1782,21 @@ async fn get_state_metrics(
     tx_runs: Option<&Sender<HashMap<String, Run>>>,
     metric_table: String,
 ) -> Result<(), sqlx::Error> {
-    Ok(if train_ids.len() > 0 {
-        let mut batch_timestamp = last_timestamp.clone();
+    if train_ids.len() > 0 {
+        // let last_batch_timestamp = last_timestamp.clone();
+        // let mut new_batch_timestamp = last_timestamp.clone();
         let mut chunk_size = 1000i32;
         loop {
             let q = format!(
                 r#"
-        SELECT * FROM {}
-            WHERE train_id = ANY($2) 
-                AND created_at > $3 
-              --  AND xaxis='batch' 
-             --   AND id > $4
-              --  AND (CAST(x as int) % 1000 = 0 OR x < 500) 
-            -- // ORDER BY train_id, variable, xaxis, x, created_at
-            -- train_id, xaxis, created_at, variable, x
-            LIMIT $4
-            -- OFFSET $4
-        "#,
+            SELECT * FROM {}
+                WHERE train_id = ANY($1) 
+                    AND created_at > $2 
+                ORDER BY created_at, train_id, variable, xaxis, x, created_at
+                LIMIT $3
+            "#,
                 metric_table
             );
-            // println!("[db] requesting {} rows at {}", chunk_size, offset);
             let query_string = |pre: Option<String>, q: String| {
                 if let Some(pre) = pre {
                     format!("{} {}", pre, q)
@@ -1792,38 +1804,19 @@ async fn get_state_metrics(
                     q
                 }
             };
-            // {
-            //     // sqlx::query("SET track_io_timing = ON;")
-            //     //     .execute(pool)
-            //     //     .await
-            //     //     .unwrap();
-            //     let q2 = query_string(Some("EXPLAIN ANALYZE".to_string()), q.clone());
-            //     let query = sqlx::query(q2.as_str())
-            //         .bind(train_ids)
-            //         .bind(batch_timestamp)
-            //         // .bind(last_id)
-            //         .bind(chunk_size);
-            //     // .bind(offset);
-            //     let rows = query.fetch_all(pool).await?;
-            //     for row in rows {
-            //         let plan: String = row.get(0);
-            //         println!("{}", plan);
-            //     }
-            // }
-            // println!("{:?}", query);
             let q1 = query_string(None, q.clone());
             let query_time = std::time::Instant::now();
             let query = sqlx::query(q1.as_str())
-                .bind(metric_table.clone())
+                // .bind(metric_table.clone())
                 .bind(train_ids)
-                .bind(batch_timestamp)
+                .bind(*last_timestamp)
                 // .bind(last_id)
                 .bind(chunk_size);
             // .bind(offset);
             let metric_rows = query.fetch_all(pool).await?;
             let query_elapsed_time = query_time.elapsed().as_secs_f32();
             let received_rows = metric_rows.len();
-            parse_metric_rows(metric_rows, runs, &mut batch_timestamp);
+            parse_metric_rows(metric_rows, runs, last_timestamp);
             println!("[db] recieved {}", received_rows);
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
@@ -1839,15 +1832,26 @@ async fn get_state_metrics(
                 chunk_size /= 2;
             }
         }
+    }
+    Ok(())
+}
 
-        let mut epoch_timestamp = last_timestamp.clone();
+async fn get_state_epoch_metrics(
+    train_ids: &Vec<String>,
+    last_timestamp: &mut NaiveDateTime,
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    runs: &mut HashMap<String, Run>,
+    tx_runs: Option<&Sender<HashMap<String, Run>>>,
+) -> Result<(), sqlx::Error> {
+        // let mut new_epoch_timestamp = last_timestamp.clone();
+        let chunk_size = 1000i32;
         let q = format!(
             r#"
         SELECT * FROM metrics 
             WHERE train_id = ANY($1) 
                 AND created_at > $2 
                 AND xaxis='epoch' 
-            ORDER BY train_id, variable, xaxis, x
+            ORDER BY created_at, train_id, variable, xaxis, x
             LIMIT $3
             -- OFFSET $4
         "#,
@@ -1855,14 +1859,14 @@ async fn get_state_metrics(
         loop {
             let metric_rows = sqlx::query(q.as_str())
                 .bind(train_ids)
-                .bind(epoch_timestamp)
+                .bind(*last_timestamp)
                 .bind(chunk_size)
                 // .bind(offset)
                 .fetch_all(pool)
                 .await?;
             let received_rows = metric_rows.len();
-            parse_metric_rows(metric_rows, runs, &mut epoch_timestamp);
-            *last_timestamp = batch_timestamp.max(epoch_timestamp);
+            parse_metric_rows(metric_rows, runs, last_timestamp);
+            // *last_timestamp = batch_timestamp.max(epoch_timestamp);
             println!("[db] recieved {}", received_rows);
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
@@ -1873,7 +1877,7 @@ async fn get_state_metrics(
                 break;
             }
         }
-    })
+    Ok(())
 }
 
 async fn get_state_artifacts(
@@ -1962,8 +1966,9 @@ fn parse_metric_rows(
     runs: &mut HashMap<String, Run>,
     last_timestamp: &mut NaiveDateTime,
 ) {
-    for (train_id, run_metric_rows) in &metric_rows
-        .into_iter()
+    let metric_rows_sorted = metric_rows.iter().sorted_by_key(|row| (row.get::<String, _>("train_id"), row.get::<String,_>("variable")));
+    for (train_id, run_metric_rows) in &metric_rows_sorted
+        // .into_iter()
         .group_by(|row| row.get::<String, _>("train_id"))
     {
         let run = runs.get_mut(&train_id).unwrap();
@@ -2286,36 +2291,48 @@ async fn update_state(
         }
     } else {
         // println!("[db] parameters...");
-        tx_batch_status.send((0, 3));
-        get_state_parameters(pool, runs).await;
+        tx_batch_status.send((0, 3)).unwrap();
+        get_state_parameters(pool, runs).await.unwrap();
         tx.send(runs.clone()).expect("Failed to send data");
         // println!("[db] artifacts...");
-        get_state_artifacts(train_ids, pool, runs).await;
+        get_state_artifacts(train_ids, pool, runs).await.unwrap();
         tx.send(runs.clone()).expect("Failed to send data");
+        let mut epoch_last_timestamp = last_timestamp.clone();
+        get_state_epoch_metrics(
+            train_ids,
+            &mut epoch_last_timestamp,
+            pool,
+            runs,
+            Some(tx),
+        )
+        .await.unwrap();
         // println!("[db] metrics...");
+        let mut batch_every_100_last_timestamp = last_timestamp.clone();
         get_state_metrics(
             train_ids,
-            last_timestamp,
+            &mut batch_every_100_last_timestamp,
             pool,
             runs,
             Some(tx),
             "metrics_batch_order_100".to_string(),
         )
-        .await;
-        tx_batch_status.send((1, 3));
+        .await.unwrap();
+        tx_batch_status.send((1, 3)).unwrap();
+        let mut batch_every_10_last_timestamp = last_timestamp.clone();
         get_state_metrics(
             train_ids,
-            last_timestamp,
+            &mut batch_every_10_last_timestamp,
             pool,
             runs,
             Some(tx),
             "metrics_batch_order_10".to_string(),
         )
-        .await;
-        tx_batch_status.send((2, 3));
+        .await.unwrap();
+        tx_batch_status.send((2, 3)).unwrap();
+        let mut batch_last_timestamp = last_timestamp.clone();
         get_state_metrics(
             train_ids,
-            last_timestamp,
+            &mut batch_last_timestamp,
             pool,
             runs,
             Some(tx),
@@ -2323,6 +2340,7 @@ async fn update_state(
         )
         .await
         .expect("Batch level metrics:");
-        tx_batch_status.send((3, 3));
+        tx_batch_status.send((3, 3)).unwrap();
+        *last_timestamp = epoch_last_timestamp.min(batch_last_timestamp);
     }
 }
