@@ -45,7 +45,7 @@ struct Run {
     artifacts: HashMap<String, String>,
     metrics: HashMap<String, Metric>,
     created_at: chrono::NaiveDateTime,
-    // last_update: 
+    // last_update:
 }
 
 #[derive(Default, Debug, Clone)]
@@ -643,25 +643,23 @@ impl eframe::App for GuiRuns {
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
-                
-            ui.horizontal(|ui| {
-                if ui.button("Time").clicked() {
-                    self.gui_params.x_axis = XAxis::Time;
-                }
-                if ui.button("Batch").clicked() {
-                    self.gui_params.x_axis = XAxis::Batch;
-                }
-                self.render_time_selector(ui);
-                if let Ok(batch_status) = self.rx_batch_status.try_recv() {
-                    self.batch_status = batch_status;
-                }
-            });
+                ui.horizontal(|ui| {
+                    if ui.button("Time").clicked() {
+                        self.gui_params.x_axis = XAxis::Time;
+                    }
+                    if ui.button("Batch").clicked() {
+                        self.gui_params.x_axis = XAxis::Batch;
+                    }
+                    self.render_time_selector(ui);
+                    if let Ok(batch_status) = self.rx_batch_status.try_recv() {
+                        self.batch_status = batch_status;
+                    }
+                });
                 if self.batch_status.1 > 0 {
                     ui.add(egui::ProgressBar::new(
                         self.batch_status.0 as f32 / self.batch_status.1 as f32,
                     ));
                 }
-
             });
 
             ui.separator();
@@ -1159,6 +1157,25 @@ impl GuiRuns {
                     self.dirty = true;
                 };
                 let param_names = param_values.keys().cloned().collect_vec();
+                for name in param_names.iter().sorted() {
+                    if let Some(values) = self.gui_params.param_filters.get(name) {
+                        if !values.is_empty() {
+                            egui::CollapsingHeader::new(name)
+                                // .default_open(self.gui_params.param_name_filter.len() > 1)
+                                .default_open(!name.ends_with("_id"))
+                                .show(ui, |ui| {
+                                    self.render_parameter_key(
+                                        name,
+                                        ui,
+                                        &param_values,
+                                        &filtered_values,
+                                        ctx,
+                                    );
+                                });
+                        }
+                    }
+                }
+                ui.separator();
                 self.render_parameters_one_level(
                     &param_values,
                     param_names,
@@ -1200,10 +1217,15 @@ impl GuiRuns {
                     // }
                 })
                 .collect_vec();
-            if param_group_vec
-                .iter()
-                .all(|name| !name.contains(self.gui_params.param_name_filter.as_str()))
-            {
+            let param_filter = self.gui_params.param_name_filter.as_str();
+            if param_group_vec.iter().all(|name| {
+                !param_values
+                    .get(name)
+                    .unwrap()
+                    .iter()
+                    .any(|value_str| value_str.to_lowercase().contains(param_filter))
+                    && !name.contains(param_filter)
+            }) {
                 continue;
             }
             // ui.collapsing(param_group_name, |ui| {
@@ -1229,51 +1251,77 @@ impl GuiRuns {
                         );
                     } else {
                         for param_name in &param_group_vec {
-                            if !param_name.contains(self.gui_params.param_name_filter.as_str()) {
+                            if !param_values
+                                .get(param_name)
+                                .unwrap()
+                                .iter()
+                                .any(|value_str| {
+                                    value_str
+                                        .to_lowercase()
+                                        .contains(self.gui_params.param_name_filter.as_str())
+                                })
+                                && !param_name.contains(self.gui_params.param_name_filter.as_str())
+                            {
                                 continue;
                             }
                             // ui.
                             // ui.separator();
-                            let frame_border =
-                                if self.gui_params.inspect_params.contains(param_name) {
-                                    1.0
-                                } else {
-                                    0.0
-                                };
-                            // ui.allocate_ui(egui::Vec2::new(0.0, 0.0), |ui| {})
-                            let param_frame = egui::Frame::none()
-                                // .fill(egui::Color32::GREEN)
-                                .stroke(egui::Stroke::new(frame_border, egui::Color32::GREEN))
-                                .show(ui, |ui| {
-                                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                                    // ui.label(param_name);
-                                    ui.horizontal_wrapped(|ui| {
-                                        self.render_parameter_values(
-                                            &param_values,
-                                            &param_name,
-                                            &filtered_values,
-                                            ctx,
-                                            ui,
-                                        );
-                                    });
-                                });
-                            // println!("{:?}", param_frame.response.sense);
-                            if param_frame
-                                .response
-                                .interact(egui::Sense::click())
-                                .clicked()
-                            {
-                                if self.gui_params.inspect_params.contains(param_name) {
-                                    self.gui_params.inspect_params.remove(param_name);
-                                } else {
-                                    self.gui_params
-                                        .inspect_params
-                                        .insert(param_name.to_string());
-                                }
-                            }
+                            self.render_parameter_key(
+                                param_name,
+                                ui,
+                                param_values,
+                                filtered_values,
+                                ctx,
+                            );
                         }
                     }
                 });
+        }
+    }
+
+    fn render_parameter_key(
+        &mut self,
+        param_name: &String,
+        ui: &mut egui::Ui,
+        param_values: &HashMap<String, HashSet<String>>,
+        filtered_values: &HashMap<String, HashSet<String>>,
+        ctx: &egui::Context,
+    ) {
+        let frame_border = if self.gui_params.inspect_params.contains(param_name) {
+            1.0
+        } else {
+            0.0
+        };
+        // ui.allocate_ui(egui::Vec2::new(0.0, 0.0), |ui| {})
+        let param_frame = egui::Frame::none()
+            // .fill(egui::Color32::GREEN)
+            .stroke(egui::Stroke::new(frame_border, egui::Color32::GREEN))
+            .show(ui, |ui| {
+                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                // ui.label(param_name);
+                ui.horizontal_wrapped(|ui| {
+                    self.render_parameter_values(
+                        &param_values,
+                        &param_name,
+                        &filtered_values,
+                        ctx,
+                        ui,
+                    );
+                });
+            });
+        // println!("{:?}", param_frame.response.sense);
+        if param_frame
+            .response
+            .interact(egui::Sense::click())
+            .clicked()
+        {
+            if self.gui_params.inspect_params.contains(param_name) {
+                self.gui_params.inspect_params.remove(param_name);
+            } else {
+                self.gui_params
+                    .inspect_params
+                    .insert(param_name.to_string());
+            }
         }
     }
 
@@ -1293,7 +1341,13 @@ impl GuiRuns {
             .sorted_by(|name1, name2| {
                 if let Ok(float1) = name1.parse::<f32>() {
                     if let Ok(float2) = name2.parse::<f32>() {
-                        return float1.partial_cmp(&float2).unwrap();
+                        let order = float1.partial_cmp(&float2).unwrap();
+                        if order != core::cmp::Ordering::Equal {
+                            return order;
+                        }
+                        return name1.cmp(name2);
+                        // let s1 = name1.parse::<String>().unwrap();
+                        // let s2 = name1.parse::<String>().unwrap();
                     }
                 }
                 name1.cmp(name2)
@@ -1315,17 +1369,16 @@ impl GuiRuns {
             } else {
                 ctx.style().visuals.widgets.inactive.bg_fill
             };
-            let button = ui
-                .add(
-                    egui::Button::new(value)
-                        .stroke(egui::Stroke::new(1.0, color))
-                        .selected(active_filter),
-                );
+            let button = ui.add(
+                egui::Button::new(value)
+                    .stroke(egui::Stroke::new(1.0, color))
+                    .selected(active_filter),
+            );
             if button.clicked_by(egui::PointerButton::Middle) {
-                ui.output_mut(|output| {output.copied_text = value.clone();});
-            }
-            else if button.clicked()
-            {
+                ui.output_mut(|output| {
+                    output.copied_text = value.clone();
+                });
+            } else if button.clicked() {
                 if self
                     .gui_params
                     .param_filters
@@ -1729,14 +1782,7 @@ async fn get_state_new(
     get_state_parameters(pool, runs).await?;
     get_state_artifacts(train_ids, pool, runs).await?;
     let mut epoch_last_timestamp = last_timestamp.clone();
-    get_state_epoch_metrics(
-        train_ids,
-        &mut epoch_last_timestamp,
-        pool,
-        runs,
-        tx_runs,
-    )
-    .await?;
+    get_state_epoch_metrics(train_ids, &mut epoch_last_timestamp, pool, runs, tx_runs).await?;
     let mut every_100_last_timestamp = last_timestamp.clone();
     get_state_metrics(
         train_ids,
@@ -1760,6 +1806,16 @@ async fn get_state_new(
     .await?;
     tx_batch_status.send((2, 3));
     let mut batch_last_timestamp = every_10_last_timestamp.clone();
+    get_state_metrics(
+        train_ids,
+        &mut batch_last_timestamp,
+        pool,
+        runs,
+        tx_runs,
+        "metrics_batch_order".to_string(),
+    )
+    .await?;
+    // let mut batch_last_timestamp = every_10_last_timestamp.clone();
     get_state_metrics(
         train_ids,
         &mut batch_last_timestamp,
@@ -1792,7 +1848,7 @@ async fn get_state_metrics(
             SELECT * FROM {}
                 WHERE train_id = ANY($1) 
                     AND created_at > $2 
-                ORDER BY created_at, train_id, variable, xaxis, x, created_at
+                ORDER BY created_at, train_id, variable, xaxis, x
                 LIMIT $3
             "#,
                 metric_table
@@ -1817,7 +1873,10 @@ async fn get_state_metrics(
             let query_elapsed_time = query_time.elapsed().as_secs_f32();
             let received_rows = metric_rows.len();
             parse_metric_rows(metric_rows, runs, last_timestamp);
-            println!("[db] recieved {}", received_rows);
+            println!(
+                "[db] recieved batch data from {}: {}",
+                metric_table, received_rows
+            );
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
                 println!("[db] sent {}", received_rows);
@@ -1828,8 +1887,10 @@ async fn get_state_metrics(
             }
             if query_elapsed_time < 0.5 {
                 chunk_size *= 2;
+                println!("Increased chunks: {}", chunk_size);
             } else if query_elapsed_time > 2.0 {
                 chunk_size /= 2;
+                println!("Decreased chunks: {}", chunk_size);
             }
         }
     }
@@ -1843,10 +1904,10 @@ async fn get_state_epoch_metrics(
     runs: &mut HashMap<String, Run>,
     tx_runs: Option<&Sender<HashMap<String, Run>>>,
 ) -> Result<(), sqlx::Error> {
-        // let mut new_epoch_timestamp = last_timestamp.clone();
-        let chunk_size = 1000i32;
-        let q = format!(
-            r#"
+    // let mut new_epoch_timestamp = last_timestamp.clone();
+    let chunk_size = 1000i32;
+    let q = format!(
+        r#"
         SELECT * FROM metrics 
             WHERE train_id = ANY($1) 
                 AND created_at > $2 
@@ -1855,28 +1916,28 @@ async fn get_state_epoch_metrics(
             LIMIT $3
             -- OFFSET $4
         "#,
-        );
-        loop {
-            let metric_rows = sqlx::query(q.as_str())
-                .bind(train_ids)
-                .bind(*last_timestamp)
-                .bind(chunk_size)
-                // .bind(offset)
-                .fetch_all(pool)
-                .await?;
-            let received_rows = metric_rows.len();
-            parse_metric_rows(metric_rows, runs, last_timestamp);
-            // *last_timestamp = batch_timestamp.max(epoch_timestamp);
-            println!("[db] recieved {}", received_rows);
-            if let Some(tx) = tx_runs {
-                tx.send(runs.clone()).expect("send failed");
-                println!("[db] sent {}", received_rows);
-            }
-            // offset += chunk_size;
-            if received_rows < chunk_size as usize {
-                break;
-            }
+    );
+    loop {
+        let metric_rows = sqlx::query(q.as_str())
+            .bind(train_ids)
+            .bind(*last_timestamp)
+            .bind(chunk_size)
+            // .bind(offset)
+            .fetch_all(pool)
+            .await?;
+        let received_rows = metric_rows.len();
+        parse_metric_rows(metric_rows, runs, last_timestamp);
+        // *last_timestamp = batch_timestamp.max(epoch_timestamp);
+        println!("[db] recieved {}", received_rows);
+        if let Some(tx) = tx_runs {
+            tx.send(runs.clone()).expect("send failed");
+            println!("[db] sent {}", received_rows);
         }
+        // offset += chunk_size;
+        if received_rows < chunk_size as usize {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -1966,7 +2027,12 @@ fn parse_metric_rows(
     runs: &mut HashMap<String, Run>,
     last_timestamp: &mut NaiveDateTime,
 ) {
-    let metric_rows_sorted = metric_rows.iter().sorted_by_key(|row| (row.get::<String, _>("train_id"), row.get::<String,_>("variable")));
+    let metric_rows_sorted = metric_rows.iter().sorted_by_key(|row| {
+        (
+            row.get::<String, _>("train_id"),
+            row.get::<String, _>("variable"),
+        )
+    });
     for (train_id, run_metric_rows) in &metric_rows_sorted
         // .into_iter()
         .group_by(|row| row.get::<String, _>("train_id"))
@@ -2104,7 +2170,7 @@ fn main() -> Result<(), sqlx::Error> {
             }
             }
             let elapsed_loop_time = loop_time.elapsed();
-            if elapsed_loop_time.as_secs_f32() < 1.0 { 
+            if elapsed_loop_time.as_secs_f32() < 1.0 {
                 tokio::time::sleep(std::time::Duration::from_secs(1) - elapsed_loop_time).await;
             }
         }
@@ -2298,14 +2364,9 @@ async fn update_state(
         get_state_artifacts(train_ids, pool, runs).await.unwrap();
         tx.send(runs.clone()).expect("Failed to send data");
         let mut epoch_last_timestamp = last_timestamp.clone();
-        get_state_epoch_metrics(
-            train_ids,
-            &mut epoch_last_timestamp,
-            pool,
-            runs,
-            Some(tx),
-        )
-        .await.unwrap();
+        get_state_epoch_metrics(train_ids, &mut epoch_last_timestamp, pool, runs, Some(tx))
+            .await
+            .unwrap();
         // println!("[db] metrics...");
         let mut batch_every_100_last_timestamp = last_timestamp.clone();
         get_state_metrics(
@@ -2316,7 +2377,8 @@ async fn update_state(
             Some(tx),
             "metrics_batch_order_100".to_string(),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         tx_batch_status.send((1, 3)).unwrap();
         let mut batch_every_10_last_timestamp = last_timestamp.clone();
         get_state_metrics(
@@ -2327,7 +2389,8 @@ async fn update_state(
             Some(tx),
             "metrics_batch_order_10".to_string(),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         tx_batch_status.send((2, 3)).unwrap();
         let mut batch_last_timestamp = last_timestamp.clone();
         get_state_metrics(
