@@ -1,6 +1,7 @@
 import json
 import torch
 import numpy as np
+import math
 from datetime import datetime, timedelta
 import shutil
 
@@ -30,6 +31,7 @@ def numpy_to_xds(np_array, xds_template):
 class DataHPConfig:
     nside: int = 64
     version: int = 10
+    driscoll_healy: bool = False
 
     def serialize_human(self):
         return serialize_human(self.__dict__)
@@ -77,6 +79,47 @@ class DataHP(torch.utils.data.Dataset):
         )
 
     def e5_to_numpy(self, e5xr):
+        if self.config.driscoll_healy:
+            return self.e5_to_numpy_dh(e5xr)
+        else:
+            return self.e5_to_numpy_hp(e5xr)
+
+    def e5_to_numpy_dh(self, e5xr):
+        stats = deserialize_dataset_statistics(self.config.nside)
+        n_pixels = healpix.nside2npix(self.config.nside)
+        # np_dh = w * h / 2^(2n)
+        # 2^(2n) = w * h / np_dh
+        # 2n = log2(w*h/np_dh)
+        # n = log2(w*h/np_dh) / 2
+        scale_factor = math.log2(1440 * 721 / n_pixels)
+        lon = math.ceil(1440 / scale_factor)
+        lat = math.ceil(721 / scale_factor)
+
+        new_lon = np.linspace(e5xr.lon[0], e5xr.lon[-1], lon)
+        new_lat = np.linspace(e5xr.lat[0], e5xr.lat[-1], lat)
+
+        def interpolate(variable: xr.DataArray):
+            xhp = variable.interp(
+                latitude=new_lat, longitude=new_lon, kwargs={"fill_value": None}
+            )
+            np_image = np.array(xhp.to_array().to_numpy(), dtype=np.float32)
+            # hp_image = (hp_image - hp_image.mean(axis=1, keepdims=True)) / hp_image.std(
+            # axis=1, keepdims=True
+            # )
+            return np_image
+
+        dh_surface = interpolate(e5xr.surface)
+        dh_upper = interpolate(e5xr.upper)
+        dh_surface = (dh_surface - stats.item()["mean_surface"]) / stats.item()[
+            "std_surface"
+        ]
+        dh_upper = (dh_upper - stats.item()["mean_upper"]) / stats.item()["std_upper"]
+        # max_vals = np.amax(dh_image, axis=1, keepdims=True)
+        # dh_image = dh_image / max_vals
+        # breakpoint()
+        return dh_surface, dh_upper
+
+    def e5_to_numpy_hp(self, e5xr):
         stats = deserialize_dataset_statistics(self.config.nside)
         npix = healpix.nside2npix(self.config.nside)
         hlong, hlat = healpix.pix2ang(
@@ -126,10 +169,16 @@ class DataHP(torch.utils.data.Dataset):
         return e5s
 
     def get_cache_dir(self):
-        return (
-            env().paths.datasets
-            / f"era5_lite_np_cache_normalized_nside_{self.config.nside}"
-        )
+        if self.config.driscoll_healy:
+            return (
+                env().paths.datasets
+                / f"era5_lite_np_cache_normalized_nside_{self.config.nside}_dh"
+            )
+        else:
+            return (
+                env().paths.datasets
+                / f"era5_lite_np_cache_normalized_nside_{self.config.nside}"
+            )
 
     def __getitem__(self, idx):
         if idx >= len(self):

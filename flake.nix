@@ -22,6 +22,39 @@
       });
       rustToolchain = fenix.packages."${system}".stable;
       helixmaster = helix-pkg.packages.${system}.default;
+      weatherlearn = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "weatherlearn";
+        version = "7b3f";
+        format = "pyproject";
+
+        # disabled = pythonOlder "3.8";
+
+        src = pkgs.fetchFromGitHub {
+          owner = "lizhuoq";
+          repo = pname;
+          # rev = "refs/tags/${version}";
+          rev = "7b3f3c790380c4fddd2e06f1bb7db1a70894717b";
+          hash = "sha256-jiLmtvtRJJOfeFdzYv56hq8Uv2MVVyuy3kTTGe0vvXE=";
+          # hash = "sha256-Q8cSgupfj6xKD0bYgL6bvYBwdYDdNaiWEWWUrRvwc4g";
+        };
+
+        propagatedBuildInputs = [
+          # pkgs.python3Packages.aiohttp
+          pkgs.poetry
+          pkgs.python3Packages.poetry-core
+          pkgs.python3Packages.pytorch
+          pkgs.python3Packages.timm
+          pkgs.python3Packages.numpy
+          # cdsapi
+          
+        ]; # ++ pkgs.lib.optionals (pkgs.pythonOlder "3.8") [
+        #pkgs.python3Packages.importlib-metadata
+        #];
+
+        # Tests require pervasive internet access
+        doCheck = false;
+      };
+
       datasets = pkgs.python3Packages.buildPythonPackage rec {
         pname = "datasets";
         version = "2.14.7";
@@ -225,6 +258,7 @@
         psycopg2
         pytest
         sqlalchemy
+        weatherlearn
       ];
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
