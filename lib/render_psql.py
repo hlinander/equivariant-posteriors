@@ -473,6 +473,34 @@ def add_parameter(train_run: TrainRun, name: str, value: str):
     )
 
 
+def connect_psql():
+    return psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=env().postgres_host,
+        port=int(env().postgres_port),
+        autocommit=False,
+    )
+
+
+def add_metric_epoch_values(conn, train_run, metric_name, value):
+    train_id = train_run.serialize_human()["train_id"]
+
+    conn.execute(
+        """
+        INSERT INTO metrics (train_id, x, xaxis, variable, value)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (train_id, x, xaxis, variable) DO UPDATE SET value = EXCLUDED.value
+    """,
+        (
+            train_id,
+            train_run.epochs,
+            "epoch",
+            metric_name,
+            value,
+        ),
+    )
+
+
 def _add_artifact(train_id: str, ensemble_id: str, name: str, path: Path):
     path = Path(path) if not isinstance(path, Path) else path
     size_bytes = path.stat().st_size
@@ -494,7 +522,7 @@ def _add_artifact(train_id: str, ensemble_id: str, name: str, path: Path):
             """
             INSERT INTO artifacts (train_id, ensemble_id, name, path, size)
             VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s, %(size)s)
-            ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path
+            ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path, size=EXCLUDED.size
             RETURNING id
             """,
             value_dict,
@@ -562,7 +590,36 @@ def has_artifact(train_run: TrainRun, name: str):
             """,
             dict(train_id=train_run_dict["train_id"], name=name),
         )
-        return rows.fetchone() is not None
+        res = rows.fetchone()
+        return res is not None
+
+
+def get_parameter(train_run: TrainRun, name: str):
+    # train_run_dict = train_run.serialize_human()
+    try:
+        setup_psql()
+    except psycopg.errors.OperationalError as e:
+        print("[Database] Could not connect to database, artifact not added.")
+        return (False, str(e))
+
+    train_run_dict = train_run.serialize_human()
+    with psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=env().postgres_host,
+        port=int(env().postgres_port),
+        autocommit=False,
+    ) as conn:
+        rows = conn.execute(
+            """
+            SELECT value_text FROM runs WHERE train_id=%(train_id)s AND variable=%(name)s
+            """,
+            dict(train_id=train_run_dict["train_id"], name=name),
+        )
+        res = rows.fetchone()
+        if res is not None:
+            return res[0]
+        else:
+            return None
 
 
 def add_ensemble_artifact(

@@ -15,6 +15,7 @@ from lib.serialization import (
     DeserializeConfig,
     is_serialized,
     get_train_run_status,
+    get_serialized_epoch,
 )
 from lib.model_factory import get_factory
 from lib.stable_hash import stable_hash
@@ -189,6 +190,8 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
 def is_ensemble_serialized(ensemble_config: EnsembleConfig):
     for member_config in ensemble_config.members:
         if not is_serialized(member_config):
+            return False
+        if get_serialized_epoch(member_config.train_config) < member_config.epochs:
             return False
 
     return True

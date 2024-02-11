@@ -23,6 +23,7 @@ def ddp_setup(backend=None) -> str:
     """
     global _DEVICE
     # torch.multiprocessing.set_sharing_strategy('file_system')
+    # breakpoint()
     if _DEVICE is not None:
         return _DEVICE
     if "TORCH_DEVICE" in os.environ:
@@ -32,6 +33,7 @@ def ddp_setup(backend=None) -> str:
         return device
 
     if "EP_TORCHRUN" not in os.environ:
+        print("No ep torch!")
         _DEVICE = "cpu"
         return "cpu"
 
