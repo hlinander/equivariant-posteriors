@@ -398,7 +398,7 @@ class PatchExpand(nn.Module):
         """
         x = self.expand(x)
         B, D, N, C = x.shape
-
+        # breakpoint()
         x = rearrange(x, "b d n (p c)-> b d (n p) c", p=4, c=C // 4)
         x = self.norm(x)
         x = self.linear(x)
@@ -595,6 +595,7 @@ class PatchEmbed(nn.Module):
         x_upper = self.proj_upper(x_upper)
         x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
         x = torch.concatenate([x_surface, x_upper], dim=2)
+        # breakpoint()
         x = x.permute(0, 2, 3, 1)
         return x
 
@@ -784,32 +785,56 @@ class SwinHPPangu(nn.Module):
     def no_weight_decay_keywords(self):
         return {"relative_position_bias_table"}
 
-    def forward(self, batch):
-        x_surface = batch["input_surface"]
-        x_upper = batch["input_upper"]
+    def _forward(self, batch_tuple):  # , batch):
+        x_surface, x_upper = batch_tuple  # ["input_surface"]
+        layer_out = []
+        # x_upper = batch["input_upper"]
         # input = x
         x = self.patch_embed(x_surface, x_upper)
+        layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
         # skip2 = x
         # x = x + self.absolute_pos_embed
         # x = x.permute(0, 2, 1)
         x = self.layers[0](x)
+        layer_out.append(("layer0", x[0, 0].permute(1, 0).detach()))
         skip = x
         x = self.downsample(x)
+        layer_out.append(("downsample", x[0, 0, :, 0].detach()))
         x = self.layers[1](x)
+        layer_out.append(("layer1", x[0, 0].permute(1, 0).detach()))
         x = self.layers[2](x)
+        layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
         x = self.norm(x)
+        layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
+        layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
+        layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
+        layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
         x = self.upsample(x)
+        layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
         x = self.layers[3](x)
+        layer_out.append(("layer3", x[0, 0].permute(1, 0).detach()))
         x = torch.concatenate([skip, x], -1)
+        layer_out.append(("post_skip", x[0, 0].permute(1, 0).detach()))
         # breakpoint()
         # x = torch.concatenate([x, x], -1)
         x_surface, x_upper = self.final_up(x)
+        layer_out.append(("final_up_surface", x_surface[0, :, 0].detach()))
+        layer_out.append(("final_up_upper", x_upper[0, 0, :, 0].detach()))
         x_surface = x_surface.permute(0, 2, 1)
         x_upper = x_upper.permute(0, 3, 1, 2)
+        return x_surface, x_upper[:, :, :13, :], layer_out
+
+    def forward_tuple(self, batch):
+        surface, upper, _ = self._forward(
+            (batch["input_surface"], batch["input_upper"])
+        )
+        return surface, upper
+
+    def forward(self, batch):
         # x = x.permute(0, 2, 1)  # B,C,N
         # x = self.output(x)
-
-        return dict(
-            logits_surface=x_surface,
-            logits_upper=x_upper[:, :, :13, :],
+        x_surface, x_upper, layer_out = self._forward(
+            (batch["input_surface"], batch["input_upper"])
         )
+
+        return dict(logits_surface=x_surface, logits_upper=x_upper, layer_out=layer_out)

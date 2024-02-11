@@ -14,7 +14,7 @@ from lib.metric import create_metric
 
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
-from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
+from experiments.weather.models.pangu import PanguConfig
 
 # from experiments.weather.models.swin_hp_pangu import SwinHPPangu
 
@@ -31,13 +31,12 @@ from lib.data_factory import get_factory as get_dataset_factory
 
 # from lib.model_factory import get_factory as get_model_factory
 
-from lib.render_psql import add_artifact, has_artifact, add_parameter
+from lib.render_psql import add_artifact
 
 from lib.distributed_trainer import distributed_train
 
 # from experiments.weather.data import DataHP
-from experiments.weather.data import DataHPConfig, Climatology
-from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
+from experiments.weather.data import DataHPConfig
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
@@ -59,30 +58,8 @@ def create_config(ensemble_id):
 
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
-        model_config=SwinHPPanguConfig(
-            base_pix=12,
-            nside=NSIDE,
-            dev_mode=False,
-            depths=[2, 6, 6, 2],
-            # num_heads=[6, 12, 12, 6],
-            num_heads=[8, 16, 16, 8],
-            embed_dims=[192 // 2, 384 // 2, 384 // 2, 192 // 2],
-            # embed_dims=[16, 384 // 16, 384 // 16, 192 // 16],
-            # embed_dims=[x for x in [16, 32, 32, 16]],
-            window_size=[2, 16],  # int(32 * (NSIDE / 256)),
-            use_cos_attn=False,
-            use_v2_norm_placement=True,
-            drop_rate=0,  # ,0.1,
-            attn_drop_rate=0,  # ,0.1,
-            drop_path_rate=0,
-            rel_pos_bias="earth",
-            # shift_size=8,  # int(16 * (NSIDE / 256)),
-            shift_size=8,  # int(16 * (NSIDE / 256)),
-            shift_strategy="nest_roll",
-            ape=False,
-            patch_size=16,  # int(16 * (NSIDE / 256)),
-        ),
-        train_data_config=DataHPConfig(nside=NSIDE),
+        model_config=PanguConfig(nside=256),
+        train_data_config=DataHPConfig(nside=256, driscoll_healy=True),
         val_data_config=None,  # DataHPConfig(nside=NSIDE),
         loss=reg_loss,
         optimizer=OptimizerConfig(
@@ -101,12 +78,11 @@ def create_config(ensemble_id):
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
-        # compute_config=ComputeConfig(distributed=False, num_workers=0, num_gpus=1),
-        # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
         compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
+        # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=200,
+        epochs=250,
         save_nth_epoch=1,
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=10,
@@ -140,13 +116,11 @@ if __name__ == "__main__":
     # register()
 
     ensemble_config = create_ensemble_config(create_config, 1)
-    print("Maybe training...")
     if not is_ensemble_serialized(ensemble_config):
         request_ensemble(ensemble_config)
         distributed_train(ensemble_config.members)
         exit(0)
     # ensemble = create_ensemble(ensemble_config, device_id)
-    print("Creating ensemble..")
     ensemble = create_ensemble(ensemble_config, device_id)
 
     data_factory = get_dataset_factory()
@@ -185,47 +159,29 @@ if __name__ == "__main__":
 
         np.save(
             path,
-            array.detach().cpu().float().numpy(),
+            array.detach().cpu().numpy(),
         )
         add_artifact(ensemble_config.members[0], name, path)
 
     # acc = anomaly_correlation_coefficient(ensemble.members[0], dl, device_id)
     # rmse = rmse(ensemble.members[0], dl, device_id)
     # breakpoint()
-    # torch.cuda.memory._record_memory_history(stacks="python")
     for idx, batch in enumerate(dl):
-        if idx > 1:
-            break
-        if has_artifact(ensemble_config.members[0], f"{idx}_of_surface.npy"):
-            continue
         batch = {k: v.to(device_id) for k, v in batch.items()}
 
         #     start = time.time()
         output = ensemble.members[0](batch)
         #     model_time = time.time()
         #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
-        save_and_register(f"{idx}_of_surface.npy", output["logits_surface"])
-        save_and_register(f"{idx}_if_surface.npy", batch["input_surface"])
-        save_and_register(f"{idx}_tf_surface.npy", batch["target_surface"])
-        save_and_register(f"{idx}_of_upper.npy", output["logits_upper"])
-        save_and_register(f"{idx}_if_upper.npy", batch["input_upper"])
-        save_and_register(f"{idx}_tf_upper.npy", batch["target_upper"])
-        del output
+        save_and_register(f"{idx}_of_surface", output["logits_surface"])
+        save_and_register(f"{idx}_if_surface", batch["input_surface"])
+        save_and_register(f"{idx}_tf_surface", batch["target_surface"])
+        save_and_register(f"{idx}_of_upper", output["logits_upper"])
+        save_and_register(f"{idx}_if_upper", batch["input_upper"])
+        save_and_register(f"{idx}_tf_upper", batch["target_upper"])
+        if idx > 10:
+            break
 
-    ds = Climatology(
-        ensemble_config.members[0].train_config.train_data_config.validation()
-    )
-    dl = torch.utils.data.DataLoader(
-        ds,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-    )
-    acc = anomaly_correlation_coefficient(ensemble.members[0], dl, device_id)
-    add_parameter(ensemble.member_configs[0], "acc_surface", acc.acc_surface)
-    add_parameter(ensemble.member_configs[0], "acc_upper", acc.acc_upper)
-    save_and_register("acc_surface.npy", acc.acc_unnorm_surface)
-    save_and_register("acc_upper.npy", acc.acc_unnorm_upper)
     # save_and_register("of_surface.npy", output["logits_surface"])
     # np.save(
     #     result_path / "if_surface.npy",
@@ -252,7 +208,8 @@ if __name__ == "__main__":
     # )
     # np.save(result_path / "pangu_pred_surface.npy", pangu_np_surface)
     # np.save(result_path / "pangu_pred_upper.npy", pangu_np_upper)
-    # np.save(    #     result_path / "pangu_pred_surface.npy",
+    # np.save(
+    #     result_path / "pangu_pred_surface.npy",
     #     batch["input_surface"].detach().cpu().numpy()[0],
     # )
     # np.save(

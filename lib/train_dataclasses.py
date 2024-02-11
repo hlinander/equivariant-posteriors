@@ -149,6 +149,7 @@ class TrainRun:
     save_nth_epoch: int
     validate_nth_epoch: int
     keep_epoch_checkpoints: bool = False
+    keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
 
     def serialize_human(self):

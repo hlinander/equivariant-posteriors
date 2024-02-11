@@ -14,8 +14,11 @@ def create_result_path(name: str, config: object):
     path = base_path / "results" / f"{name}_{git_short_rev}_{config_hash}"
     path.mkdir(parents=True, exist_ok=True)
     current_version = base_path / f"{name}_latest"
-    current_version.unlink(missing_ok=True)
-    current_version.symlink_to(path.relative_to(base_path))
+    try:
+        current_version.unlink(missing_ok=True)
+        current_version.symlink_to(path.relative_to(base_path))
+    except:
+        print("Couldn't symlink or delete, might be race. Probably ok.")
     return path
 
 
@@ -46,6 +49,9 @@ def copy_working_tree_to_destination(dest_path):
 
 def prepare_results(name: str, config: object) -> Path:
     result_path = create_result_path(name, config)
-    copy_working_tree_to_destination(result_path / "code")
-    write_config_human(config, result_path / "config.json")
+    try:
+        copy_working_tree_to_destination(result_path / "code")
+        write_config_human(config, result_path / "config.json")
+    except:
+        print("Problems copying worktree, might be race, probably ok.")
     return result_path

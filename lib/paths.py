@@ -10,11 +10,11 @@ def get_or_create_checkpoint_path(train_config) -> Path:
     return checkpoint
 
 
-def get_lock_path(train_config) -> Path:
+def get_lock_path(train_config, lock_name="") -> Path:
     config_hash = stable_hash(train_config)
     lock_dir = Path("locks/")
     lock_dir.mkdir(exist_ok=True, parents=True)
-    lock_path = lock_dir / f"lock_{config_hash}"
+    lock_path = lock_dir / f"lock{lock_name}_{config_hash}"
     return lock_path
 
 

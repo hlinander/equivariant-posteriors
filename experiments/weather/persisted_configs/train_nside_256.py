@@ -94,22 +94,20 @@ def create_config(ensemble_id):
         ensemble_id=ensemble_id,
         # gradient_clipping=0.3,
         # _version=57,
-        _version=4,
+        _version=3,
         # _version=55,
     )
     train_eval = TrainEval(
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
-        # compute_config=ComputeConfig(distributed=False, num_workers=0, num_gpus=1),
+        compute_config=ComputeConfig(distributed=False, num_workers=0, num_gpus=1),
         # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
-        compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
+        # compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=200,
+        epochs=215,
         save_nth_epoch=1,
-        keep_epoch_checkpoints=True,
-        keep_nth_epoch_checkpoints=10,
         validate_nth_epoch=20,
         visualize_terminal=False,
     )

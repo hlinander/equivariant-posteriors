@@ -13,11 +13,13 @@ def json_default(data):
 
 def serialize_dataclass(instance) -> dict:
     if dataclasses.is_dataclass(instance):
+        instance_dict = instance.__dict__
+        if hasattr(instance, "custom_dict"):
+            instance_dict = instance.custom_dict()
+            # print(f"Using custom dict {instance_dict}")
         return {
             "__class__": type(instance).__name__,
-            "__data__": {
-                k: serialize_dataclass(v) for k, v in instance.__dict__.items()
-            },
+            "__data__": {k: serialize_dataclass(v) for k, v in instance_dict.items()},
         }
     elif isinstance(instance, list):
         return [serialize_dataclass(i) for i in instance]
@@ -38,7 +40,8 @@ def json_dumps_dataclass_str(data_class, indent=None):
         indent=indent,
         separators=(",", ":"),
     )
-    
+
+
 def json_dumps_dataclass(data_class):
     return json_dumps_dataclass_str(data_class).encode("utf-8")
 
