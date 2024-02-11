@@ -105,7 +105,20 @@ def setup_psql():
                     ensemble_id text,
                     name text,
                     path text,
+                    size int,
                     UNIQUE(train_id, name)
+                )
+                """
+        )
+        conn.execute(
+            """
+                CREATE TABLE IF NOT EXISTS artifact_chunks (
+                    id serial PRIMARY KEY,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                    artifact_id int references artifacts(id),
+                    seq_num int,
+                    data bytea,
+                    size int
                 )
                 """
         )
@@ -409,6 +422,49 @@ def add_parameter(train_run: TrainRun, name: str, value: str):
     )
 
 
+def _add_artifact(train_id: str, ensemble_id: str, name: str, path: Path):
+    path = Path(path) if not isinstance(path, Path) else path
+    size_bytes = path.stat().st_size
+    value_dict = dict(
+        train_id=train_id,
+        ensemble_id=ensemble_id,
+        name=name,
+        path=path.absolute().as_posix(),
+        size=size_bytes,
+    )
+
+    with psycopg.connect(
+        "dbname=equiv user=postgres password=postgres",
+        host=env().postgres_host,
+        port=int(env().postgres_port),
+        autocommit=False,
+    ) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO artifacts (train_id, ensemble_id, name, path, size)
+            VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s, %(size)i)
+            ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path
+            RETURNING id
+            """,
+            value_dict,
+        )
+        artifact_id = cursor.fetchone()[0]
+        conn.execute(
+            "DELETE FROM artifact_chunks WHERE artifact_id = %s", (artifact_id,)
+        )
+        print("[db] Uploading artifact")
+        with path.open("rb") as file:
+            seq_num = 0
+            while chunk := file.read(1024 * 1024):
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO artifact_chunks (artifact_id, seq_num, data, size) VALUES (%s, %s, %s, %s)",
+                        (artifact_id, seq_num, chunk, len(chunk)),
+                    )
+                seq_num += 1
+                print(f"[db] Chunk {seq_num}")
+
+
 def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
     # train_run_dict = train_run.serialize_human()
     try:
@@ -424,27 +480,13 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
         path = path.relative_to(env().paths.artifacts)
         path = path.as_posix()
 
-    value_dict = dict(
+    _add_artifact(
         train_id=train_run_dict["train_id"],
         ensemble_id=train_run_dict["ensemble_id"],
         name=name,
         path=path,
     )
 
-    with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
-        host=env().postgres_host,
-        port=int(env().postgres_port),
-        autocommit=False,
-    ) as conn:
-        conn.execute(
-            """
-            INSERT INTO artifacts (train_id, ensemble_id, name, path)
-            VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s)
-            ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path
-            """,
-            value_dict,
-        )
     print(f"[Database] Added artifact {name}: {path}")
 
 
