@@ -42,7 +42,7 @@ struct Metric {
 #[derive(Default, Debug, Clone)]
 struct Run {
     params: HashMap<String, String>,
-    artifacts: HashMap<String, String>,
+    artifacts: HashMap<String, ArtifactId>,
     metrics: HashMap<String, Metric>,
     created_at: chrono::NaiveDateTime,
     // last_update:
@@ -87,6 +87,7 @@ enum DataStatus {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
 struct ArtifactId {
+    artifact_id: i32,
     train_id: String,
     name: String,
 }
@@ -131,37 +132,20 @@ enum BinaryArtifact {
 }
 
 fn download_artifact(
-    train_id: String,
-    name: String,
-    path: String,
-    tx_path_mutex: Arc<Mutex<Sender<(String, String, String)>>>,
+    artifact_id: ArtifactId,
+    tx_path_mutex: Arc<Mutex<Sender<i32>>>,
     rx_artifact_mutex: Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) -> BinaryArtifact {
     let (tx_update, rx_update) = mpsc::channel::<DownloadProgressStatus>();
     let join_handle = tokio::spawn(async move {
-        let uri = if !path.starts_with("/") {
-            println!("path: {}", path);
-            let end = path.split("results/").last().unwrap();
-            println!("end of split: {}", end);
-            format!(
-                "/mimer/NOBACKUP/groups/naiss2023-6-319/eqp/artifacts/results/{}",
-                end
-            )
-        } else {
-            path.clone()
-        };
         let tx_db_artifact_path = tx_path_mutex.lock_owned().await;
         println!(
-            "[db] Requesting download {} {}",
-            train_id.clone(),
-            name.clone()
+            "[db] Requesting download {:?}",
+            artifact_id // train_id.clone(),
+                        // name.clone()
         );
-        tx_db_artifact_path.send((train_id.clone(), name.clone(), uri));
-        println!(
-            "[db] Waiting for download {} {}",
-            train_id.clone(),
-            name.clone()
-        );
+        tx_db_artifact_path.send(artifact_id.artifact_id);
+        println!("[db] Waiting for download {:?}", artifact_id);
         let rx_db_artifact = rx_artifact_mutex.lock_owned().await;
         loop {
             let rx_res = rx_db_artifact.recv();
@@ -241,23 +225,17 @@ enum ArtifactHandler {
 
 fn add_artifact(
     handler: &mut ArtifactHandler,
-    run_id: &str,
-    name: &str,
-    path: &str,
+    artifact_id: &ArtifactId,
     args: &Args,
-    tx_path_mutex: &mut Arc<Mutex<Sender<(String, String, String)>>>,
+    tx_path_mutex: &mut Arc<Mutex<Sender<i32>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
-    let artifact_id = ArtifactId {
-        train_id: run_id.to_string(),
-        name: name.to_string(),
-    };
     match handler {
         ArtifactHandler::NPYHealPixArtifact {
             arrays,
             textures: _,
             views: _,
-        } => handle_add_npy(arrays, &artifact_id, path, tx_path_mutex, rx_artifact_mutex),
+        } => handle_add_npy(arrays, &artifact_id, tx_path_mutex, rx_artifact_mutex),
         ArtifactHandler::ImageArtifact { binaries } => match binaries.get_mut(&artifact_id) {
             Some(binary_artifact) => {
                 poll_artifact_download(binary_artifact);
@@ -266,9 +244,7 @@ fn add_artifact(
                 binaries.insert(
                     artifact_id.clone(),
                     download_artifact(
-                        artifact_id.train_id.clone(),
-                        artifact_id.name.clone(),
-                        path.to_string(),
+                        artifact_id.clone(),
                         tx_path_mutex.clone(),
                         rx_artifact_mutex.clone(),
                     ),
@@ -276,7 +252,7 @@ fn add_artifact(
             }
         },
         ArtifactHandler::NPYTabularArtifact { arrays, views } => {
-            handle_add_npy(arrays, &artifact_id, path, tx_path_mutex, rx_artifact_mutex)
+            handle_add_npy(arrays, &artifact_id, tx_path_mutex, rx_artifact_mutex)
         }
     }
 }
@@ -284,8 +260,7 @@ fn add_artifact(
 fn handle_add_npy(
     arrays: &mut HashMap<ArtifactId, NPYArray>,
     artifact_id: &ArtifactId,
-    path: &str,
-    tx_path_mutex: &mut Arc<Mutex<Sender<(String, String, String)>>>,
+    tx_path_mutex: &mut Arc<Mutex<Sender<i32>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     match arrays.get_mut(artifact_id) {
@@ -293,9 +268,7 @@ fn handle_add_npy(
             arrays.insert(
                 artifact_id.clone(),
                 NPYArray::Loading(download_artifact(
-                    artifact_id.train_id.clone(),
-                    artifact_id.name.clone(),
-                    path.to_string(),
+                    artifact_id.clone(),
                     tx_path_mutex.clone(),
                     rx_artifact_mutex.clone(),
                 )),
@@ -381,7 +354,7 @@ struct GuiRuns {
     db_reciever: Receiver<HashMap<String, Run>>,
     recomputed_reciever: Receiver<HashMap<String, Run>>,
     dirty_sender: Sender<(GuiParams, HashMap<String, Run>)>,
-    tx_db_artifact_path: Arc<Mutex<Sender<(String, String, String)>>>,
+    tx_db_artifact_path: Arc<Mutex<Sender<i32>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
     rx_batch_status: Receiver<(usize, usize)>,
     batch_status: (usize, usize),
@@ -548,7 +521,7 @@ impl eframe::App for GuiRuns {
             // self.recompute();
         }
         if let Ok(new_runs) = self.recomputed_reciever.try_recv() {
-            println!("[app] recieved recomputed runs");
+            // println!("[app] recieved recomputed runs");
             self.runs.runs = new_runs;
             if self.data_status == DataStatus::FirstDataArrived && self.runs.runs.len() > 0 {
                 self.data_status = DataStatus::FirstDataProcessed;
@@ -1658,8 +1631,8 @@ impl GuiRuns {
                     .iter()
                     .map(|train_id| (train_id, self.runs.runs.get(train_id).unwrap()))
                     .map(|(_train_id, run)| {
-                        if let Some(path) = run.artifacts.get(artifact_name) {
-                            let artifact_type_str = get_artifact_type(path);
+                        if let Some(artifact_id) = run.artifacts.get(artifact_name) {
+                            let artifact_type_str = get_artifact_type(&artifact_id.name);
                             if self.artifact_handlers.contains_key(artifact_type_str) {
                                 // println!("{}", artifact_type_str);
                                 // add_artifact(handler, ui, train_id, path);
@@ -1685,17 +1658,17 @@ impl GuiRuns {
                     .iter()
                     .map(|run_id| (run_id, self.runs.runs.get(run_id).unwrap()))
                 {
-                    for (artifact_name, path) in run.artifacts.iter().filter(|&(art_name, _)| {
-                        self.gui_params.artifact_filters.contains(art_name)
-                    }) {
+                    for (artifact_name, artifact_id) in
+                        run.artifacts.iter().filter(|&(art_name, _)| {
+                            self.gui_params.artifact_filters.contains(art_name)
+                        })
+                    {
                         // println!("[artifacts] filtered {} {}", run_id, artifact_name);
-                        if artifact_type == get_artifact_type(path) {
+                        if artifact_type == get_artifact_type(&artifact_id.name) {
                             // println!("{}", artifact_type);
                             add_artifact(
                                 handler,
-                                run_id,
-                                artifact_name,
-                                path,
+                                artifact_id,
                                 &self.args,
                                 &mut self.tx_db_artifact_path,
                                 &self.rx_db_artifact,
@@ -1873,13 +1846,13 @@ async fn get_state_metrics(
             let query_elapsed_time = query_time.elapsed().as_secs_f32();
             let received_rows = metric_rows.len();
             parse_metric_rows(metric_rows, runs, last_timestamp);
-            println!(
-                "[db] recieved batch data from {}: {}",
-                metric_table, received_rows
-            );
+            // println!(
+            //     "[db] recieved batch data from {}: {}",
+            //     metric_table, received_rows
+            // );
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
-                println!("[db] sent {}", received_rows);
+                // println!("[db] sent {}", received_rows);
             }
             // offset += chunk_size;
             if received_rows < chunk_size as usize {
@@ -1928,10 +1901,10 @@ async fn get_state_epoch_metrics(
         let received_rows = metric_rows.len();
         parse_metric_rows(metric_rows, runs, last_timestamp);
         // *last_timestamp = batch_timestamp.max(epoch_timestamp);
-        println!("[db] recieved {}", received_rows);
+        // println!("[db] recieved {}", received_rows);
         if let Some(tx) = tx_runs {
             tx.send(runs.clone()).expect("send failed");
-            println!("[db] sent {}", received_rows);
+            // println!("[db] sent {}", received_rows);
         }
         // offset += chunk_size;
         if received_rows < chunk_size as usize {
@@ -1961,12 +1934,20 @@ async fn get_state_artifacts(
         {
             for row in rows {
                 let incoming_name: String = row.try_get("name").unwrap_or_default();
-                let incoming_path: String = row.try_get("path").unwrap_or_default();
+                // let incoming_path: String = row.try_get("path").unwrap_or_default();
+                let incoming_id: i32 = row.try_get("id").unwrap();
                 if let Some(run) = runs.get_mut(&train_id) {
-                    if let Some(path) = run.artifacts.get_mut(&incoming_name) {
-                        *path = incoming_path;
+                    if let Some(artifact_id) = run.artifacts.get_mut(&incoming_name) {
+                        // *artifact_id.path = incoming_path;
                     } else {
-                        run.artifacts.insert(incoming_name, incoming_path);
+                        run.artifacts.insert(
+                            incoming_name.clone(),
+                            ArtifactId {
+                                artifact_id: incoming_id,
+                                train_id: train_id.clone(),
+                                name: incoming_name,
+                            },
+                        );
                     }
                 } else {
                     println!("[Artifact] No run_id {}", train_id);
@@ -2120,7 +2101,7 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_db_filters, rx_db_filters) = mpsc::channel::<Vec<String>>();
     let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_db_filters));
     let (tx_db_artifact, rx_db_artifact) = mpsc::channel::<ArtifactTransfer>();
-    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<(String, String, String)>();
+    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<i32>();
     let (tx_batch_status, rx_batch_status) = mpsc::channel::<(usize, usize)>();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rt_handle = rt.handle().clone();
@@ -2184,64 +2165,8 @@ fn main() -> Result<(), sqlx::Error> {
             .expect("Can't connect to database");
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            if let Ok((train_id, name, path)) = rx_db_artifact_path.try_recv() {
-                let size_res = sqlx::query(
-                    r#"
-                SELECT (pg_stat_file($1)).size as size
-                "#,
-                )
-                .bind(&path)
-                .fetch_one(&pool)
-                .await;
-                match size_res {
-                    Ok(row) => {
-                        let filesize = row.get::<i64, _>("size");
-                        println!("[f] File {} size {}", &path, &filesize);
-                        let mut offset = 0;
-                        let mut chunk_size = 1_000_000;
-                        let mut buffer: Vec<u8> = vec![0; filesize as usize];
-                        while offset < filesize {
-                            let length = chunk_size.min(filesize - offset);
-                            let query_time = std::time::Instant::now();
-                            let blobs_rows = sqlx::query(
-                                r#"
-                            SELECT pg_read_binary_file($1, $2, $3) 
-                            "#,
-                            )
-                            .bind(&path)
-                            .bind(&offset)
-                            .bind(&length)
-                            .fetch_one(&pool)
-                            .await;
-                            let elapsed_seconds = query_time.elapsed().as_secs_f32();
-                            if elapsed_seconds < 0.5 {
-                                chunk_size *= 2;
-                            } else if elapsed_seconds > 2.0 {
-                                chunk_size /= 2;
-                            }
-                            if let Ok(row) = blobs_rows {
-                                let dst =
-                                    &mut buffer[offset as usize..offset as usize + length as usize];
-                                dst.copy_from_slice(
-                                    row.get::<Vec<u8>, _>("pg_read_binary_file").as_slice(),
-                                );
-                                offset += length;
-                                println!("[f] Read chunk {} at {}", length, offset);
-                                tx_db_artifact.send(ArtifactTransfer::Loading(
-                                    offset as usize,
-                                    filesize as usize,
-                                ));
-                            } else if let Err(error) = blobs_rows {
-                                tx_db_artifact.send(ArtifactTransfer::Err(error.to_string()));
-                                break;
-                            }
-                        }
-                        tx_db_artifact.send(ArtifactTransfer::Done(buffer));
-                    }
-                    Err(err) => {
-                        tx_db_artifact.send(ArtifactTransfer::Err(err.to_string()));
-                    }
-                }
+            if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
+                handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
             }
         }
     });
@@ -2312,6 +2237,84 @@ fn main() -> Result<(), sqlx::Error> {
     );
 
     Ok(())
+}
+
+async fn handle_artifact_request(
+    artifact_id: i32,
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    tx_db_artifact: &Sender<ArtifactTransfer>,
+) {
+    println!("[db] artifact requested: {}", artifact_id);
+    let query = sqlx::query(
+        r#"
+                SELECT size FROM artifacts WHERE id=$1
+                "#,
+    )
+    .bind(&artifact_id);
+    // println!("{}", query);
+    let size_res = query.fetch_one(pool).await;
+    match size_res {
+        Ok(row) => {
+            let filesize = row.get::<i32, _>("size");
+            println!("Got request for existing artifact id of size {}", filesize);
+            // println!("[f] File {} size {}", &path, &filesize);
+            let mut last_seq_num = -1;
+            // let mut chunk_size = 1_000_000;
+            let mut batch_size = 1;
+            let mut buffer: Vec<u8> = vec![0; filesize as usize];
+            let mut offset: usize = 0;
+            // while offset < filesize {
+            loop {
+                // let length = chunk_size.min(filesize - offset);
+                let query_time = std::time::Instant::now();
+                let blobs_rows = sqlx::query(
+                    r#"
+                            SELECT seq_num, data, size FROM artifact_chunks WHERE artifact_id=$1 AND seq_num > $2 ORDER BY seq_num LIMIT $3
+                            "#,
+                )
+                .bind(&artifact_id)
+                .bind(&last_seq_num)
+                .bind(&batch_size)
+                .fetch_all(pool)
+                .await;
+                let elapsed_seconds = query_time.elapsed().as_secs_f32();
+                if elapsed_seconds < 0.5 {
+                    batch_size *= 2;
+                } else if elapsed_seconds > 2.0 {
+                    batch_size = (batch_size / 2).max(1);
+                }
+                // if let Ok(row) = blobs_rows {
+                if let Ok(rows) = blobs_rows {
+                    if rows.len() == 0 {
+                        println!("[db] Fetched all available artifact chunks");
+                        break;
+                    }
+                    println!("Got {} rows", rows.len());
+                    for row in rows {
+                        let chunk_size = row.get::<i32, _>("size");
+                        let dst = &mut buffer[offset..offset + chunk_size as usize];
+                        dst.copy_from_slice(row.get::<Vec<u8>, _>("data").as_slice());
+                        offset += chunk_size as usize;
+                        last_seq_num = row.get::<i32, _>("seq_num");
+                        println!("[f] Read chunk {} at {}", chunk_size, offset);
+                        tx_db_artifact.send(ArtifactTransfer::Loading(
+                            offset as usize,
+                            filesize as usize,
+                        ));
+                    }
+                } else if let Err(error) = blobs_rows {
+                    println!("error {}", error.to_string());
+                    tx_db_artifact.send(ArtifactTransfer::Err(error.to_string()));
+                    break;
+                }
+            }
+            tx_db_artifact.send(ArtifactTransfer::Done(buffer));
+        }
+        Err(err) => {
+            println!("[db] error {}", err.to_string());
+            tx_db_artifact.send(ArtifactTransfer::Err(err.to_string()));
+        }
+    }
 }
 
 async fn get_new_runids(
