@@ -83,6 +83,57 @@ def setup_psql():
         )
         conn.execute(
             """
+            CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_batch_order AS
+            SELECT metrics.id,
+               metrics.created_at,
+               metrics.train_id,
+               metrics.ensemble_id,
+               metrics.x,
+               metrics.xaxis,
+               metrics.variable,
+               metrics.value,
+               metrics.value_text
+              FROM metrics
+             WHERE (metrics.xaxis = 'batch'::text)
+             ORDER BY metrics.train_id, metrics.variable, metrics.xaxis, metrics.x;
+            """
+        )
+        conn.execute(
+            """
+            CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_batch_order_10 AS
+            SELECT metrics.id, 
+               metrics.created_at, 
+               metrics.train_id, 
+               metrics.ensemble_id, 
+               metrics.x, 
+               metrics.xaxis, 
+               metrics.variable, 
+               metrics.value, 
+               metrics.value_text
+              FROM metrics
+             WHERE ((metrics.xaxis = 'batch'::text) AND (((metrics.x)::integer % 10) = 0))
+             ORDER BY metrics.train_id, metrics.variable, metrics.xaxis, metrics.x;
+             """
+        )
+        conn.execute(
+            """
+            CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_batch_order_100 AS
+            SELECT metrics.id, 
+               metrics.created_at, 
+               metrics.train_id, 
+               metrics.ensemble_id, 
+               metrics.x, 
+               metrics.xaxis, 
+               metrics.variable, 
+               metrics.value, 
+               metrics.value_text
+              FROM metrics
+             WHERE ((metrics.xaxis = 'batch'::text) AND (((metrics.x)::integer % 100) = 0))
+             ORDER BY metrics.train_id, metrics.variable, metrics.xaxis, metrics.x;
+             """
+        )
+        conn.execute(
+            """
                 CREATE TABLE IF NOT EXISTS runs (
                     id serial PRIMARY KEY,
                     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
@@ -442,7 +493,7 @@ def _add_artifact(train_id: str, ensemble_id: str, name: str, path: Path):
         cursor = conn.execute(
             """
             INSERT INTO artifacts (train_id, ensemble_id, name, path, size)
-            VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s, %(size)i)
+            VALUES (%(train_id)s, %(ensemble_id)s, %(name)s, %(path)s, %(size)s)
             ON CONFLICT (train_id, name) DO UPDATE SET path=EXCLUDED.path
             RETURNING id
             """,
@@ -476,9 +527,9 @@ def add_artifact(train_run: TrainRun, name: str, path: Union[str, Path]):
 
     train_run_dict = train_run.serialize_human()
 
-    if isinstance(path, Path):
-        path = path.relative_to(env().paths.artifacts)
-        path = path.as_posix()
+    # if isinstance(path, Path):
+    # path = path.relative_to(env().paths.artifacts)
+    # path = path.as_posix()
 
     _add_artifact(
         train_id=train_run_dict["train_id"],
