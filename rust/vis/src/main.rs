@@ -515,7 +515,8 @@ impl eframe::App for GuiRuns {
                 .send((self.gui_params.clone(), self.runs.runs.clone()))
                 .expect("Failed to send dirty runs");
             self.db_train_runs_sender
-                .send(self.runs.active_runs.clone())
+                // .send(self.runs.active_runs.clone())
+                .send(self.runs.time_filtered_runs.clone())
                 .expect("Failed to send train runs to db thread");
             self.dirty = false;
             // self.recompute();
@@ -1704,6 +1705,7 @@ impl GuiRuns {
                     created_at.to_string()
                 });
                 if ui.add(time_slider).changed() {
+                    self.dirty = true;
                     self.gui_params.time_filter =
                         Some(self.runs.active_runs_time_ordered[self.gui_params.time_filter_idx].1)
                 }
@@ -1816,6 +1818,7 @@ async fn get_state_metrics(
         // let mut new_batch_timestamp = last_timestamp.clone();
         let mut chunk_size = 1000i32;
         loop {
+            // profiling::scope!("iteration");
             let q = format!(
                 r#"
             SELECT * FROM {}
@@ -1833,6 +1836,25 @@ async fn get_state_metrics(
                     q
                 }
             };
+            // {
+            //     // profiling::scope!("explain analyze");
+            //     let q1 = query_string(Some("EXPLAIN ANALYZE".to_string()), q.clone());
+            //     let query_time = std::time::Instant::now();
+            //     let query = sqlx::query(q1.as_str())
+            //         // .bind(metric_table.clone())
+            //         .bind(train_ids)
+            //         .bind(*last_timestamp)
+            //         // .bind(last_id)
+            //         .bind(chunk_size);
+            //     for row in query.fetch_all(pool).await? {
+            //         println!("{:?}", row.get::<String, _>(0));
+            //     }
+            //     println!(
+            //         "explain analyze query time {}",
+            //         query_time.elapsed().as_secs_f64()
+            //     );
+            // }
+            // profiling::scope!("query");
             let q1 = query_string(None, q.clone());
             let query_time = std::time::Instant::now();
             let query = sqlx::query(q1.as_str())
@@ -1843,17 +1865,26 @@ async fn get_state_metrics(
                 .bind(chunk_size);
             // .bind(offset);
             let metric_rows = query.fetch_all(pool).await?;
+            // query.fetch_all(pool).await
+            // let metric_rows = tokio::runtime::Handle::current()
+            // .block_on(query.fetch_all(pool))
+            // .unwrap();
             let query_elapsed_time = query_time.elapsed().as_secs_f32();
+            // println!("query elapsed: {}", query_elapsed_time);
             let received_rows = metric_rows.len();
+            profiling::scope!("parse");
             parse_metric_rows(metric_rows, runs, last_timestamp);
             // println!(
             //     "[db] recieved batch data from {}: {}",
             //     metric_table, received_rows
             // );
+            // {
+            profiling::scope!("send");
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
                 // println!("[db] sent {}", received_rows);
             }
+            // }
             // offset += chunk_size;
             if received_rows < chunk_size as usize {
                 break;
@@ -2003,12 +2034,14 @@ async fn get_state_parameters(
     )
 }
 
+#[profiling::function]
 fn parse_metric_rows(
     metric_rows: Vec<sqlx::postgres::PgRow>,
     runs: &mut HashMap<String, Run>,
     last_timestamp: &mut NaiveDateTime,
 ) {
-    let metric_rows_sorted = metric_rows.iter().sorted_by_key(|row| {
+    profiling::scope!("sort train_id var");
+    let metric_rows_sorted = metric_rows.iter().sorted_by_cached_key(|row| {
         (
             row.get::<String, _>("train_id"),
             row.get::<String, _>("variable"),
@@ -2022,6 +2055,7 @@ fn parse_metric_rows(
         for (variable, value_rows) in
             &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
         {
+            profiling::scope!("max timestamp");
             let rows: Vec<_> = value_rows.collect();
             let max_timestamp = rows
                 .iter()
@@ -2034,16 +2068,27 @@ fn parse_metric_rows(
             }
             // println!("{:?}", rows[0].columns());
             let old_orig_values = run.metrics.get(&variable);
+            profiling::scope!("processing");
             let orig_values: Vec<_> = rows
                 .iter()
                 .filter_map(|row| {
+                    profiling::scope!("filter map");
                     // println!("{:?}", row.try_get::<i32, _>("id"));
-                    if let Ok(x) = row.try_get::<f64, _>("x") {
-                        if let Ok(value) = row.try_get::<f64, _>("value") {
-                            if let Ok(created_at) = row.try_get::<NaiveDateTime, _>("created_at") {
+                    if let Ok(x) = row.try_get_unchecked::<f64, _>("x") {
+                        profiling::scope!("get val");
+                        if let Ok(value) = row.try_get_unchecked::<f64, _>("value") {
+                            if let Ok(created_at) =
+                                row.try_get_unchecked::<NaiveDateTime, _>("created_at")
+                            {
                                 let new_value = [x, value, created_at.timestamp() as f64];
+                                profiling::scope!("exists in orig");
                                 if let Some(old_orig_values) = old_orig_values {
-                                    if old_orig_values.orig_values.contains(&new_value) {
+                                    // if old_orig_values.orig_values.contains(&new_value) {
+                                    if old_orig_values
+                                        .orig_values
+                                        .binary_search_by(|probe| probe[0].total_cmp(&x))
+                                        .is_ok()
+                                    {
                                         return None;
                                     }
                                 }
@@ -2067,6 +2112,7 @@ fn parse_metric_rows(
                     },
                 );
             } else {
+                profiling::scope!("extend and sort");
                 run.metrics
                     .get_mut(&variable)
                     .unwrap()
@@ -2091,6 +2137,9 @@ enum ArtifactTransfer {
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
+    use tracy_client::Client;
+    let _profile_guard = Client::start();
+    // console_subscriber::init();
     // Load environment variables
     // dotenv::dotenv().ok();
     let args = Args::parse();
@@ -2133,10 +2182,17 @@ fn main() -> Result<(), sqlx::Error> {
                 loop {
                     {
                         let rx = rx_db_filters_am.lock().unwrap();
-                        if let Ok(new_train_ids) = rx.try_recv() {
-                            println!("new train ids");
+                        let mut new_train_ids = None;
+                        while let Ok(incoming_train_ids) = rx.try_recv() {
+                            new_train_ids = Some(incoming_train_ids);
+                        }
+                        if let Some(new_train_ids) = new_train_ids {
                             return new_train_ids;
                         }
+                        // if let Ok(new_train_ids) = rx.try_recv() {
+                        //     println!("new train ids");
+                        //     return new_train_ids;
+                        // }
                     }
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 }
@@ -2152,7 +2208,9 @@ fn main() -> Result<(), sqlx::Error> {
             }
             let elapsed_loop_time = loop_time.elapsed();
             if elapsed_loop_time.as_secs_f32() < 1.0 {
+                println!("Starting sleep");
                 tokio::time::sleep(std::time::Duration::from_secs(1) - elapsed_loop_time).await;
+                println!("Sleep done");
             }
         }
     });
