@@ -240,7 +240,11 @@
         xorg.libXinerama
         xorg.libXcursor
         xorg.libXi
+        xorg.libxcb
+        xorg.xkbevd
+        xorg.xkbutils
         xclip
+        libxkbcommon
         libGL
         libGLU
 
@@ -321,6 +325,8 @@
                 pkgs.xorg.libXcursor
                 pkgs.xorg.libXrandr
                 pkgs.xorg.libXi
+                pkgs.xorg.libxcb
+                pkgs.libxkbcommon
                 pkgs.pipewire
               ])
             }"

@@ -72,6 +72,7 @@ struct GuiParams {
     metric_filters: HashSet<String>,
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
+    table_sorting: HashSet<String>,
     time_filter_idx: usize,
     time_filter: Option<chrono::NaiveDateTime>,
     x_axis: XAxis,
@@ -361,6 +362,7 @@ struct GuiRuns {
     initialized: bool,
     data_status: DataStatus,
     gui_params: GuiParams,
+    table_active: bool,
     artifact_handlers: HashMap<String, ArtifactHandler>,
     args: Args, // texture: Option<egui::TextureHandle>,
 }
@@ -630,9 +632,12 @@ impl eframe::App for GuiRuns {
                     }
                 });
                 if self.batch_status.1 > 0 {
-                    ui.add(egui::ProgressBar::new(
-                        self.batch_status.0 as f32 / self.batch_status.1 as f32,
-                    ));
+                    ui.add(
+                        egui::ProgressBar::new(
+                            self.batch_status.0 as f32 / self.batch_status.1 as f32,
+                        )
+                        .desired_width(50.0),
+                    );
                 }
             });
 
@@ -640,8 +645,12 @@ impl eframe::App for GuiRuns {
             egui::ScrollArea::vertical()
                 .id_source("central_space")
                 .show(ui, |ui| {
+                    let collapsing = ui.collapsing("Tabular", |ui| {
+                        self.render_table(ui, &run_ensemble_color);
+                    });
+                    self.table_active = collapsing.fully_open();
                     self.render_artifacts(ui, &run_ensemble_color);
-                    self.render_plots(ui, metric_names, run_ensemble_color);
+                    self.render_plots(ui, metric_names, &run_ensemble_color);
                 });
         });
         self.initialized = true;
@@ -1274,6 +1283,27 @@ impl GuiRuns {
                 ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                 // ui.label(param_name);
                 ui.horizontal_wrapped(|ui| {
+                    if self.table_active {
+                        let stroke_color = if self.gui_params.inspect_params.contains(param_name) {
+                            egui::Color32::RED
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new('\u{2795}'.to_string())
+                                    .small()
+                                    .stroke(egui::Stroke::new(1.0, stroke_color)),
+                            )
+                            .clicked()
+                        {
+                            if self.gui_params.inspect_params.contains(param_name) {
+                                self.gui_params.inspect_params.remove(param_name);
+                            } else {
+                                self.gui_params.inspect_params.insert(param_name.clone());
+                            }
+                        };
+                    }
                     self.render_parameter_values(
                         &param_values,
                         &param_name,
@@ -1284,19 +1314,19 @@ impl GuiRuns {
                 });
             });
         // println!("{:?}", param_frame.response.sense);
-        if param_frame
-            .response
-            .interact(egui::Sense::click())
-            .clicked()
-        {
-            if self.gui_params.inspect_params.contains(param_name) {
-                self.gui_params.inspect_params.remove(param_name);
-            } else {
-                self.gui_params
-                    .inspect_params
-                    .insert(param_name.to_string());
-            }
-        }
+        // if param_frame
+        //     .response
+        //     .interact(egui::Sense::click())
+        //     .clicked()
+        // {
+        //     if self.gui_params.inspect_params.contains(param_name) {
+        //         self.gui_params.inspect_params.remove(param_name);
+        //     } else {
+        //         self.gui_params
+        //             .inspect_params
+        //             .insert(param_name.to_string());
+        //     }
+        // }
     }
 
     fn render_parameter_values(
@@ -1378,11 +1408,86 @@ impl GuiRuns {
         }
     }
 
+    fn render_table(
+        &mut self,
+        ui: &mut egui::Ui,
+        run_ensemble_color: &HashMap<String, egui::Color32>,
+    ) {
+        let param_keys = self
+            .runs
+            .time_filtered_runs
+            .iter()
+            .flat_map(|run_id| self.runs.runs.get(run_id).unwrap().params.keys())
+            .unique()
+            .sorted_by_key(|&param_name| {
+                if self.gui_params.inspect_params.contains(param_name) {
+                    (0, param_name.clone())
+                } else {
+                    (1, param_name.clone())
+                }
+            })
+            .collect_vec();
+        let n_params = param_keys.len();
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            egui_extras::TableBuilder::new(ui)
+                .columns(egui_extras::Column::auto().resizable(true), n_params + 1)
+                .striped(true)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    header.col(|_ui| {});
+                    for param_name in &param_keys {
+                        let color = if self.gui_params.inspect_params.contains(*param_name) {
+                            egui::Color32::GREEN
+                        } else {
+                            egui::Color32::WHITE
+                            // ui.style().visuals.interact_cursor
+                        };
+                        // ui.visuals_mut().window_rounding
+                        header.col(|ui| {
+                            ui.heading(egui::RichText::new(*param_name).size(10.0).color(color));
+                        });
+                    }
+                })
+                .body(|mut table| {
+                    for run_id in &self.runs.time_filtered_runs {
+                        let run = self.runs.runs.get(run_id).unwrap();
+                        table.row(20.0, |mut row| {
+                            row.col(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(10.0, 10.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect(
+                                    rect,
+                                    0.0,
+                                    run_ensemble_color.get(run_id).unwrap().clone(),
+                                    egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
+                                );
+                            });
+                            for param_key in &param_keys {
+                                row.col(|ui| {
+                                    if let Some(val) = run.params.get(*param_key) {
+                                        if let Ok(val_f32) = val.parse::<f32>() {
+                                            ui.label(format!("{:.2}", val_f32));
+                                        } else {
+                                            ui.add(egui::Label::new(val).wrap(false));
+                                            // ui.label(val);
+                                        }
+                                    }
+                                });
+                                // ui.painter().rect
+                            }
+                        });
+                    }
+                });
+        });
+    }
+
     fn render_plots(
         &mut self,
         ui: &mut egui::Ui,
         metric_names: Vec<String>,
-        run_ensemble_color: HashMap<String, egui::Color32>,
+        run_ensemble_color: &HashMap<String, egui::Color32>,
     ) {
         let xaxis_ids: HashMap<_, _> = self
             .runs
@@ -1461,21 +1566,32 @@ impl GuiRuns {
                         // })
                         .label_formatter(formatter)
                         .x_axis_formatter(match x_axis {
-                            XAxis::Time => |value, n_chars, range: &RangeInclusive<f64>| {
-                                let ts =
-                                    NaiveDateTime::from_timestamp_opt(value as i64, 0).unwrap();
-                                let delta = range.end() - range.start();
-                                if delta > (5 * 24 * 60 * 60) as f64 {
-                                    ts.format("%m/%d").to_string()
-                                } else if delta > (5 * 60 * 60) as f64 {
-                                    ts.format("%d-%Hh").to_string()
-                                } else {
-                                    ts.format("%Hh:%Mm").to_string()
+                            XAxis::Time => {
+                                |grid_mark: egui_plot::GridMark,
+                                 n_chars,
+                                 range: &RangeInclusive<f64>| {
+                                    let ts = NaiveDateTime::from_timestamp_opt(
+                                        grid_mark.value as i64,
+                                        0,
+                                    )
+                                    .unwrap();
+                                    let delta = range.end() - range.start();
+                                    if delta > (5 * 24 * 60 * 60) as f64 {
+                                        ts.format("%m/%d").to_string()
+                                    } else if delta > (5 * 60 * 60) as f64 {
+                                        ts.format("%d-%Hh").to_string()
+                                    } else {
+                                        ts.format("%Hh:%Mm").to_string()
+                                    }
                                 }
-                            },
-                            XAxis::Batch => |value, n_chars, range: &RangeInclusive<f64>| {
-                                format!("{}", value as i64).to_string()
-                            },
+                            }
+                            XAxis::Batch => {
+                                |grid_mark: egui_plot::GridMark,
+                                 n_chars,
+                                 range: &RangeInclusive<f64>| {
+                                    format!("{}", grid_mark.value as i64).to_string()
+                                }
+                            }
                         })
                         .link_axis(
                             **metric_name_axis_id.get(&metric_name).unwrap(),
@@ -2259,6 +2375,7 @@ fn main() -> Result<(), sqlx::Error> {
                     time_filter_idx: 0,
                     x_axis: XAxis::Batch,
                     param_name_filter: "".to_string(),
+                    table_sorting: HashSet::new(),
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
@@ -2290,6 +2407,7 @@ fn main() -> Result<(), sqlx::Error> {
                 rx_db_artifact: Arc::new(Mutex::new(rx_db_artifact)),
                 rx_batch_status,
                 batch_status: (0, 0),
+                table_active: false,
             })
         }),
     );
