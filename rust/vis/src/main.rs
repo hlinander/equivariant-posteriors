@@ -5,7 +5,7 @@ use egui::{epaint, Stroke};
 use egui_plot::{Axis, Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
-use ndarray::s;
+use ndarray::{s, IxDyn, SliceInfo, SliceInfoElem};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::Cow;
@@ -20,9 +20,11 @@ use std::ops::RangeInclusive;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub mod np;
-use colorous::CIVIDIS;
+use colorous::{CIVIDIS, PLASMA};
 use ndarray_stats::QuantileExt;
 use np::load_npy_bytes;
+
+pub mod era5;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -311,9 +313,6 @@ fn image_from_ndarray_healpix(
     >,
     view: &NPYArtifactView,
 ) -> egui::ColorImage {
-    let max = array.max().unwrap();
-    let min = array.min().unwrap();
-    let t = |x: f32| (x - min) / (max - min);
     let width = 1000;
     let height = 1000;
     let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
@@ -321,6 +320,32 @@ fn image_from_ndarray_healpix(
     for (dim_idx, dim) in view.index.iter().enumerate() {
         local_index[dim_idx] = *dim;
     }
+    // array[1,2,3, :].mean()
+    let si = unsafe {
+        SliceInfo::<_, IxDyn, IxDyn>::new(
+            view.index
+                .iter()
+                .map(|i| SliceInfoElem::Index(*i as isize))
+                .chain([SliceInfoElem::Slice {
+                    start: 0,
+                    end: None,
+                    step: 1,
+                }])
+                .collect_vec(),
+        )
+        .unwrap()
+    };
+    let aslice = array.slice(&si);
+    let max = aslice.max().unwrap();
+    let min = aslice.min().unwrap();
+    // let max = array.slice(s![1,2,3,..])
+    //     // .get(&local_index[..local_index.len() - 1])
+    //     .unwrap()
+    //     // .slice(s![local_index[..local_index.len() - 1]])
+    //     .max()
+    //     .unwrap();
+    // let min = array.min().unwrap();
+    let t = |x: f32| (x - min) / (max - min);
     let ndim = local_index.len();
     for y in 0..height {
         for x in 0..width {
@@ -340,7 +365,7 @@ fn image_from_ndarray_healpix(
             // dbg!(array.shape());
             local_index[ndim - 1] = hp_idx as usize;
             let color =
-                CIVIDIS.eval_continuous(t(*array.get(local_index.as_slice()).unwrap()) as f64);
+                PLASMA.eval_continuous(t(*array.get(local_index.as_slice()).unwrap()) as f64);
             img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
             // }
         }
@@ -944,13 +969,54 @@ fn render_npy_artifact(
             artifact_id: artifact_id.clone(),
             index: vec![0; array.shape().len() - 1],
         });
+        // let surface_names = vec![vec!["batch"], vec!["msl", "u10", "v10", "t2m"]];
+        let era5_meta = era5::era5_meta();
         for (dim_idx, dim) in array
             .shape()
             .iter()
             .enumerate()
             .take(array.shape().len() - 1)
         {
-            ui.add(egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)));
+            ui.add(
+                egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)).custom_formatter(
+                    |index_f, _| match array.shape().len() {
+                        3 => {
+                            if dim_idx == 1 {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.surface.names[index_f as usize],
+                                    era5_meta.surface.units[index_f as usize],
+                                    era5_meta.surface.long_names[index_f as usize],
+                                );
+                            } else {
+                                return format!("{}", index_f as usize);
+                            }
+                        }
+                        4 => match dim_idx {
+                            1 => {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.upper.names[index_f as usize],
+                                    era5_meta.upper.units[index_f as usize],
+                                    era5_meta.upper.long_names[index_f as usize],
+                                );
+                            }
+                            2 => {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.upper.levels[index_f as usize],
+                                    era5_meta.upper.level_units,
+                                    era5_meta.upper.level_name,
+                                );
+                            }
+                            _ => {
+                                return format!("{}", index_f as usize);
+                            }
+                        },
+                        _ => return "na".to_string(),
+                    },
+                ),
+            );
         }
         ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
         if !textures.contains_key(&view) {
