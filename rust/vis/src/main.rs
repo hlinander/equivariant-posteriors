@@ -671,11 +671,11 @@ impl eframe::App for GuiRuns {
                 .id_source("central_space")
                 .show(ui, |ui| {
                     let collapsing = ui.collapsing("Tabular", |ui| {
-                        self.render_table(ui, &run_ensemble_color);
+                        // self.render_table(ui, &run_ensemble_color);
                     });
                     self.table_active = collapsing.fully_open();
-                    self.render_artifacts(ui, &run_ensemble_color);
-                    self.render_plots(ui, metric_names, &run_ensemble_color);
+                    // self.render_artifacts(ui, &run_ensemble_color);
+                    // self.render_plots(ui, metric_names, &run_ensemble_color);
                 });
         });
         self.initialized = true;
@@ -1614,8 +1614,7 @@ impl GuiRuns {
                 (
                     metric_name.clone(),
                     Plot::new(&metric_name)
-                        .auto_bounds_x()
-                        .auto_bounds_y()
+                        // .auto_bounds()
                         .legend(Legend::default())
                         .width(plot_width)
                         .height(plot_height)
@@ -1687,6 +1686,15 @@ impl GuiRuns {
                                 {
                                     if let Some(metric) = run.metrics.get(&metric_name) {
                                         // let label = self.label_from_active_inspect_params(run);
+                                        if metric.values.len() == 1 {
+                                            plot_ui.points(
+                                                egui_plot::Points::new(PlotPoints::from(
+                                                    metric.values.clone(),
+                                                ))
+                                                .shape(egui_plot::MarkerShape::Circle)
+                                                .radius(5.0),
+                                            );
+                                        }
                                         plot_ui.line(
                                             Line::new(PlotPoints::from(metric.values.clone()))
                                                 // .name(&label)
@@ -2345,6 +2353,22 @@ fn main() -> Result<(), sqlx::Error> {
                 .send(runs)
                 .expect("Failed to send recomputed runs.");
         }
+        // let mut last_gui_params = None;
+        // let mut last_runs = None;
+
+        // // Drain the channel to get the last available message
+        // while let Ok((gui_params, runs)) = rx_gui_dirty.try_recv() {
+        //     last_gui_params = Some(gui_params);
+        //     last_runs = Some(runs);
+        // }
+
+        // // Check if there was at least one message received
+        // if let (Some(gui_params), Some(mut runs)) = (last_gui_params, last_runs) {
+        //     recompute(&mut runs, &gui_params);
+        //     tx_gui_recomputed
+        //         .send(runs)
+        //         .expect("Failed to send recomputed runs.");
+        // }
     });
     rt_handle.spawn(async move {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
