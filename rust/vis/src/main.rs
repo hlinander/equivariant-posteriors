@@ -65,7 +65,7 @@ enum XAxis {
     Time,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct GuiParams {
     n_average: usize,
     max_n: usize,
@@ -78,6 +78,16 @@ struct GuiParams {
     time_filter_idx: usize,
     time_filter: Option<chrono::NaiveDateTime>,
     x_axis: XAxis,
+    npy_plot_size: f64,
+}
+
+impl Default for GuiParams {
+    fn default() -> Self {
+        Self {
+            npy_plot_size: 0.48,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -694,7 +704,7 @@ fn label_from_active_inspect_params(run: &Run, gui_params: &GuiParams) -> String
 fn show_artifacts(
     ui: &mut egui::Ui,
     handler: &mut ArtifactHandler,
-    gui_params: &GuiParams,
+    gui_params: &mut GuiParams,
     runs: &HashMap<String, Run>,
     filtered_runs: &Vec<String>,
     run_ensemble_color: &HashMap<String, egui::Color32>,
@@ -722,8 +732,9 @@ fn show_artifacts(
                 })
             {
                 // artifact_name,
-                let plot_width = ui.available_width() * 0.48;
-                let plot_height = ui.available_width() * 0.48 * 0.5;
+                ui.add(egui::Slider::new(&mut gui_params.npy_plot_size, 0.0..=1.0));
+                let plot_width = ui.available_width() * gui_params.npy_plot_size as f32;
+                let plot_height = ui.available_width() * gui_params.npy_plot_size as f32 * 0.5;
                 ui.horizontal_wrapped(|ui| {
                     for (artifact_name, array_group) in
                         &filtered_arrays.group_by(|(aid, _)| aid.name.clone())
@@ -965,7 +976,42 @@ fn render_npy_artifact(
             ui.add(
                 egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)).custom_formatter(
                     |index_f, _| match array.shape().len() {
+                        2 => {
+                            if dim_idx == 0 && array.shape()[1] > 128 {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.surface.names[index_f as usize],
+                                    era5_meta.surface.units[index_f as usize],
+                                    era5_meta.surface.long_names[index_f as usize],
+                                );
+                            } else {
+                                return format!("{}", index_f as usize);
+                            }
+                        }
                         3 => {
+                            if array.shape()[0] == 5 {
+                                match dim_idx {
+                                    0 => {
+                                        return format!(
+                                            "{} [{}], {}",
+                                            era5_meta.upper.names[index_f as usize],
+                                            era5_meta.upper.units[index_f as usize],
+                                            era5_meta.upper.long_names[index_f as usize],
+                                        );
+                                    }
+                                    1 => {
+                                        return format!(
+                                            "{} [{}], {}",
+                                            era5_meta.upper.levels[index_f as usize],
+                                            era5_meta.upper.level_units,
+                                            era5_meta.upper.level_name,
+                                        );
+                                    }
+                                    _ => {
+                                        return format!("{}", index_f as usize);
+                                    }
+                                }
+                            }
                             if dim_idx == 1 {
                                 return format!(
                                     "{} [{}], {}",
@@ -1876,7 +1922,7 @@ impl GuiRuns {
                 show_artifacts(
                     ui,
                     handler,
-                    &self.gui_params,
+                    &mut self.gui_params,
                     &self.runs.runs,
                     &self.runs.time_filtered_runs,
                     &run_ensemble_color,
@@ -2300,7 +2346,7 @@ fn parse_metric_rows(
             // println!("{:?}", rows[0].columns());
             let old_orig_values = run.metrics.get(&variable);
             // profiling::scope!("processing");
-            let orig_values: Vec<_> = rows
+            let mut orig_values: Vec<_> = rows
                 .iter()
                 .filter_map(|row| {
                     // profiling::scope!("filter map");
@@ -2332,6 +2378,7 @@ fn parse_metric_rows(
                 .collect();
             let xaxis = rows[0].get::<String, _>("xaxis");
             if !run.metrics.contains_key(&variable) {
+                orig_values.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
                 run.metrics.insert(
                     variable,
                     Metric {
@@ -2510,6 +2557,7 @@ fn main() -> Result<(), sqlx::Error> {
                     x_axis: XAxis::Batch,
                     param_name_filter: "".to_string(),
                     table_sorting: HashSet::new(),
+                    npy_plot_size: 0.48,
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
