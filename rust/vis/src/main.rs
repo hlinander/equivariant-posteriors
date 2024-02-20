@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::ops::RangeInclusive;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 
 pub mod np;
 use colorous::{CIVIDIS, PLASMA};
@@ -136,7 +136,7 @@ enum BinaryArtifact {
 
 fn download_artifact(
     artifact_id: ArtifactId,
-    tx_path_mutex: Arc<Mutex<Sender<i32>>>,
+    tx_path_mutex: Arc<Mutex<SyncSender<i32>>>,
     rx_artifact_mutex: Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) -> BinaryArtifact {
     let (tx_update, rx_update) = mpsc::channel::<DownloadProgressStatus>();
@@ -198,8 +198,13 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
                     }
                     Err(err) => new_binary_artifact = Some(BinaryArtifact::Error(err.to_string())),
                 }
-            } else if let Ok(download_status) = download_progress.rx_update.try_recv() {
-                download_progress.status = download_status;
+            } else {
+                // if let Ok(download_status) = download_progress.rx_update.try_recv() {
+                //     download_progress.status = download_status;
+                // }
+                while let Ok(download_status) = download_progress.rx_update.try_recv() {
+                    download_progress.status = download_status;
+                }
             }
         }
         BinaryArtifact::Loaded(_) => {}
@@ -230,7 +235,7 @@ fn add_artifact(
     handler: &mut ArtifactHandler,
     artifact_id: &ArtifactId,
     args: &Args,
-    tx_path_mutex: &mut Arc<Mutex<Sender<i32>>>,
+    tx_path_mutex: &mut Arc<Mutex<SyncSender<i32>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     match handler {
@@ -263,7 +268,7 @@ fn add_artifact(
 fn handle_add_npy(
     arrays: &mut HashMap<ArtifactId, NPYArray>,
     artifact_id: &ArtifactId,
-    tx_path_mutex: &mut Arc<Mutex<Sender<i32>>>,
+    tx_path_mutex: &mut Arc<Mutex<SyncSender<i32>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     match arrays.get_mut(artifact_id) {
@@ -375,12 +380,14 @@ fn image_from_ndarray_healpix(
 
 struct GuiRuns {
     runs: Runs,
-    dirty: bool,
-    db_train_runs_sender: Sender<Vec<String>>,
+    // dirty: bool,
+    db_train_runs_sender: SyncSender<Vec<String>>,
+    db_train_runs_sender_slot: Option<Vec<String>>,
+    gui_params_sender: SyncSender<(GuiParams, HashMap<String, Run>)>,
+    gui_params_sender_slot: Option<(GuiParams, HashMap<String, Run>)>,
     db_reciever: Receiver<HashMap<String, Run>>,
     recomputed_reciever: Receiver<HashMap<String, Run>>,
-    dirty_sender: Sender<(GuiParams, HashMap<String, Run>)>,
-    tx_db_artifact_path: Arc<Mutex<Sender<i32>>>,
+    tx_db_artifact_path: Arc<Mutex<SyncSender<i32>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
     rx_batch_status: Receiver<(usize, usize)>,
     batch_status: (usize, usize),
@@ -509,71 +516,48 @@ impl eframe::App for GuiRuns {
         if !self.initialized {
             ctx.set_zoom_factor(2.0);
         }
-        self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
-        self.runs.active_runs_time_ordered = self
-            .runs
-            .active_runs
-            .iter()
-            .cloned()
-            .map(|train_id| {
-                (
-                    train_id.clone(),
-                    self.runs.runs.get(&train_id).unwrap().created_at,
-                )
-            })
-            .sorted_by_key(|(_train_id, created_at)| *created_at)
-            .collect();
-        self.runs.time_filtered_runs = self
-            .runs
-            .active_runs_time_ordered
-            .iter()
-            .cloned()
-            .filter(|(_train_id, created_at)| {
-                if let Some(time_filter) = self.gui_params.time_filter {
-                    *created_at >= time_filter
-                } else {
-                    true
-                }
-            })
-            .map(|(train_id, _)| train_id)
-            .collect();
-        if self.dirty {
-            self.dirty_sender
-                .send((self.gui_params.clone(), self.runs.runs.clone()))
-                .expect("Failed to send dirty runs");
-            self.db_train_runs_sender
-                // .send(self.runs.active_runs.clone())
-                .send(self.runs.time_filtered_runs.clone())
-                .expect("Failed to send train runs to db thread");
-            self.dirty = false;
-            // self.recompute();
+        if let Some(gui_params_package) = self.gui_params_sender_slot.take() {
+            if self
+                .gui_params_sender
+                .try_send(gui_params_package.clone())
+                .is_err()
+            {
+                self.gui_params_sender_slot = Some(gui_params_package);
+            }
         }
-        if let Ok(new_runs) = self.recomputed_reciever.try_recv() {
-            // println!("[app] recieved recomputed runs");
+        if let Some(db_train_runs_package) = self.db_train_runs_sender_slot.take() {
+            if self
+                .db_train_runs_sender
+                .try_send(db_train_runs_package.clone())
+                .is_err()
+            {
+                self.db_train_runs_sender_slot = Some(db_train_runs_package);
+            }
+        }
+        while let Ok(new_runs) = self.recomputed_reciever.try_recv() {
             self.runs.runs = new_runs;
-            if self.data_status == DataStatus::FirstDataArrived && self.runs.runs.len() > 0 {
+            if self.runs.runs.len() > 0 && self.data_status == DataStatus::FirstDataArrived {
                 self.data_status = DataStatus::FirstDataProcessed;
             }
         }
-        if let Ok(new_runs) = self.db_reciever.try_recv() {
+        while let Ok(new_runs) = self.db_reciever.try_recv() {
             for train_id in new_runs.keys() {
                 if !self.runs.runs.contains_key(train_id) {
                     let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
                     println!("[app] recieved new runs, sending to compute...");
-                    self.db_train_runs_sender
-                        .send(new_active)
-                        .expect("Failed to send train runs to db thread");
+                    self.db_train_runs_sender_slot = Some(new_active);
+                    // self.db_train_runs_sender.try_send(new_active);
+                    // .expect("Failed to send train runs to db thread");
                     break;
                 }
             }
-            self.dirty_sender
-                .send((self.gui_params.clone(), new_runs))
-                .expect("Failed to send dirty runs");
+            self.gui_params_sender_slot = Some((self.gui_params.clone(), new_runs));
             if self.data_status == DataStatus::Waiting {
                 self.data_status = DataStatus::FirstDataArrived;
             }
             // self.recompute();
         }
+        // return;
 
         let ensemble_colors: HashMap<String, egui::Color32> = self
             .runs
@@ -629,7 +613,6 @@ impl eframe::App for GuiRuns {
             .resizable(true)
             .default_width(200.0)
             .min_width(200.0)
-            // .width_range(100.0..=600.0)
             .show(ctx, |ui| {
                 self.render_parameters(ui, param_values, filtered_values, ctx);
             });
@@ -652,7 +635,7 @@ impl eframe::App for GuiRuns {
                         self.gui_params.x_axis = XAxis::Batch;
                     }
                     self.render_time_selector(ui);
-                    if let Ok(batch_status) = self.rx_batch_status.try_recv() {
+                    while let Ok(batch_status) = self.rx_batch_status.try_recv() {
                         self.batch_status = batch_status;
                     }
                 });
@@ -671,15 +654,16 @@ impl eframe::App for GuiRuns {
                 .id_source("central_space")
                 .show(ui, |ui| {
                     let collapsing = ui.collapsing("Tabular", |ui| {
-                        // self.render_table(ui, &run_ensemble_color);
+                        self.render_table(ui, &run_ensemble_color);
                     });
                     self.table_active = collapsing.fully_open();
-                    // self.render_artifacts(ui, &run_ensemble_color);
-                    // self.render_plots(ui, metric_names, &run_ensemble_color);
+                    self.render_artifacts(ui, &run_ensemble_color);
+                    self.render_plots(ui, metric_names, &run_ensemble_color);
                 });
         });
         self.initialized = true;
         ctx.request_repaint();
+        // ctx.repaint_causes()
     }
 }
 
@@ -1194,7 +1178,9 @@ impl GuiRuns {
                     )
                     .changed()
                 {
-                    self.dirty = true;
+                    // self.dirty = true;
+                    self.gui_params_sender_slot =
+                        Some((self.gui_params.clone(), self.runs.runs.clone()));
                 };
                 if ui
                     .add(
@@ -1203,7 +1189,9 @@ impl GuiRuns {
                     )
                     .changed()
                 {
-                    self.dirty = true;
+                    // self.dirty = true;
+                    self.gui_params_sender_slot =
+                        Some((self.gui_params.clone(), self.runs.runs.clone()));
                 };
                 let param_names = param_values.keys().cloned().collect_vec();
                 for name in param_names.iter().sorted() {
@@ -1469,7 +1457,11 @@ impl GuiRuns {
                         .insert(value.clone());
                     dbg!(&param_name, value);
                 }
-                self.dirty = true;
+                // self.dirty = true;
+                self.update_filtered_runs();
+                self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                self.gui_params_sender_slot =
+                    Some((self.gui_params.clone(), self.runs.runs.clone()));
             }
         }
     }
@@ -1766,7 +1758,11 @@ impl GuiRuns {
                         } else {
                             self.gui_params.metric_filters.insert(metric_name.clone());
                         }
-                        self.dirty = true;
+                        // self.dirty = true;
+                        self.update_filtered_runs();
+                        self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                        self.gui_params_sender_slot =
+                            Some((self.gui_params.clone(), self.runs.runs.clone()));
                     }
                 }
             });
@@ -1895,12 +1891,47 @@ impl GuiRuns {
                     created_at.to_string()
                 });
                 if ui.add(time_slider).changed() {
-                    self.dirty = true;
+                    // self.dirty = true;
                     self.gui_params.time_filter =
-                        Some(self.runs.active_runs_time_ordered[self.gui_params.time_filter_idx].1)
+                        Some(self.runs.active_runs_time_ordered[self.gui_params.time_filter_idx].1);
+                    self.update_filtered_runs();
+                    self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                    self.gui_params_sender_slot =
+                        Some((self.gui_params.clone(), self.runs.runs.clone()));
                 }
             });
         }
+    }
+
+    fn update_filtered_runs(&mut self) {
+        self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
+        self.runs.active_runs_time_ordered = self
+            .runs
+            .active_runs
+            .iter()
+            .cloned()
+            .map(|train_id| {
+                (
+                    train_id.clone(),
+                    self.runs.runs.get(&train_id).unwrap().created_at,
+                )
+            })
+            .sorted_by_key(|(_train_id, created_at)| *created_at)
+            .collect();
+        self.runs.time_filtered_runs = self
+            .runs
+            .active_runs_time_ordered
+            .iter()
+            .cloned()
+            .filter(|(_train_id, created_at)| {
+                if let Some(time_filter) = self.gui_params.time_filter {
+                    *created_at >= time_filter
+                } else {
+                    true
+                }
+            })
+            .map(|(train_id, _)| train_id)
+            .collect();
     }
 }
 
@@ -1938,8 +1969,8 @@ async fn get_state_new(
     runs: &mut HashMap<String, Run>,
     train_ids: &Vec<String>,
     last_timestamp: &mut NaiveDateTime,
-    tx_runs: Option<&Sender<HashMap<String, Run>>>,
-    tx_batch_status: &Sender<(usize, usize)>,
+    tx_runs: Option<&SyncSender<HashMap<String, Run>>>,
+    tx_batch_status: &SyncSender<(usize, usize)>,
 ) -> Result<(), sqlx::Error> {
     // Query to get the table structure
     // TODO: WHERE train_id not in runs.keys()
@@ -2000,7 +2031,7 @@ async fn get_state_metrics(
     last_timestamp: &mut NaiveDateTime,
     pool: &sqlx::Pool<sqlx::Postgres>,
     runs: &mut HashMap<String, Run>,
-    tx_runs: Option<&Sender<HashMap<String, Run>>>,
+    tx_runs: Option<&SyncSender<HashMap<String, Run>>>,
     metric_table: String,
 ) -> Result<(), sqlx::Error> {
     if train_ids.len() > 0 {
@@ -2062,14 +2093,14 @@ async fn get_state_metrics(
             let query_elapsed_time = query_time.elapsed().as_secs_f32();
             // println!("query elapsed: {}", query_elapsed_time);
             let received_rows = metric_rows.len();
-            profiling::scope!("parse");
+            // profiling::scope!("parse");
             parse_metric_rows(metric_rows, runs, last_timestamp);
             // println!(
             //     "[db] recieved batch data from {}: {}",
             //     metric_table, received_rows
             // );
             // {
-            profiling::scope!("send");
+            // profiling::scope!("send");
             if let Some(tx) = tx_runs {
                 tx.send(runs.clone()).expect("send failed");
                 // println!("[db] sent {}", received_rows);
@@ -2096,7 +2127,7 @@ async fn get_state_epoch_metrics(
     last_timestamp: &mut NaiveDateTime,
     pool: &sqlx::Pool<sqlx::Postgres>,
     runs: &mut HashMap<String, Run>,
-    tx_runs: Option<&Sender<HashMap<String, Run>>>,
+    tx_runs: Option<&SyncSender<HashMap<String, Run>>>,
 ) -> Result<(), sqlx::Error> {
     // let mut new_epoch_timestamp = last_timestamp.clone();
     let chunk_size = 1000i32;
@@ -2224,13 +2255,13 @@ async fn get_state_parameters(
     )
 }
 
-#[profiling::function]
+// #[profiling::function]
 fn parse_metric_rows(
     metric_rows: Vec<sqlx::postgres::PgRow>,
     runs: &mut HashMap<String, Run>,
     last_timestamp: &mut NaiveDateTime,
 ) {
-    profiling::scope!("sort train_id var");
+    // profiling::scope!("sort train_id var");
     let metric_rows_sorted = metric_rows.iter().sorted_by_cached_key(|row| {
         (
             row.get::<String, _>("train_id"),
@@ -2245,7 +2276,7 @@ fn parse_metric_rows(
         for (variable, value_rows) in
             &run_metric_rows.group_by(|row| row.get::<String, _>("variable"))
         {
-            profiling::scope!("max timestamp");
+            // profiling::scope!("max timestamp");
             let rows: Vec<_> = value_rows.collect();
             let max_timestamp = rows
                 .iter()
@@ -2258,20 +2289,20 @@ fn parse_metric_rows(
             }
             // println!("{:?}", rows[0].columns());
             let old_orig_values = run.metrics.get(&variable);
-            profiling::scope!("processing");
+            // profiling::scope!("processing");
             let orig_values: Vec<_> = rows
                 .iter()
                 .filter_map(|row| {
-                    profiling::scope!("filter map");
+                    // profiling::scope!("filter map");
                     // println!("{:?}", row.try_get::<i32, _>("id"));
                     if let Ok(x) = row.try_get_unchecked::<f64, _>("x") {
-                        profiling::scope!("get val");
+                        // profiling::scope!("get val");
                         if let Ok(value) = row.try_get_unchecked::<f64, _>("value") {
                             if let Ok(created_at) =
                                 row.try_get_unchecked::<NaiveDateTime, _>("created_at")
                             {
                                 let new_value = [x, value, created_at.timestamp() as f64];
-                                profiling::scope!("exists in orig");
+                                // profiling::scope!("exists in orig");
                                 if let Some(old_orig_values) = old_orig_values {
                                     // if old_orig_values.orig_values.contains(&new_value) {
                                     if old_orig_values
@@ -2302,7 +2333,7 @@ fn parse_metric_rows(
                     },
                 );
             } else {
-                profiling::scope!("extend and sort");
+                // profiling::scope!("extend and sort");
                 run.metrics
                     .get_mut(&variable)
                     .unwrap()
@@ -2327,48 +2358,50 @@ enum ArtifactTransfer {
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
-    use tracy_client::Client;
-    let _profile_guard = Client::start();
+    // use tracy_client::Client;
+    // let _profile_guard = Client::start();
     // console_subscriber::init();
     // Load environment variables
     // dotenv::dotenv().ok();
     let args = Args::parse();
     println!("Args: {:?}", args);
-    let (tx, rx) = mpsc::channel();
-    let (tx_gui_dirty, rx_gui_dirty) = mpsc::channel();
-    let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::channel();
-    let (tx_db_filters, rx_db_filters) = mpsc::channel::<Vec<String>>();
+    let (tx, rx) = mpsc::sync_channel(1);
+    let (tx_gui_dirty, rx_gui_dirty) = mpsc::sync_channel(100);
+    let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::sync_channel(100);
+    let (tx_db_filters, rx_db_filters) = mpsc::sync_channel::<Vec<String>>(1);
     let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_db_filters));
-    let (tx_db_artifact, rx_db_artifact) = mpsc::channel::<ArtifactTransfer>();
-    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::channel::<i32>();
-    let (tx_batch_status, rx_batch_status) = mpsc::channel::<(usize, usize)>();
+    let (tx_db_artifact, rx_db_artifact) = mpsc::sync_channel::<ArtifactTransfer>(1);
+    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::sync_channel::<i32>(1);
+    let (tx_batch_status, rx_batch_status) = mpsc::sync_channel::<(usize, usize)>(100);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rt_handle = rt.handle().clone();
     let _guard = rt.enter();
 
     std::thread::spawn(move || loop {
-        if let Ok((gui_params, mut runs)) = rx_gui_dirty.recv() {
-            recompute(&mut runs, &gui_params);
-            tx_gui_recomputed
-                .send(runs)
-                .expect("Failed to send recomputed runs.");
-        }
-        // let mut last_gui_params = None;
-        // let mut last_runs = None;
-
-        // // Drain the channel to get the last available message
-        // while let Ok((gui_params, runs)) = rx_gui_dirty.try_recv() {
-        //     last_gui_params = Some(gui_params);
-        //     last_runs = Some(runs);
-        // }
-
-        // // Check if there was at least one message received
-        // if let (Some(gui_params), Some(mut runs)) = (last_gui_params, last_runs) {
+        // if let Ok((gui_params, mut runs)) = rx_gui_dirty.recv() {
         //     recompute(&mut runs, &gui_params);
         //     tx_gui_recomputed
         //         .send(runs)
         //         .expect("Failed to send recomputed runs.");
         // }
+        let mut last_gui_params = None;
+        let mut last_runs = None;
+
+        // Drain the channel to get the last available message
+        // dbg!("draining...");
+        while let Ok((gui_params, runs)) = rx_gui_dirty.try_recv() {
+            last_gui_params = Some(gui_params);
+            last_runs = Some(runs);
+        }
+        // dbg!("done...");
+
+        // Check if there was at least one message received
+        if let (Some(gui_params), Some(mut runs)) = (last_gui_params, last_runs) {
+            recompute(&mut runs, &gui_params);
+            tx_gui_recomputed
+                .send(runs)
+                .expect("Failed to send recomputed runs.");
+        }
     });
     rt_handle.spawn(async move {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -2428,7 +2461,7 @@ fn main() -> Result<(), sqlx::Error> {
             .await
             .expect("Can't connect to database");
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
                 handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
             }
@@ -2447,11 +2480,11 @@ fn main() -> Result<(), sqlx::Error> {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Box::<GuiRuns>::new(GuiRuns {
                 runs: Default::default(),
-                dirty: true,
+                // dirty: true,
                 db_train_runs_sender: tx_db_filters,
                 db_reciever: rx,
                 recomputed_reciever: rx_gui_recomputed,
-                dirty_sender: tx_gui_dirty,
+                gui_params_sender: tx_gui_dirty,
                 initialized: false,
                 data_status: DataStatus::Waiting,
                 gui_params: GuiParams {
@@ -2498,6 +2531,8 @@ fn main() -> Result<(), sqlx::Error> {
                 rx_batch_status,
                 batch_status: (0, 0),
                 table_active: false,
+                db_train_runs_sender_slot: None,
+                gui_params_sender_slot: None,
             })
         }),
     );
@@ -2508,7 +2543,7 @@ fn main() -> Result<(), sqlx::Error> {
 async fn handle_artifact_request(
     artifact_id: i32,
     pool: &sqlx::Pool<sqlx::Postgres>,
-    tx_db_artifact: &Sender<ArtifactTransfer>,
+    tx_db_artifact: &SyncSender<ArtifactTransfer>,
 ) {
     println!("[db] artifact requested: {}", artifact_id);
     let query = sqlx::query(
@@ -2608,8 +2643,8 @@ async fn update_state(
     pool: &sqlx::Pool<sqlx::Postgres>,
     train_ids: &Vec<String>,
     last_timestamp: &mut NaiveDateTime,
-    tx: &Sender<HashMap<String, Run>>,
-    tx_batch_status: &Sender<(usize, usize)>,
+    tx: &SyncSender<HashMap<String, Run>>,
+    tx_batch_status: &SyncSender<(usize, usize)>,
 ) {
     if runs.is_empty() {
         if let Err(err) = get_state_new(
@@ -2629,7 +2664,6 @@ async fn update_state(
         tx_batch_status.send((0, 3)).unwrap();
         get_state_parameters(pool, runs).await.unwrap();
         tx.send(runs.clone()).expect("Failed to send data");
-        // println!("[db] artifacts...");
         get_state_artifacts(train_ids, pool, runs).await.unwrap();
         tx.send(runs.clone()).expect("Failed to send data");
         let mut epoch_last_timestamp = last_timestamp.clone();
