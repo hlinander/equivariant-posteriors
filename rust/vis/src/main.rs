@@ -1510,6 +1510,7 @@ impl GuiRuns {
                 .body(|mut table| {
                     for run_id in &self.runs.time_filtered_runs {
                         let run = self.runs.runs.get(run_id).unwrap();
+                        let mut clipboard = None;
                         table.row(20.0, |mut row| {
                             row.col(|ui| {
                                 let (rect, _) = ui.allocate_exact_size(
@@ -1536,7 +1537,15 @@ impl GuiRuns {
                                 });
                                 // ui.painter().rect
                             }
+                            if row.response().clicked() {
+                                clipboard = Some(run_id.clone());
+                                //
+                            }
                         });
+                        if let Some(copied_text) = clipboard {
+                            table.ui_mut().ctx().copy_text(copied_text);
+                            // table.ui_mut().
+                        }
                     }
                 });
         });
