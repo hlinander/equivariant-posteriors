@@ -757,6 +757,7 @@ fn show_artifacts(
                                         );
                                     }
                                     NPYArray::Error(err) => {
+                                        ui.label(err);
                                         // ui.colored_label(egui::Color32::RED, err);
                                         // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                     }
@@ -2404,7 +2405,7 @@ fn main() -> Result<(), sqlx::Error> {
         }
     });
     rt_handle.spawn(async move {
-        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let database_url = env::var("DATABASE_URL").unwrap_or("postgres://postgres:postgres@localhost/equiv".to_string());
         println!("[db] connecting...");
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -2454,7 +2455,8 @@ fn main() -> Result<(), sqlx::Error> {
         }
     });
     rt_handle.spawn(async move {
-        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let database_url = env::var("DATABASE_URL")
+            .unwrap_or("postgres://postgres:postgres@localhost/equiv".to_string());
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)
