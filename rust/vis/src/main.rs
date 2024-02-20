@@ -227,7 +227,8 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
 
 enum ArtifactHandler {
     NPYHealPixArtifact {
-        textures: HashMap<NPYArtifactView, egui::TextureHandle>,
+        // textures: HashMap<NPYArtifactView, egui::TextureHandle>,
+        textures: HashMap<NPYArtifactView, ColorTextureInfo>,
         arrays: HashMap<ArtifactId, NPYArray>,
         views: HashMap<ArtifactId, NPYArtifactView>,
     },
@@ -321,13 +322,19 @@ fn handle_add_npy(
     }
 }
 
+struct ColorImageInfo {
+    image: egui::ColorImage,
+    min_val: f64,
+    max_val: f64,
+}
+
 fn image_from_ndarray_healpix(
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
     view: &NPYArtifactView,
-) -> egui::ColorImage {
+) -> ColorImageInfo {
     let width = 1000;
     let height = 1000;
     let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
@@ -385,7 +392,11 @@ fn image_from_ndarray_healpix(
             // }
         }
     }
-    img
+    ColorImageInfo {
+        image: img,
+        min_val: *min as f64,
+        max_val: *max as f64,
+    }
 }
 
 struct GuiRuns {
@@ -524,7 +535,7 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 impl eframe::App for GuiRuns {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.initialized {
-            ctx.set_zoom_factor(2.0);
+            ctx.set_zoom_factor(1.0);
         }
         if let Some(gui_params_package) = self.gui_params_sender_slot.take() {
             if self
@@ -936,6 +947,12 @@ fn render_artifact_download_progress(binary_artifact: &BinaryArtifact, ui: &mut 
     }
 }
 
+struct ColorTextureInfo {
+    texture_handle: egui::TextureHandle,
+    min_val: f64,
+    max_val: f64,
+}
+
 fn render_npy_artifact(
     ui: &mut egui::Ui,
     runs: &HashMap<String, Run>,
@@ -947,7 +964,8 @@ fn render_npy_artifact(
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
-    textures: &mut HashMap<NPYArtifactView, egui::TextureHandle>,
+    // textures: &mut HashMap<NPYArtifactView, egui::TextureHandle>,
+    textures: &mut HashMap<NPYArtifactView, ColorTextureInfo>,
     plot_width: f32,
     npy_axis_id: egui::Id,
 ) {
@@ -1056,29 +1074,61 @@ fn render_npy_artifact(
                 egui::ColorImage::example(),
                 egui::TextureOptions::default(),
             );
-            let img = image_from_ndarray_healpix(array, view);
-            texture.set(img, egui::TextureOptions::default());
-            textures.insert(view.clone(), texture);
+            let color_img_info = image_from_ndarray_healpix(array, view);
+            texture.set(color_img_info.image, egui::TextureOptions::default());
+            textures.insert(
+                view.clone(),
+                ColorTextureInfo {
+                    texture_handle: texture,
+                    min_val: color_img_info.min_val,
+                    max_val: color_img_info.max_val,
+                },
+            );
         }
         let pi = egui_plot::PlotImage::new(
-            textures.get(&view).unwrap(),
+            textures.get(&view).unwrap().texture_handle.id(),
             // texture.id(),
             egui_plot::PlotPoint::from([0.0, 0.0]),
             [2.0 * 3.14, 3.14],
         );
         // texture.set(img, egui::TextureOptions::default());
         // ui.image((texture.id(), texture.size_vec2()));
-        Plot::new(artifact_id)
-            .width(plot_width)
-            .height(plot_width / 2.0)
-            .data_aspect(1.0)
-            .view_aspect(1.0)
-            .show_grid(false)
-            .link_axis(npy_axis_id, true, true)
-            .link_cursor(npy_axis_id, true, true)
-            .show(ui, |plot_ui| {
-                plot_ui.image(pi);
+        ui.horizontal(|ui| {
+            Plot::new(artifact_id)
+                .width(plot_width)
+                .height(plot_width / 2.0)
+                .data_aspect(1.0)
+                .view_aspect(1.0)
+                .show_grid(false)
+                .link_axis(npy_axis_id, true, true)
+                .link_cursor(npy_axis_id, true, true)
+                .show(ui, |plot_ui| {
+                    plot_ui.image(pi);
+                });
+
+            let color_info = textures.get(&view).unwrap();
+            let t_and_color = (0..50)
+                .map(|x| x as f64 / 50.0)
+                .map(|t| (t, PLASMA.eval_continuous(t as f64)));
+            let lines = t_and_color.tuple_windows().map(|((t1, c1), (t2, c2))| {
+                let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
+                let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
+                let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
+                egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
+                    .color(color)
+                    .width(10.0)
             });
+            Plot::new((artifact_id, "colorbar"))
+                .width(90.0)
+                .height(plot_width / 2.0)
+                .auto_bounds(egui::Vec2b::TRUE)
+                .y_axis_position(egui_plot::HPlacement::Right)
+                .show(ui, |plot_ui| {
+                    for line in lines {
+                        plot_ui.line(line)
+                    }
+                });
+        });
     });
 }
 
