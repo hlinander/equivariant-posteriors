@@ -103,6 +103,7 @@ struct ArtifactId {
     artifact_id: i32,
     train_id: String,
     name: String,
+    artifact_type: ArtifactType,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
@@ -125,6 +126,18 @@ enum NPYArray {
     Loading(BinaryArtifact),
     Loaded(ndarray::ArrayD<f32>),
     Error(String),
+}
+
+#[derive(Copy, Clone)]
+enum NPYArrayType {
+    HealPix,
+    DriscollHealy,
+    Tabular,
+}
+
+struct SpatialNPYArray {
+    array: NPYArray,
+    array_type: NPYArrayType,
 }
 
 #[derive(Clone)]
@@ -225,15 +238,26 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
     }
 }
 
+#[derive(PartialEq, Eq, Hash)]
+enum ArtifactHandlerType {
+    SpatialNPY,
+    TabularNPY,
+    Image,
+    Unknown,
+}
+
 enum ArtifactHandler {
-    NPYHealPixArtifact {
-        // textures: HashMap<NPYArtifactView, egui::TextureHandle>,
+    NPYArtifact {
         textures: HashMap<NPYArtifactView, ColorTextureInfo>,
-        arrays: HashMap<ArtifactId, NPYArray>,
+        arrays: HashMap<ArtifactId, SpatialNPYArray>,
         views: HashMap<ArtifactId, NPYArtifactView>,
+        colormap_artifacts: HashSet<ArtifactId>, // container: NPYVisContainer,
     },
+    // NPYDriscollHealyArtifact {
+    //     container: NPYVisContainer,
+    // },
     NPYTabularArtifact {
-        arrays: HashMap<ArtifactId, NPYArray>,
+        arrays: HashMap<ArtifactId, SpatialNPYArray>,
         views: HashMap<ArtifactId, NPYTabularArtifactView>,
     },
     ImageArtifact {
@@ -250,11 +274,18 @@ fn add_artifact(
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     match handler {
-        ArtifactHandler::NPYHealPixArtifact {
+        ArtifactHandler::NPYArtifact {
+            textures,
             arrays,
-            textures: _,
-            views: _,
+            views,
+            colormap_artifacts,
         } => handle_add_npy(arrays, &artifact_id, tx_path_mutex, rx_artifact_mutex),
+        // ArtifactHandler::NPYDriscollHealyArtifact { container } => handle_add_npy(
+        //     &mut container.arrays,
+        //     &artifact_id,
+        //     tx_path_mutex,
+        //     rx_artifact_mutex,
+        // ),
         ArtifactHandler::ImageArtifact { binaries } => match binaries.get_mut(&artifact_id) {
             Some(binary_artifact) => {
                 poll_artifact_download(binary_artifact);
@@ -277,7 +308,7 @@ fn add_artifact(
 }
 
 fn handle_add_npy(
-    arrays: &mut HashMap<ArtifactId, NPYArray>,
+    arrays: &mut HashMap<ArtifactId, SpatialNPYArray>,
     artifact_id: &ArtifactId,
     tx_path_mutex: &mut Arc<Mutex<SyncSender<i32>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
@@ -286,21 +317,29 @@ fn handle_add_npy(
         None => {
             arrays.insert(
                 artifact_id.clone(),
-                NPYArray::Loading(download_artifact(
-                    artifact_id.clone(),
-                    tx_path_mutex.clone(),
-                    rx_artifact_mutex.clone(),
-                )),
+                SpatialNPYArray {
+                    array: NPYArray::Loading(download_artifact(
+                        artifact_id.clone(),
+                        tx_path_mutex.clone(),
+                        rx_artifact_mutex.clone(),
+                    )),
+                    array_type: match artifact_id.artifact_type {
+                        ArtifactType::NPYHealpix => NPYArrayType::HealPix,
+                        ArtifactType::NPYDriscollHealy => NPYArrayType::DriscollHealy,
+                        _ => todo!(),
+                    },
+                },
             );
         }
         Some(npyarray) => {
             let mut new_npyarray = None;
-            match npyarray {
+            let SpatialNPYArray { array, array_type } = npyarray;
+            match array {
                 NPYArray::Loading(binary_artifact) => {
                     poll_artifact_download(binary_artifact);
                     match binary_artifact {
                         BinaryArtifact::Loading(_) => {}
-                        BinaryArtifact::Loaded(binary_data) => match load_npy_bytes(binary_data) {
+                        BinaryArtifact::Loaded(binary_data) => match load_npy_bytes(&binary_data) {
                             Ok(nparray) => {
                                 new_npyarray = Some(NPYArray::Loaded(nparray));
                             }
@@ -316,7 +355,10 @@ fn handle_add_npy(
                 _ => {}
             }
             if let Some(new_npyarray) = new_npyarray {
-                *npyarray = new_npyarray;
+                *npyarray = SpatialNPYArray {
+                    array: new_npyarray,
+                    array_type: *array_type,
+                };
             }
         }
     }
@@ -343,23 +385,7 @@ fn image_from_ndarray_healpix(
         local_index[dim_idx] = *dim;
     }
     // array[1,2,3, :].mean()
-    let si = unsafe {
-        SliceInfo::<_, IxDyn, IxDyn>::new(
-            view.index
-                .iter()
-                .map(|i| SliceInfoElem::Index(*i as isize))
-                .chain([SliceInfoElem::Slice {
-                    start: 0,
-                    end: None,
-                    step: 1,
-                }])
-                .collect_vec(),
-        )
-        .unwrap()
-    };
-    let aslice = array.slice(&si);
-    let max = aslice.max().unwrap();
-    let min = aslice.min().unwrap();
+    let (max, min) = min_max_hp(view, array);
     // let max = array.slice(s![1,2,3,..])
     //     // .get(&local_index[..local_index.len() - 1])
     //     .unwrap()
@@ -386,19 +412,144 @@ fn image_from_ndarray_healpix(
             // println!("nside {}, depth {}, idx {}", nside, depth, hp_idx);
             // dbg!(array.shape());
             local_index[ndim - 1] = hp_idx as usize;
-            let color =
-                PLASMA.eval_continuous(t(*array.get(local_index.as_slice()).unwrap()) as f64);
+            let v = t(*array.get(local_index.as_slice()).unwrap()) as f64;
+            let color: colorous::Color = match v {
+                x if x < 0.0 => colorous::Color { r: 0, g: 255, b: 0 },
+                x if x > 1.0 => colorous::Color { r: 0, g: 0, b: 255 },
+                _ => PLASMA.eval_continuous(v),
+            };
             img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
             // }
         }
     }
     ColorImageInfo {
         image: img,
-        min_val: *min as f64,
-        max_val: *max as f64,
+        min_val: min as f64,
+        max_val: max as f64,
     }
 }
 
+fn min_max_hp(
+    view: &NPYArtifactView,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+) -> (f32, f32) {
+    let si = unsafe {
+        SliceInfo::<_, IxDyn, IxDyn>::new(
+            view.index
+                .iter()
+                .map(|i| SliceInfoElem::Index(*i as isize))
+                .chain([SliceInfoElem::Slice {
+                    start: 0,
+                    end: None,
+                    step: 1,
+                }])
+                .collect_vec(),
+        )
+        .unwrap()
+    };
+    let aslice = array.slice(&si);
+    let max = aslice.max().unwrap();
+    let min = aslice.min().unwrap();
+    (*max, *min)
+}
+
+fn image_from_ndarray_driscoll_healy(
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    view: &NPYArtifactView,
+    min: f32,
+    max: f32,
+) -> ColorImageInfo {
+    let width = 1000;
+    let height = 1000;
+    let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
+    let mut local_index = vec![0; array.shape().len()];
+    for (dim_idx, dim) in view.index.iter().enumerate() {
+        local_index[dim_idx] = *dim;
+    }
+    // let (max, min) = min_max_driscoll_healy(view, array);
+    let t = |x: f32| (x - min) / (max - min);
+    let ndim = local_index.len();
+    for y in 0..height {
+        for x in 0..width {
+            let (lon, lat) = (
+                x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
+                (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
+                    / 2.0,
+            );
+
+            let lon_idx_f = lon * array.shape()[ndim - 1] as f64 / (2.0 * std::f64::consts::PI);
+            let lon_idx = (lon_idx_f as usize).clamp(0, array.shape()[ndim - 1] - 1);
+
+            let lat_idx_f = (lat + std::f64::consts::PI / 2.0) * array.shape()[ndim - 2] as f64
+                / std::f64::consts::PI;
+            let lat_idx = (lat_idx_f as usize).clamp(0, array.shape()[ndim - 2] - 1);
+            // let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
+            // let depth = cdshealpix::depth(nside);
+            // let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
+            // if hp_idx < cdshealpix::n_hash(depth) {
+            // println!("nside {}, depth {}, idx {}", nside, depth, hp_idx);
+            // dbg!(array.shape());
+            local_index[ndim - 1] = lon_idx;
+            local_index[ndim - 2] = lat_idx;
+            // dbg!(&local_index, array.shape());
+            // let color =
+            //     PLASMA.eval_continuous(t(*array.get(local_index.as_slice()).unwrap()) as f64);
+            let v = t(*array.get(local_index.as_slice()).unwrap()) as f64;
+            let color: colorous::Color = match v {
+                x if x < 0.0 => colorous::Color { r: 0, g: 255, b: 0 },
+                x if x > 1.0 => colorous::Color { r: 0, g: 0, b: 255 },
+                _ => PLASMA.eval_continuous(v),
+            };
+            img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
+            // }
+        }
+    }
+    ColorImageInfo {
+        image: img,
+        min_val: min as f64,
+        max_val: max as f64,
+    }
+}
+
+fn min_max_driscoll_healy(
+    view: &NPYArtifactView,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+) -> (f32, f32) {
+    let si = unsafe {
+        SliceInfo::<_, IxDyn, IxDyn>::new(
+            view.index
+                .iter()
+                .map(|i| SliceInfoElem::Index(*i as isize))
+                .chain([
+                    SliceInfoElem::Slice {
+                        start: 0,
+                        end: None,
+                        step: 1,
+                    },
+                    SliceInfoElem::Slice {
+                        start: 0,
+                        end: None,
+                        step: 1,
+                    },
+                ])
+                .collect_vec(),
+        )
+        .unwrap()
+    };
+    let aslice = array.slice(&si);
+    let max = aslice.max().unwrap();
+    let min = aslice.min().unwrap();
+    (*min, *max)
+}
 struct GuiRuns {
     runs: Runs,
     // dirty: bool,
@@ -416,7 +567,8 @@ struct GuiRuns {
     data_status: DataStatus,
     gui_params: GuiParams,
     table_active: bool,
-    artifact_handlers: HashMap<String, ArtifactHandler>,
+    artifact_handlers: HashMap<ArtifactHandlerType, ArtifactHandler>,
+    artifact_dispatch: HashMap<ArtifactType, ArtifactHandlerType>,
     args: Args, // texture: Option<egui::TextureHandle>,
 }
 
@@ -688,8 +840,23 @@ impl eframe::App for GuiRuns {
     }
 }
 
-fn get_artifact_type(path: &String) -> &str {
-    path.split(".").last().unwrap_or("unknown")
+#[derive(PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Debug)]
+enum ArtifactType {
+    PngImage,
+    NPYHealpix,
+    NPYDriscollHealy,
+    NPYTabular,
+    Unknown,
+}
+
+fn get_artifact_type(path: &String) -> ArtifactType {
+    match path.split(".").last().unwrap_or("unknown") {
+        "npy" => ArtifactType::NPYHealpix,
+        "npydh" => ArtifactType::NPYDriscollHealy,
+        "tabular" => ArtifactType::NPYTabular,
+        "png" => ArtifactType::PngImage,
+        _ => ArtifactType::Unknown,
+    }
 }
 
 fn label_from_active_inspect_params(run: &Run, gui_params: &GuiParams) -> String {
@@ -721,10 +888,11 @@ fn show_artifacts(
     run_ensemble_color: &HashMap<String, egui::Color32>,
 ) {
     match handler {
-        ArtifactHandler::NPYHealPixArtifact {
-            arrays,
+        ArtifactHandler::NPYArtifact {
             textures,
+            arrays,
             views,
+            colormap_artifacts,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
             let npy_axis_id = ui.id().with("npy_axis");
@@ -747,34 +915,53 @@ fn show_artifacts(
                 let plot_width = ui.available_width() * gui_params.npy_plot_size as f32;
                 let plot_height = ui.available_width() * gui_params.npy_plot_size as f32 * 0.5;
                 ui.horizontal_wrapped(|ui| {
-                    for (artifact_name, array_group) in
-                        &filtered_arrays.group_by(|(aid, _)| aid.name.clone())
+                    for (artifact_name, array_group) in filtered_arrays
+                        .group_by(|(aid, _)| aid.name.clone())
+                        .into_iter()
+                        .sorted_by_key(|(artifact_name, _)| artifact_name.clone())
+                    // .into_iter()
+                    // .sorted_by_key(|(name, _)| name)
                     {
                         ui.group(|ui| {
                             ui.label(egui::RichText::new(artifact_name).size(20.0));
                             ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                             for (artifact_id, array) in array_group {
-                                match array {
+                                match &array.array {
                                     NPYArray::Loading(binary_artifact) => {
-                                        render_artifact_download_progress(binary_artifact, ui);
+                                        render_artifact_download_progress(&binary_artifact, ui);
                                     }
-                                    NPYArray::Loaded(array) => {
+                                    NPYArray::Loaded(npyarray) => {
                                         // ui.allocate_ui()
                                         ui.allocate_ui(
                                             egui::Vec2::from([plot_width, plot_height + 200.0]),
-                                            |ui| {
-                                                render_npy_artifact(
+                                            |ui| match array.array_type {
+                                                NPYArrayType::HealPix => render_npy_artifact_hp(
                                                     ui,
                                                     runs,
                                                     artifact_id,
                                                     gui_params,
                                                     run_ensemble_color,
                                                     views,
-                                                    array,
+                                                    &npyarray,
                                                     textures,
                                                     plot_width,
                                                     npy_axis_id,
-                                                );
+                                                ),
+                                                NPYArrayType::DriscollHealy => {
+                                                    render_npy_artifact_driscoll_healy(
+                                                        ui,
+                                                        runs,
+                                                        artifact_id,
+                                                        gui_params,
+                                                        run_ensemble_color,
+                                                        views,
+                                                        &npyarray,
+                                                        textures,
+                                                        plot_width,
+                                                        npy_axis_id,
+                                                    )
+                                                }
+                                                NPYArrayType::Tabular => todo!(),
                                             },
                                         );
                                     }
@@ -790,6 +977,72 @@ fn show_artifacts(
                 });
             }
         }
+        // ArtifactHandler::NPYDriscollHealyArtifact { container } => {
+        //     // let texture = texture.get_or_insert_with(|| {});
+        //     let npy_axis_id = ui.id().with("npy_axis");
+        //     let available_artifact_names: Vec<&String> =
+        //         container.arrays.keys().map(|id| &id.name).collect();
+        //     for (artifact_name, filtered_arrays) in gui_params
+        //         .artifact_filters
+        //         .iter()
+        //         .filter(|name| available_artifact_names.contains(name))
+        //         .map(|name| {
+        //             (
+        //                 name,
+        //                 container.arrays.iter().filter(|(key, _v)| {
+        //                     key.name == *name && filtered_runs.contains(&key.train_id)
+        //                 }),
+        //             )
+        //         })
+        //     {
+        //         // artifact_name,
+        //         ui.add(egui::Slider::new(&mut gui_params.npy_plot_size, 0.0..=1.0));
+        //         let plot_width = ui.available_width() * gui_params.npy_plot_size as f32;
+        //         let plot_height = ui.available_width() * gui_params.npy_plot_size as f32 * 0.5;
+        //         ui.horizontal_wrapped(|ui| {
+        //             for (artifact_name, array_group) in
+        //                 &filtered_arrays.group_by(|(aid, _)| aid.name.clone())
+        //             {
+        //                 ui.group(|ui| {
+        //                     ui.label(egui::RichText::new(artifact_name).size(20.0));
+        //                     ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+        //                     for (artifact_id, array) in array_group {
+        //                         match array {
+        //                             NPYArray::Loading(binary_artifact) => {
+        //                                 render_artifact_download_progress(binary_artifact, ui);
+        //                             }
+        //                             NPYArray::Loaded(array) => {
+        //                                 // ui.allocate_ui()
+        //                                 ui.allocate_ui(
+        //                                     egui::Vec2::from([plot_width, plot_height + 200.0]),
+        //                                     |ui| {
+        //                                         render_npy_artifact_driscoll_healy(
+        //                                             ui,
+        //                                             runs,
+        //                                             artifact_id,
+        //                                             gui_params,
+        //                                             run_ensemble_color,
+        //                                             &mut container.views,
+        //                                             array,
+        //                                             &mut container.textures,
+        //                                             plot_width,
+        //                                             npy_axis_id,
+        //                                         )
+        //                                     },
+        //                                 );
+        //                             }
+        //                             NPYArray::Error(err) => {
+        //                                 ui.label(err);
+        //                                 // ui.colored_label(egui::Color32::RED, err);
+        //                                 // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+        //                             }
+        //                         }
+        //                     }
+        //                 });
+        //             }
+        //         });
+        //     }
+        // }
         ArtifactHandler::ImageArtifact { binaries } => {
             let max_size = egui::Vec2::new(ui.available_width() / 2.1, ui.available_height() / 2.1);
             let available_artifact_names: Vec<&String> =
@@ -884,9 +1137,9 @@ fn show_artifacts(
             {
                 // println!("looper");
                 for (artifact_id, array) in filtered_arrays {
-                    match array {
+                    match &array.array {
                         NPYArray::Loading(binary_artifact) => {
-                            render_artifact_download_progress(binary_artifact, ui);
+                            render_artifact_download_progress(&binary_artifact, ui);
                             // println!("loading");
                         }
                         NPYArray::Loaded(array) => {
@@ -902,7 +1155,7 @@ fn show_artifacts(
                                         gui_params,
                                         run_ensemble_color,
                                         views,
-                                        array,
+                                        &array,
                                         // textures,
                                         plot_width,
                                         // npy_axis_id,
@@ -919,7 +1172,7 @@ fn show_artifacts(
                     }
                 }
             }
-        }
+        } // ArtifactHandler::NPYDriscollHealyArtifact { container } => todo!(),
     }
 }
 
@@ -953,7 +1206,7 @@ struct ColorTextureInfo {
     max_val: f64,
 }
 
-fn render_npy_artifact(
+fn render_npy_artifact_hp(
     ui: &mut egui::Ui,
     runs: &HashMap<String, Run>,
     artifact_id: &ArtifactId,
@@ -984,6 +1237,7 @@ fn render_npy_artifact(
             index: vec![0; array.shape().len() - 1],
         });
         // let surface_names = vec![vec!["batch"], vec!["msl", "u10", "v10", "t2m"]];
+        // ui.checkbox(, )
         let era5_meta = era5::era5_meta();
         for (dim_idx, dim) in array
             .shape()
@@ -1131,7 +1385,185 @@ fn render_npy_artifact(
         });
     });
 }
+fn render_npy_artifact_driscoll_healy(
+    ui: &mut egui::Ui,
+    runs: &HashMap<String, Run>,
+    artifact_id: &ArtifactId,
+    gui_params: &GuiParams,
+    run_ensemble_color: &HashMap<String, egui::Color32>,
+    views: &mut HashMap<ArtifactId, NPYArtifactView>,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    // textures: &mut HashMap<NPYArtifactView, egui::TextureHandle>,
+    textures: &mut HashMap<NPYArtifactView, ColorTextureInfo>,
+    plot_width: f32,
+    npy_axis_id: egui::Id,
+) {
+    ui.vertical(|ui| {
+        let label =
+            label_from_active_inspect_params(runs.get(&artifact_id.train_id).unwrap(), &gui_params);
+        ui.colored_label(
+            run_ensemble_color
+                .get(&artifact_id.train_id)
+                .unwrap()
+                .clone(),
+            format!("{}: {}", artifact_id.name, label),
+        );
+        let view = views.entry(artifact_id.clone()).or_insert(NPYArtifactView {
+            artifact_id: artifact_id.clone(),
+            index: vec![0; array.shape().len() - 2],
+        });
+        // let surface_names = vec![vec!["batch"], vec!["msl", "u10", "v10", "t2m"]];
+        let era5_meta = era5::era5_meta();
+        for (dim_idx, dim) in array
+            .shape()
+            .iter()
+            .enumerate()
+            .take(array.shape().len() - 2)
+        {
+            ui.add(
+                egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)).custom_formatter(
+                    |index_f, _| match array.shape().len() {
+                        3 => {
+                            if dim_idx == 0 && array.shape()[1] > 128 {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.surface.names[index_f as usize],
+                                    era5_meta.surface.units[index_f as usize],
+                                    era5_meta.surface.long_names[index_f as usize],
+                                );
+                            } else {
+                                return format!("{}", index_f as usize);
+                            }
+                        }
+                        4 => {
+                            if array.shape()[0] == 5 {
+                                match dim_idx {
+                                    0 => {
+                                        return format!(
+                                            "{} [{}], {}",
+                                            era5_meta.upper.names[index_f as usize],
+                                            era5_meta.upper.units[index_f as usize],
+                                            era5_meta.upper.long_names[index_f as usize],
+                                        );
+                                    }
+                                    1 => {
+                                        return format!(
+                                            "{} [{}], {}",
+                                            era5_meta.upper.levels[index_f as usize],
+                                            era5_meta.upper.level_units,
+                                            era5_meta.upper.level_name,
+                                        );
+                                    }
+                                    _ => {
+                                        return format!("{}", index_f as usize);
+                                    }
+                                }
+                            }
+                            if dim_idx == 1 {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.surface.names[index_f as usize],
+                                    era5_meta.surface.units[index_f as usize],
+                                    era5_meta.surface.long_names[index_f as usize],
+                                );
+                            } else {
+                                return format!("{}", index_f as usize);
+                            }
+                        }
+                        5 => match dim_idx {
+                            1 => {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.upper.names[index_f as usize],
+                                    era5_meta.upper.units[index_f as usize],
+                                    era5_meta.upper.long_names[index_f as usize],
+                                );
+                            }
+                            2 => {
+                                return format!(
+                                    "{} [{}], {}",
+                                    era5_meta.upper.levels[index_f as usize],
+                                    era5_meta.upper.level_units,
+                                    era5_meta.upper.level_name,
+                                );
+                            }
+                            _ => {
+                                return format!("{}", index_f as usize);
+                            }
+                        },
+                        _ => return "na".to_string(),
+                    },
+                ),
+            );
+        }
+        ui.label(array.shape().iter().map(|x| x.to_string()).join(","));
+        if !textures.contains_key(&view) {
+            let mut texture = ui.ctx().load_texture(
+                &artifact_id.name,
+                egui::ColorImage::example(),
+                egui::TextureOptions::default(),
+            );
+            let (min, max) = min_max_driscoll_healy(view, array);
+            let color_img_info = image_from_ndarray_driscoll_healy(array, view, min, max);
+            texture.set(color_img_info.image, egui::TextureOptions::default());
+            textures.insert(
+                view.clone(),
+                ColorTextureInfo {
+                    texture_handle: texture,
+                    min_val: color_img_info.min_val,
+                    max_val: color_img_info.max_val,
+                },
+            );
+        }
+        let pi = egui_plot::PlotImage::new(
+            textures.get(&view).unwrap().texture_handle.id(),
+            // texture.id(),
+            egui_plot::PlotPoint::from([0.0, 0.0]),
+            [2.0 * 3.14, 3.14],
+        );
+        // texture.set(img, egui::TextureOptions::default());
+        // ui.image((texture.id(), texture.size_vec2()));
+        ui.horizontal(|ui| {
+            Plot::new(artifact_id)
+                .width(plot_width)
+                .height(plot_width / 2.0)
+                .data_aspect(1.0)
+                .view_aspect(1.0)
+                .show_grid(false)
+                .link_axis(npy_axis_id, true, true)
+                .link_cursor(npy_axis_id, true, true)
+                .show(ui, |plot_ui| {
+                    plot_ui.image(pi);
+                });
 
+            let color_info = textures.get(&view).unwrap();
+            let t_and_color = (0..50)
+                .map(|x| x as f64 / 50.0)
+                .map(|t| (t, PLASMA.eval_continuous(t as f64)));
+            let lines = t_and_color.tuple_windows().map(|((t1, c1), (t2, c2))| {
+                let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
+                let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
+                let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
+                egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
+                    .color(color)
+                    .width(10.0)
+            });
+            Plot::new((artifact_id, "colorbar"))
+                .width(90.0)
+                .height(plot_width / 2.0)
+                .auto_bounds(egui::Vec2b::TRUE)
+                .y_axis_position(egui_plot::HPlacement::Right)
+                .show(ui, |plot_ui| {
+                    for line in lines {
+                        plot_ui.line(line)
+                    }
+                });
+        });
+    });
+}
 fn render_npy_artifact_tabular(
     ui: &mut egui::Ui,
     runs: &HashMap<String, Run>,
@@ -1914,7 +2346,7 @@ impl GuiRuns {
         ui: &mut egui::Ui,
         run_ensemble_color: &HashMap<String, egui::Color32>,
     ) {
-        let active_artifact_types: Vec<&str> = self
+        let active_artifact_types: Vec<ArtifactType> = self
             .gui_params
             .artifact_filters
             .iter()
@@ -1923,19 +2355,23 @@ impl GuiRuns {
                     .time_filtered_runs
                     .iter()
                     .map(|train_id| (train_id, self.runs.runs.get(train_id).unwrap()))
-                    .map(|(_train_id, run)| {
+                    .filter_map(|(_train_id, run)| {
                         if let Some(artifact_id) = run.artifacts.get(artifact_name) {
-                            let artifact_type_str = get_artifact_type(&artifact_id.name);
-                            if self.artifact_handlers.contains_key(artifact_type_str) {
+                            let artifact_type = get_artifact_type(&artifact_id.name);
+                            if self.artifact_handlers.contains_key(
+                                self.artifact_dispatch
+                                    .get(&artifact_type)
+                                    .unwrap_or(&ArtifactHandlerType::Unknown),
+                            ) {
                                 // println!("{}", artifact_type_str);
                                 // add_artifact(handler, ui, train_id, path);
-                                artifact_type_str
+                                Some(artifact_type)
                             } else {
-                                ""
+                                None
                             }
                             // if let Some(artifact_handler) = self.
                         } else {
-                            ""
+                            None
                         }
                     })
             })
@@ -1944,7 +2380,11 @@ impl GuiRuns {
             .sorted()
             .collect();
         for artifact_type in active_artifact_types {
-            if let Some(handler) = self.artifact_handlers.get_mut(artifact_type) {
+            if let Some(handler) = self.artifact_handlers.get_mut(
+                self.artifact_dispatch
+                    .get(&artifact_type)
+                    .unwrap_or(&ArtifactHandlerType::Unknown),
+            ) {
                 for (run_id, run) in self
                     .runs
                     .time_filtered_runs
@@ -2303,7 +2743,8 @@ async fn get_state_artifacts(
                             ArtifactId {
                                 artifact_id: incoming_id,
                                 train_id: train_id.clone(),
-                                name: incoming_name,
+                                name: incoming_name.clone(),
+                                artifact_type: get_artifact_type(&incoming_name),
                             },
                         );
                     }
@@ -2600,7 +3041,7 @@ fn main() -> Result<(), sqlx::Error> {
                     param_filters: HashMap::new(),
                     metric_filters: HashSet::new(),
                     inspect_params: HashSet::new(),
-                    n_average: 1,
+                    n_average: 0,
                     artifact_filters: HashSet::new(),
                     time_filter: None,
                     time_filter_idx: 0,
@@ -2612,27 +3053,38 @@ fn main() -> Result<(), sqlx::Error> {
                 // texture: None,
                 artifact_handlers: HashMap::from([
                     (
-                        "npy".to_string(),
-                        ArtifactHandler::NPYHealPixArtifact {
+                        ArtifactHandlerType::SpatialNPY,
+                        ArtifactHandler::NPYArtifact {
                             arrays: HashMap::new(),
                             textures: HashMap::new(),
                             views: HashMap::new(),
+                            colormap_artifacts: HashSet::new(),
                         },
                     ),
                     (
-                        "tabular".to_string(),
+                        ArtifactHandlerType::TabularNPY,
                         ArtifactHandler::NPYTabularArtifact {
                             arrays: HashMap::new(),
                             views: HashMap::new(),
                         },
                     ),
                     (
-                        "png".to_string(),
+                        ArtifactHandlerType::Image,
                         ArtifactHandler::ImageArtifact {
                             // images: HashMap::new(),
                             binaries: HashMap::new(),
                         },
                     ),
+                ]),
+                artifact_dispatch: HashMap::from([
+                    (ArtifactType::NPYHealpix, ArtifactHandlerType::SpatialNPY),
+                    (
+                        ArtifactType::NPYDriscollHealy,
+                        ArtifactHandlerType::SpatialNPY,
+                    ),
+                    (ArtifactType::NPYTabular, ArtifactHandlerType::TabularNPY),
+                    (ArtifactType::PngImage, ArtifactHandlerType::Image), // ("tabular".to_string(), "tabular".to_string()),
+                                                                          // ("png".to_string(), "images".to_string()),
                 ]),
                 args,
                 tx_db_artifact_path: Arc::new(Mutex::new(tx_db_artifact_path)),
