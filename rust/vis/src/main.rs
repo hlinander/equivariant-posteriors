@@ -110,6 +110,8 @@ struct ArtifactId {
 struct NPYArtifactView {
     artifact_id: ArtifactId,
     index: Vec<usize>,
+    nside_div: usize,
+    visualize_grid: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
@@ -252,6 +254,8 @@ enum ArtifactHandler {
         arrays: HashMap<ArtifactId, SpatialNPYArray>,
         views: HashMap<ArtifactId, NPYArtifactView>,
         colormap_artifacts: HashSet<ArtifactId>, // container: NPYVisContainer,
+        hover_lon: f64,
+        hover_lat: f64,
     },
     // NPYDriscollHealyArtifact {
     //     container: NPYVisContainer,
@@ -279,6 +283,8 @@ fn add_artifact(
             arrays,
             views,
             colormap_artifacts,
+            hover_lon,
+            hover_lat,
         } => handle_add_npy(arrays, &artifact_id, tx_path_mutex, rx_artifact_mutex),
         // ArtifactHandler::NPYDriscollHealyArtifact { container } => handle_add_npy(
         //     &mut container.arrays,
@@ -384,33 +390,20 @@ fn image_from_ndarray_healpix(
     for (dim_idx, dim) in view.index.iter().enumerate() {
         local_index[dim_idx] = *dim;
     }
-    // array[1,2,3, :].mean()
+    // let mut local_index = view.index.iter().map(|dim| dim)
     let (max, min) = min_max_hp(view, array);
-    // let max = array.slice(s![1,2,3,..])
-    //     // .get(&local_index[..local_index.len() - 1])
-    //     .unwrap()
-    //     // .slice(s![local_index[..local_index.len() - 1]])
-    //     .max()
-    //     .unwrap();
-    // let min = array.min().unwrap();
     let t = |x: f32| (x - min) / (max - min);
     let ndim = local_index.len();
+    let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
+    let depth = cdshealpix::depth(nside);
     for y in 0..height {
         for x in 0..width {
-            // let lon_x = x as f64 / width as f64 * 8.0;
-            // let lat_y = (y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * 2.0;
-            // let (lon, lat) = cdshealpix::unproj(lon_x, lat_y);
             let (lon, lat) = (
                 x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
                 -(y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI
                     / 2.0,
             );
-            let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
-            let depth = cdshealpix::depth(nside);
             let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
-            // if hp_idx < cdshealpix::n_hash(depth) {
-            // println!("nside {}, depth {}, idx {}", nside, depth, hp_idx);
-            // dbg!(array.shape());
             local_index[ndim - 1] = hp_idx as usize;
             let v = t(*array.get(local_index.as_slice()).unwrap()) as f64;
             let color: colorous::Color = match v {
@@ -419,7 +412,35 @@ fn image_from_ndarray_healpix(
                 _ => PLASMA.eval_continuous(v),
             };
             img.pixels[y * width + x] = egui::Color32::from_rgb(color.r, color.g, color.b);
-            // }
+        }
+    }
+    // Visualize the borders of the windows (window_size = 16 => nside_window = nside / sqrt(16))
+    if view.visualize_grid {
+        let vis_depth =
+            cdshealpix::depth(nside / (2_u32.pow(view.nside_div as u32)).clamp(1, nside));
+        let n_vis_pixels = cdshealpix::n_hash(vis_depth);
+        for pixel_hash in 0..n_vis_pixels {
+            let lonlats = cdshealpix::nested::path_along_cell_edge(
+                vis_depth,
+                pixel_hash,
+                &cdshealpix::compass_point::Cardinal::N,
+                true,
+                100,
+            );
+            for (lon, lat) in &*lonlats {
+                let x = lon / (2.0 * std::f64::consts::PI) * width as f64;
+                let y = (lat + std::f64::consts::PI / 2.0) / std::f64::consts::PI * height as f64;
+                let xu = (x as usize).clamp(0, width - 1);
+                let yu = (y as usize).clamp(0, height - 1);
+                // println!("{}, {}", xu, yu);
+                // for xu in xu - 1..=xu + 1 {
+                // for yu in yu - 1..=yu + 1 {
+                let xu = xu.clamp(0, width - 1);
+                let yu = yu.clamp(0, height - 1);
+                img.pixels[yu * width + xu] = egui::Color32::from_rgb(0, 255, 0);
+                // }
+                // }
+            }
         }
     }
     ColorImageInfo {
@@ -427,6 +448,37 @@ fn image_from_ndarray_healpix(
         min_val: min as f64,
         max_val: max as f64,
     }
+}
+
+fn sample_hp_array(
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    view: &NPYArtifactView,
+    lon: f64,
+    lat: f64,
+) -> f32 {
+    let mut local_index = view
+        .index
+        .iter()
+        .cloned()
+        .map(|dim| dim)
+        .chain(std::iter::once(0))
+        .collect_vec();
+
+    let nside = ((array.shape().last().unwrap() / 12) as f32).sqrt() as u32;
+    let depth = cdshealpix::depth(nside);
+    // let (lon, lat) = (
+    //     x as f64 / width as f64 * 2.0 * std::f64::consts::PI,
+    //     -(y as f64 - height as f64 / 2.0) / (height as f64 / 2.0) * std::f64::consts::PI / 2.0,
+    // );
+    let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
+    let ndim = local_index.len();
+    local_index[ndim - 1] = hp_idx as usize;
+    // println!("{:?}", local_index);
+    let v = *array.get(local_index.as_slice()).unwrap() as f32;
+    v
 }
 
 fn min_max_hp(
@@ -893,89 +945,105 @@ fn show_artifacts(
             arrays,
             views,
             colormap_artifacts,
+            hover_lon,
+            hover_lat,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
             let npy_axis_id = ui.id().with("npy_axis");
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
-            for (artifact_name, filtered_arrays) in gui_params
-                .artifact_filters
-                .iter()
-                .filter(|name| available_artifact_names.contains(name))
-                .map(|name| {
-                    (
-                        name,
-                        arrays.iter().filter(|(key, _v)| {
-                            key.name == *name && filtered_runs.contains(&key.train_id)
-                        }),
-                    )
-                })
+            // let mut to_be_reloaded = None;
             {
-                // artifact_name,
-                ui.add(egui::Slider::new(&mut gui_params.npy_plot_size, 0.0..=1.0));
-                let plot_width = ui.available_width() * gui_params.npy_plot_size as f32;
-                let plot_height = ui.available_width() * gui_params.npy_plot_size as f32 * 0.5;
-                ui.horizontal_wrapped(|ui| {
-                    for (artifact_name, array_group) in filtered_arrays
-                        .group_by(|(aid, _)| aid.name.clone())
-                        .into_iter()
-                        .sorted_by_key(|(artifact_name, _)| artifact_name.clone())
-                    // .into_iter()
-                    // .sorted_by_key(|(name, _)| name)
-                    {
-                        ui.group(|ui| {
-                            ui.label(egui::RichText::new(artifact_name).size(20.0));
-                            ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                            for (artifact_id, array) in array_group {
-                                match &array.array {
-                                    NPYArray::Loading(binary_artifact) => {
-                                        render_artifact_download_progress(&binary_artifact, ui);
-                                    }
-                                    NPYArray::Loaded(npyarray) => {
-                                        // ui.allocate_ui()
-                                        ui.allocate_ui(
-                                            egui::Vec2::from([plot_width, plot_height + 200.0]),
-                                            |ui| match array.array_type {
-                                                NPYArrayType::HealPix => render_npy_artifact_hp(
-                                                    ui,
-                                                    runs,
-                                                    artifact_id,
-                                                    gui_params,
-                                                    run_ensemble_color,
-                                                    views,
-                                                    &npyarray,
-                                                    textures,
-                                                    plot_width,
-                                                    npy_axis_id,
-                                                ),
-                                                NPYArrayType::DriscollHealy => {
-                                                    render_npy_artifact_driscoll_healy(
-                                                        ui,
-                                                        runs,
-                                                        artifact_id,
-                                                        gui_params,
-                                                        run_ensemble_color,
-                                                        views,
-                                                        &npyarray,
-                                                        textures,
-                                                        plot_width,
-                                                        npy_axis_id,
-                                                    )
-                                                }
-                                                NPYArrayType::Tabular => todo!(),
-                                            },
-                                        );
-                                    }
-                                    NPYArray::Error(err) => {
-                                        ui.label(err);
-                                        // ui.colored_label(egui::Color32::RED, err);
-                                        // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                for (artifact_name, filtered_arrays) in gui_params
+                    .artifact_filters
+                    .iter()
+                    .filter(|name| available_artifact_names.contains(name))
+                    .map(|name| {
+                        (
+                            name,
+                            arrays.iter().filter(|(key, _v)| {
+                                key.name == *name && filtered_runs.contains(&key.train_id)
+                            }), // .collect_vec(),
+                        )
+                    })
+                {
+                    // artifact_name,
+                    ui.add(egui::Slider::new(&mut gui_params.npy_plot_size, 0.0..=1.0));
+                    let plot_width = ui.available_width() * gui_params.npy_plot_size as f32;
+                    let plot_height = ui.available_width() * gui_params.npy_plot_size as f32 * 0.5;
+                    ui.horizontal_wrapped(|ui| {
+                        for (artifact_name, array_group) in filtered_arrays
+                            .group_by(|(aid, _)| aid.name.clone())
+                            .into_iter()
+                            .sorted_by_key(|(artifact_name, _)| artifact_name.clone())
+                        // .into_iter()
+                        // .sorted_by_key(|(name, _)| name)
+                        {
+                            ui.group(|ui| {
+                                ui.label(egui::RichText::new(artifact_name).size(20.0));
+                                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                for (artifact_id, array) in array_group {
+                                    match &array.array {
+                                        NPYArray::Loading(binary_artifact) => {
+                                            render_artifact_download_progress(&binary_artifact, ui);
+                                        }
+                                        NPYArray::Loaded(npyarray) => {
+                                            // ui.allocate_ui()
+                                            // if ui.button("reload").clicked() {
+                                            // to_be_reloaded = Some(artifact_id);
+                                            // array.array
+                                            // }
+                                            ui.allocate_ui(
+                                                egui::Vec2::from([plot_width, plot_height + 200.0]),
+                                                |ui| match array.array_type {
+                                                    NPYArrayType::HealPix => {
+                                                        render_npy_artifact_hp(
+                                                            ui,
+                                                            runs,
+                                                            artifact_id,
+                                                            gui_params,
+                                                            run_ensemble_color,
+                                                            views,
+                                                            &npyarray,
+                                                            textures,
+                                                            plot_width,
+                                                            npy_axis_id,
+                                                            hover_lon,
+                                                            hover_lat,
+                                                        )
+                                                    }
+                                                    NPYArrayType::DriscollHealy => {
+                                                        render_npy_artifact_driscoll_healy(
+                                                            ui,
+                                                            runs,
+                                                            artifact_id,
+                                                            gui_params,
+                                                            run_ensemble_color,
+                                                            views,
+                                                            &npyarray,
+                                                            textures,
+                                                            plot_width,
+                                                            npy_axis_id,
+                                                        )
+                                                    }
+                                                    NPYArrayType::Tabular => todo!(),
+                                                },
+                                            );
+                                        }
+                                        NPYArray::Error(err) => {
+                                            ui.label(err);
+                                            // ui.colored_label(egui::Color32::RED, err);
+                                            // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                        }
                                     }
                                 }
-                            }
-                        });
-                    }
-                });
+                            });
+                        }
+                    });
+                }
             }
+            // if let Some(artifact_id) = to_be_reloaded {
+            // arrays.remove(artifact_id);
+            // }
         }
         // ArtifactHandler::NPYDriscollHealyArtifact { container } => {
         //     // let texture = texture.get_or_insert_with(|| {});
@@ -1221,6 +1289,8 @@ fn render_npy_artifact_hp(
     textures: &mut HashMap<NPYArtifactView, ColorTextureInfo>,
     plot_width: f32,
     npy_axis_id: egui::Id,
+    hover_lon: &mut f64,
+    hover_lat: &mut f64,
 ) {
     ui.vertical(|ui| {
         let label =
@@ -1235,6 +1305,8 @@ fn render_npy_artifact_hp(
         let view = views.entry(artifact_id.clone()).or_insert(NPYArtifactView {
             artifact_id: artifact_id.clone(),
             index: vec![0; array.shape().len() - 1],
+            nside_div: 4,
+            visualize_grid: false,
         });
         // let surface_names = vec![vec!["batch"], vec!["msl", "u10", "v10", "t2m"]];
         // ui.checkbox(, )
@@ -1245,16 +1317,24 @@ fn render_npy_artifact_hp(
             .enumerate()
             .take(array.shape().len() - 1)
         {
+            ui.spacing_mut().slider_width = 300.0; // ui.available_width() - 300.0;
+            ui.checkbox(&mut view.visualize_grid, "Show grid");
+            if view.visualize_grid {
+                ui.add(egui::Slider::new(&mut view.nside_div, 1..=16));
+            }
             ui.add(
                 egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)).custom_formatter(
                     |index_f, _| match array.shape().len() {
                         2 => {
                             if dim_idx == 0 && array.shape()[1] > 128 {
+                                let idx =
+                                    (index_f as usize).clamp(0, era5_meta.surface.names.len() - 1);
                                 return format!(
-                                    "{} [{}], {}",
-                                    era5_meta.surface.names[index_f as usize],
-                                    era5_meta.surface.units[index_f as usize],
-                                    era5_meta.surface.long_names[index_f as usize],
+                                    "{} [{}], {} [{}]",
+                                    era5_meta.surface.names[idx],
+                                    era5_meta.surface.units[idx],
+                                    era5_meta.surface.long_names[idx],
+                                    index_f as usize,
                                 );
                             } else {
                                 return format!("{}", index_f as usize);
@@ -1347,41 +1427,66 @@ fn render_npy_artifact_hp(
         );
         // texture.set(img, egui::TextureOptions::default());
         // ui.image((texture.id(), texture.size_vec2()));
-        ui.horizontal(|ui| {
-            Plot::new(artifact_id)
-                .width(plot_width)
-                .height(plot_width / 2.0)
-                .data_aspect(1.0)
-                .view_aspect(1.0)
-                .show_grid(false)
-                .link_axis(npy_axis_id, true, true)
-                .link_cursor(npy_axis_id, true, true)
-                .show(ui, |plot_ui| {
-                    plot_ui.image(pi);
-                });
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                Plot::new(artifact_id)
+                    .width(plot_width)
+                    .height(plot_width / 2.0)
+                    .data_aspect(1.0)
+                    .view_aspect(1.0)
+                    .show_grid(false)
+                    .link_axis(npy_axis_id, true, true)
+                    .link_cursor(npy_axis_id, true, true)
+                    .show(ui, |plot_ui| {
+                        plot_ui.image(pi);
+                        if let Some(pos) = plot_ui.pointer_coordinate() {
+                            if pos.x > -std::f64::consts::PI && pos.x < std::f64::consts::PI {
+                                if pos.y > -std::f64::consts::PI / 2.0
+                                    && pos.y < std::f64::consts::PI / 2.0
+                                {
+                                    *hover_lon = pos.x + std::f64::consts::PI;
+                                    *hover_lat = pos.y;
+                                    // let ps = PlotPoints::new(vec![[pos.x, pos.y]]);
+                                    // plot_ui.points(
+                                    //     Points::new(ps).radius(5.0).color(egui::Color32::GREEN),
+                                    // );
+                                    // let mut value_hover_pos = pos.clone();
+                                    // value_hover_pos.y += plot_ui.transform()
+                                    // plot_ui.text(egui_plot::Text::new(
+                                    // pos,
+                                    // egui::RichText::new(format!("{:02}", v)).size(10.0),
+                                    // ));
+                                }
+                            }
+                        }
+                    });
 
-            let color_info = textures.get(&view).unwrap();
-            let t_and_color = (0..50)
-                .map(|x| x as f64 / 50.0)
-                .map(|t| (t, PLASMA.eval_continuous(t as f64)));
-            let lines = t_and_color.tuple_windows().map(|((t1, c1), (t2, c2))| {
-                let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
-                let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
-                let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
-                egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
-                    .color(color)
-                    .width(10.0)
-            });
-            Plot::new((artifact_id, "colorbar"))
-                .width(90.0)
-                .height(plot_width / 2.0)
-                .auto_bounds(egui::Vec2b::TRUE)
-                .y_axis_position(egui_plot::HPlacement::Right)
-                .show(ui, |plot_ui| {
-                    for line in lines {
-                        plot_ui.line(line)
-                    }
+                let color_info = textures.get(&view).unwrap();
+                let t_and_color = (0..50)
+                    .map(|x| x as f64 / 50.0)
+                    .map(|t| (t, PLASMA.eval_continuous(t as f64)));
+                let lines = t_and_color.tuple_windows().map(|((t1, c1), (t2, c2))| {
+                    let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
+                    let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
+                    let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
+                    egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
+                        .color(color)
+                        .width(10.0)
                 });
+                Plot::new((artifact_id, "colorbar"))
+                    .width(90.0)
+                    .height(plot_width / 2.0)
+                    .auto_bounds(egui::Vec2b::TRUE)
+                    .y_axis_position(egui_plot::HPlacement::Right)
+                    // .grid_spacing()
+                    .show(ui, |plot_ui| {
+                        for line in lines {
+                            plot_ui.line(line)
+                        }
+                    });
+            });
+            let v = sample_hp_array(array, view, *hover_lon, *hover_lat);
+            ui.label(format!("{}", v));
         });
     });
 }
@@ -1414,6 +1519,8 @@ fn render_npy_artifact_driscoll_healy(
         let view = views.entry(artifact_id.clone()).or_insert(NPYArtifactView {
             artifact_id: artifact_id.clone(),
             index: vec![0; array.shape().len() - 2],
+            nside_div: 4,
+            visualize_grid: false,
         });
         // let surface_names = vec![vec!["batch"], vec!["msl", "u10", "v10", "t2m"]];
         let era5_meta = era5::era5_meta();
@@ -3059,6 +3166,8 @@ fn main() -> Result<(), sqlx::Error> {
                             textures: HashMap::new(),
                             views: HashMap::new(),
                             colormap_artifacts: HashSet::new(),
+                            hover_lon: 0.0,
+                            hover_lat: 0.0,
                         },
                     ),
                     (
