@@ -11,7 +11,18 @@ chrono = "0.4.31"
 clap = "4.4.11"
 colorous = "1.0.12"
 dotenvy = "0.15.7"
-eframe = "*"
+# eframe = "*"
+wgpu = { version = "0.19.0", features = ["spirv"] }
+eframe = { version = "0.26.2", features = ["wgpu", 
+     # "accesskit",
+    "default_fonts",
+    "wayland",
+    "web_screen_reader",
+    # "winit",
+    # "winit/default",
+    "x11",
+], default-features = false}
+winit = { version = "*", features = ["default"]}
 egui = "0.26.2"
 egui_extras = {version="*", features=["all_loaders"]}
 egui_plot = "*"
@@ -25,6 +36,8 @@ serde_json = "1.0.108"
 sqlx = { version="0.7.3" , features = [ "runtime-tokio", "postgres", "chrono" ]}
 sqlx-cli = "0.7.3"
 tokio = { version = "1.34.0", features = ["rt", "macros"]}
-profiling = {version = "*", features=["profile-with-tracy"]}
-console-subscriber = "0.2.0"
-tracy-client = "0.16.4"
+glsl-layout = "0.5.0"
+
+# profiling = {version = "*", features=["profile-with-tracy"]}
+# console-subscriber = "0.2.0"
+# tracy-client = "0.16.4"
