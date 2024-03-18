@@ -227,6 +227,8 @@
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
       devinputs = with pkgs; [
+          glslang
+      shaderc
       gitui
       lazygit
       linuxPackages_latest.perf
@@ -319,6 +321,7 @@
             export PYTHON=${pythonWithPackages}/bin/python
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/:${
               pkgs.lib.makeLibraryPath ([
+                pkgs.vulkan-loader 
                 pkgs.libGL
                 pkgs.libGLU
                 pkgs.xorg.libX11

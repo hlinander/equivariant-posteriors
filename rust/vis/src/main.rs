@@ -1,18 +1,23 @@
 use chrono::{NaiveDateTime, Utc};
 use clap::Parser;
 use eframe::egui;
+use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
 use egui::{epaint, Stroke};
 use egui_plot::{Axis, Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
-use ndarray::{s, IxDyn, SliceInfo, SliceInfoElem};
+use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem, ViewRepr};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::Cow;
+use std::num::NonZeroU64;
+use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use wgpu::util::DeviceExt;
 // use sqlx::types::JsonValue
+use glsl_layout::Uniform;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
@@ -79,6 +84,7 @@ struct GuiParams {
     time_filter: Option<chrono::NaiveDateTime>,
     x_axis: XAxis,
     npy_plot_size: f64,
+    render_format: wgpu::TextureFormat,
 }
 
 impl Default for GuiParams {
@@ -140,6 +146,361 @@ enum NPYArrayType {
 struct SpatialNPYArray {
     array: NPYArray,
     array_type: NPYArrayType,
+}
+
+struct HPShader {
+    render_format: wgpu::TextureFormat,
+    angle1: f32,
+    angle2: f32,
+    min: f32,
+    max: f32,
+    array: ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    artifact_view: NPYArtifactView,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Uniform)]
+struct HPShaderUniform {
+    angle1: f32,
+    angle2: f32,
+    min: f32,
+    max: f32,
+    nside: i32,
+}
+
+struct HPShaderResources {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: HashMap<NPYArtifactView, wgpu::BindGroup>,
+    hp_buf: Option<(wgpu::Buffer, usize)>,
+}
+
+fn make_bind_group_layout_entry(
+    binding_num: u32,
+    stage: wgpu::ShaderStages,
+    read_only: bool,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: binding_num,
+        visibility: stage,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn make_uniform_layout_entry(
+    binding_num: u32,
+    stage: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: binding_num,
+        visibility: stage,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn upload_uniform<T: glsl_layout::Uniform>(device: &wgpu::Device, uniform: T) -> wgpu::Buffer {
+    let std_140_data = uniform.std140();
+    let byte_slice: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            (&std_140_data as *const <T as Uniform>::Std140).cast::<u8>(),
+            core::mem::size_of_val::<<T as Uniform>::Std140>(&std_140_data),
+        )
+    };
+    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        usage: wgpu::BufferUsages::UNIFORM,
+        contents: byte_slice,
+    });
+    uniform_buf
+}
+
+fn ensure_buffer_size<'a>(
+    current: &'a mut Option<(wgpu::Buffer, usize)>,
+    device: &wgpu::Device,
+    required_size: u64,
+    usage: wgpu::BufferUsages,
+) -> (&'a wgpu::Buffer, usize) {
+    let buf = if current.is_none() {
+        let mut buf_init_bytes = Vec::with_capacity(required_size as usize);
+        buf_init_bytes.resize(required_size as usize, 0);
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            usage,
+            contents: &buf_init_bytes,
+        })
+    } else if current.as_ref().unwrap().0.size() < required_size {
+        let mut buf_init_bytes = Vec::with_capacity(required_size as usize);
+        buf_init_bytes.resize(required_size as usize, 0);
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            usage,
+            contents: &buf_init_bytes,
+        })
+    } else {
+        current.take().unwrap().0
+    };
+    *current = Some((buf, required_size as usize));
+    (&current.as_ref().unwrap().0, required_size as usize)
+}
+
+impl eframe::egui_wgpu::CallbackTrait for HPShader {
+    fn paint<'a>(
+        &'a self,
+        info: egui::PaintCallbackInfo,
+        render_pass: &mut eframe::wgpu::RenderPass<'a>,
+        callback_resources: &'a eframe::egui_wgpu::CallbackResources,
+    ) {
+        if let Some(res) = callback_resources.get::<HPShaderResources>() {
+            render_pass.set_pipeline(&res.pipeline);
+            render_pass.set_viewport(
+                info.viewport_in_pixels().left_px as f32,
+                info.viewport_in_pixels().top_px as f32,
+                info.viewport_in_pixels().width_px as f32,
+                info.viewport_in_pixels().height_px as f32,
+                0.0,
+                1.0,
+            );
+            // resources.bind_group.insert(
+            //     bind_group,
+            // );
+
+            render_pass.set_bind_group(0, &res.bind_group.get(&self.artifact_view).unwrap(), &[]);
+
+            render_pass.draw(0..4, 0..1);
+        }
+        // A command encoder executes one or many pipelines.
+        // It is to WebGPU what a command buffer is to Vulkan.
+    }
+    fn prepare(
+        &self,
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _screen_descriptor: &ScreenDescriptor,
+        _egui_encoder: &mut wgpu::CommandEncoder,
+        callback_resources: &mut CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        // Vec::new()
+        use eframe::egui_wgpu::wgpu::{PrimitiveState, VertexState};
+
+        if callback_resources.get::<HPShaderResources>().is_none() {
+            let spectrograph_vert = load_shader(device, include_bytes!("../hpshader.vertex.spv"));
+            let spectrograph_frag = load_shader(device, include_bytes!("../hpshader.fragment.spv"));
+            let bindings = vec![
+                make_uniform_layout_entry(0, wgpu::ShaderStages::FRAGMENT),
+                make_bind_group_layout_entry(1, wgpu::ShaderStages::FRAGMENT, true),
+            ];
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: &bindings,
+                });
+
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                // bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+                bind_group_layouts: &[&bind_group_layout],
+            });
+            let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Spectrograph"),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &spectrograph_vert,
+                    entry_point: "main",
+                    buffers: &[],
+                },
+                primitive: PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &spectrograph_frag,
+                    entry_point: "main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.render_format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    })],
+                }),
+                multiview: None,
+            });
+            callback_resources.insert(HPShaderResources {
+                pipeline: render_pipeline,
+                bind_group: [].into(),
+                bind_group_layout,
+                hp_buf: None,
+                // bind_group: [((self.node, self.out_port), bind_group)].into(),
+            });
+            let uniform_buf = upload_uniform(
+                device,
+                HPShaderUniform {
+                    angle1: self.angle1,
+                    angle2: self.angle2,
+                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
+                        as i32,
+                    min: self.min,
+                    max: self.max,
+                },
+            );
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            // let (hp_buf, hp_buf_size) = ensure_buffer_size(
+            //     &mut resources.hp_buf,
+            //     device,
+            //     self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
+            //     wgpu::BufferUsages::STORAGE,
+            // );
+            let hp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: true,
+            });
+            let hp_buf_size = self.array.len() as u64 * core::mem::size_of::<f32>() as u64;
+            // resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
+            // let (hp_buf, hp_buf_size) = resources.hp_buf.unwrap();
+
+            let mut mapped_hp_buf = hp_buf.slice(0..).get_mapped_range_mut();
+            let mapped_buffer_ptr = mapped_hp_buf.as_mut_ptr().cast::<f32>();
+            if let Some(slice) = self.array.as_slice() {
+                unsafe {
+                    mapped_buffer_ptr.copy_from_nonoverlapping(
+                        slice.as_ptr(),
+                        slice.len(), // self.array.as_ptr(),
+                                     // self.array.len() * core::mem::size_of::<f32>(),
+                    );
+                }
+            }
+            drop(mapped_hp_buf);
+            hp_buf.unmap();
+            // let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &resources.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            uniform_buf.as_entire_buffer_binding(),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &hp_buf,
+                            offset: 0,
+                            size: Some(NonZeroU64::new(hp_buf_size as u64).unwrap()),
+                        }),
+                    },
+                ],
+            });
+            resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
+
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            resources
+                .bind_group
+                .insert(self.artifact_view.clone(), bind_group);
+        } else {
+            let uniform_buf = upload_uniform(
+                device,
+                HPShaderUniform {
+                    angle1: self.angle1,
+                    angle2: self.angle2,
+                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
+                        as i32,
+                    min: self.min,
+                    max: self.max,
+                },
+            );
+            let resources = callback_resources.get::<HPShaderResources>().unwrap();
+            let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
+            // if let Some(hp_buf, hp_buf_size) = resources.
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &resources.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            uniform_buf.as_entire_buffer_binding(),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: hp_buf,
+                            offset: 0,
+                            size: Some(NonZeroU64::new(*hp_buf_size as u64).unwrap()),
+                        }),
+                    },
+                ],
+            });
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            if let Some(bg) = resources.bind_group.get_mut(&self.artifact_view) {
+                *bg = bind_group;
+                // bg
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn finish_prepare(
+        &self,
+        _device: &eframe::wgpu::Device,
+        _queue: &eframe::wgpu::Queue,
+        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
+        _callback_resources: &mut eframe::egui_wgpu::CallbackResources,
+    ) -> Vec<eframe::wgpu::CommandBuffer> {
+        Vec::new()
+    }
+}
+
+fn load_shader(device: &wgpu::Device, bytes: &'static [u8]) -> wgpu::ShaderModule {
+    let ints = unsafe {
+        core::slice::from_raw_parts(
+            bytes.as_ptr().cast(),
+            bytes.len() / core::mem::size_of::<u32>(),
+        )
+    };
+    if device
+        .features()
+        .contains(wgpu::Features::SPIRV_SHADER_PASSTHROUGH)
+    {
+        let source = wgpu::util::make_spirv_raw(bytes);
+        unsafe {
+            device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                label: None,
+                source,
+            })
+        }
+    } else {
+        // unsafe {
+        //     device.create_shader_module_unchecked(wgpu::ShaderModuleDescriptor {
+        //         label: None,
+        //         source: wgpu::ShaderSource::SpirV(ints.into()),
+        //     })
+        // }
+        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::SpirV(ints.into()),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -481,13 +842,13 @@ fn sample_hp_array(
     v
 }
 
-fn min_max_hp(
+fn slice_array(
     view: &NPYArtifactView,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
-) -> (f32, f32) {
+) -> ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> {
     let si = unsafe {
         SliceInfo::<_, IxDyn, IxDyn>::new(
             view.index
@@ -502,7 +863,17 @@ fn min_max_hp(
         )
         .unwrap()
     };
-    let aslice = array.slice(&si);
+    array.slice(&si).into_owned()
+}
+
+fn min_max_hp(
+    view: &NPYArtifactView,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+) -> (f32, f32) {
+    let aslice = slice_array(view, array);
     let max = aslice.max().unwrap();
     let min = aslice.min().unwrap();
     (*max, *min)
@@ -949,6 +1320,7 @@ fn show_artifacts(
             hover_lat,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
+            let mut to_remove = Vec::new();
             let npy_axis_id = ui.id().with("npy_axis");
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
             // let mut to_be_reloaded = None;
@@ -982,6 +1354,9 @@ fn show_artifacts(
                                 ui.label(egui::RichText::new(artifact_name).size(20.0));
                                 ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                 for (artifact_id, array) in array_group {
+                                    if ui.button("reload").clicked() {
+                                        to_remove.push(artifact_id.clone());
+                                    }
                                     match &array.array {
                                         NPYArray::Loading(binary_artifact) => {
                                             render_artifact_download_progress(&binary_artifact, ui);
@@ -1040,6 +1415,10 @@ fn show_artifacts(
                         }
                     });
                 }
+            }
+            for artifact_id in to_remove {
+                arrays.remove(&artifact_id);
+                textures.retain(|k, _| k.artifact_id != artifact_id);
             }
             // if let Some(artifact_id) = to_be_reloaded {
             // arrays.remove(artifact_id);
@@ -1427,6 +1806,40 @@ fn render_npy_artifact_hp(
         );
         // texture.set(img, egui::TextureOptions::default());
         // ui.image((texture.id(), texture.size_vec2()));
+        let (resp, painter) = ui.allocate_painter(
+            egui::Vec2::new(300.0, 300.0),
+            egui::Sense::focusable_noninteractive(),
+        );
+        let angle1 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+            pos.x / 200.0
+        } else {
+            0.0
+        };
+        let angle2 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+            pos.y / 200.0
+        } else {
+            0.0
+        };
+        let subarray = slice_array(view, array);
+        // dbg!(&view);
+        // dbg!(&subarray);
+        painter.add(egui::Shape::Callback(
+            eframe::egui_wgpu::Callback::new_paint_callback(
+                resp.rect,
+                HPShader {
+                    render_format: gui_params.render_format,
+                    angle1: angle1,
+                    angle2: angle2,
+                    min: *subarray.min().unwrap(),
+                    max: *subarray.max().unwrap(), // min: min_max_hp(, ),
+                    array: subarray,
+                    artifact_view: view.clone(), // array: array.clone(),
+                                                 // max: 0.0, // node: *node_idx,
+                                                 // out_port: output_id,
+                },
+            ),
+        ));
+
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 Plot::new(artifact_id)
@@ -1833,18 +2246,31 @@ impl GuiRuns {
                 for name in param_names.iter().sorted() {
                     if let Some(values) = self.gui_params.param_filters.get(name) {
                         if !values.is_empty() {
-                            egui::CollapsingHeader::new(name)
-                                // .default_open(self.gui_params.param_name_filter.len() > 1)
-                                .default_open(!name.ends_with("_id"))
-                                .show(ui, |ui| {
-                                    self.render_parameter_key(
-                                        name,
-                                        ui,
-                                        &param_values,
-                                        &filtered_values,
-                                        ctx,
-                                    );
-                                });
+                            let id = ui.make_persistent_id(format!("{}_currently_filtered", name));
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                id,
+                                true,
+                            )
+                            .show_header(ui, |ui| {
+                                let mut param_toggle =
+                                    self.gui_params.inspect_params.contains(name);
+                                ui.toggle_value(&mut param_toggle, name);
+                                if !param_toggle {
+                                    self.gui_params.inspect_params.remove(name);
+                                } else {
+                                    self.gui_params.inspect_params.insert(name.clone());
+                                }
+                            })
+                            .body(|ui| {
+                                self.render_parameter_key(
+                                    name,
+                                    ui,
+                                    &param_values,
+                                    &filtered_values,
+                                    ctx,
+                                );
+                            });
                         }
                     }
                 }
@@ -1902,53 +2328,79 @@ impl GuiRuns {
                 continue;
             }
             // ui.collapsing(param_group_name, |ui| {
-            egui::CollapsingHeader::new(&param_group_name)
-                // .default_open(self.gui_params.param_name_filter.len() > 1)
-                .default_open(!param_group_name.ends_with("_id"))
-                .show(ui, |ui| {
-                    if param_group_vec
-                        .iter()
-                        .any(|name| name.split(".").count() > depth + 1)
-                    {
-                        // println!(
-                        //     "{:?}: {}",
-                        //     param_group_vec, self.gui_params.param_name_filter
-                        // );
-                        self.render_parameters_one_level(
-                            param_values,
-                            param_group_vec,
+            let id = ui.make_persistent_id(format!("{}", param_group_name));
+            egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                !param_group_name.ends_with("_id"),
+            )
+            .show_header(ui, |ui| {
+                if param_group_vec
+                    .iter()
+                    .any(|name| name.split(".").count() > depth + 1)
+                {
+                    ui.label(param_group_name);
+                } else {
+                    let mut param_toggle =
+                        self.gui_params.inspect_params.contains(&param_group_name);
+                    ui.toggle_value(&mut param_toggle, &param_group_name);
+                    if !param_toggle {
+                        self.gui_params.inspect_params.remove(&param_group_name);
+                    } else {
+                        self.gui_params
+                            .inspect_params
+                            .insert(param_group_name.clone());
+                    }
+                }
+            })
+            .body(|ui| {
+                if param_group_vec
+                    .iter()
+                    .any(|name| name.split(".").count() > depth + 1)
+                {
+                    // println!(
+                    //     "{:?}: {}",
+                    //     param_group_vec, self.gui_params.param_name_filter
+                    // );
+                    self.render_parameters_one_level(
+                        param_values,
+                        param_group_vec,
+                        ui,
+                        filtered_values,
+                        ctx,
+                        depth + 1,
+                    );
+                } else {
+                    for param_name in &param_group_vec {
+                        if !param_values
+                            .get(param_name)
+                            .unwrap()
+                            .iter()
+                            .any(|value_str| {
+                                value_str
+                                    .to_lowercase()
+                                    .contains(self.gui_params.param_name_filter.as_str())
+                            })
+                            && !param_name.contains(self.gui_params.param_name_filter.as_str())
+                        {
+                            continue;
+                        }
+                        // ui.
+                        // ui.separator();
+                        self.render_parameter_key(
+                            param_name,
                             ui,
+                            param_values,
                             filtered_values,
                             ctx,
-                            depth + 1,
                         );
-                    } else {
-                        for param_name in &param_group_vec {
-                            if !param_values
-                                .get(param_name)
-                                .unwrap()
-                                .iter()
-                                .any(|value_str| {
-                                    value_str
-                                        .to_lowercase()
-                                        .contains(self.gui_params.param_name_filter.as_str())
-                                })
-                                && !param_name.contains(self.gui_params.param_name_filter.as_str())
-                            {
-                                continue;
-                            }
-                            // ui.
-                            // ui.separator();
-                            self.render_parameter_key(
-                                param_name,
-                                ui,
-                                param_values,
-                                filtered_values,
-                                ctx,
-                            );
-                        }
                     }
-                });
+                }
+            });
+            // egui::CollapsingHeader::new(&param_group_name)
+            // .default_open(self.gui_params.param_name_filter.len() > 1)
+            // .default_open(!param_group_name.ends_with("_id"))
+            // .show(ui, |ui| {});
         }
     }
 
@@ -1979,20 +2431,20 @@ impl GuiRuns {
                         } else {
                             egui::Color32::TRANSPARENT
                         };
-                        if ui
-                            .add(
-                                egui::Button::new('\u{2795}'.to_string())
-                                    .small()
-                                    .stroke(egui::Stroke::new(1.0, stroke_color)),
-                            )
-                            .clicked()
-                        {
-                            if self.gui_params.inspect_params.contains(param_name) {
-                                self.gui_params.inspect_params.remove(param_name);
-                            } else {
-                                self.gui_params.inspect_params.insert(param_name.clone());
-                            }
-                        };
+                        // if ui
+                        //     .add(
+                        //         egui::Button::new('\u{2795}'.to_string())
+                        //             .small()
+                        //             .stroke(egui::Stroke::new(1.0, stroke_color)),
+                        //     )
+                        //     .clicked()
+                        // {
+                        //     if self.gui_params.inspect_params.contains(param_name) {
+                        //         self.gui_params.inspect_params.remove(param_name);
+                        //     } else {
+                        //         self.gui_params.inspect_params.insert(param_name.clone());
+                        //     }
+                        // };
                     }
                     self.render_parameter_values(
                         &param_values,
@@ -2390,62 +2842,68 @@ impl GuiRuns {
     }
 
     fn render_metrics(&mut self, ui: &mut egui::Ui, metric_names: &Vec<String>) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.vertical(|ui| {
-                for metric_name in metric_names {
-                    let active_filter = self.gui_params.metric_filters.contains(metric_name);
-                    if ui
-                        .add(egui::Button::new(metric_name).selected(active_filter))
-                        .clicked()
-                    {
-                        if self.gui_params.metric_filters.contains(metric_name) {
-                            self.gui_params.metric_filters.remove(metric_name);
-                        } else {
-                            self.gui_params.metric_filters.insert(metric_name.clone());
+        ui.collapsing("metrics", |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    for metric_name in metric_names {
+                        let active_filter = self.gui_params.metric_filters.contains(metric_name);
+                        if ui
+                            .add(egui::Button::new(metric_name).selected(active_filter))
+                            .clicked()
+                        {
+                            if self.gui_params.metric_filters.contains(metric_name) {
+                                self.gui_params.metric_filters.remove(metric_name);
+                            } else {
+                                self.gui_params.metric_filters.insert(metric_name.clone());
+                            }
+                            // self.dirty = true;
+                            self.update_filtered_runs();
+                            self.db_train_runs_sender_slot =
+                                Some(self.runs.time_filtered_runs.clone());
+                            self.gui_params_sender_slot =
+                                Some((self.gui_params.clone(), self.runs.runs.clone()));
                         }
-                        // self.dirty = true;
-                        self.update_filtered_runs();
-                        self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
-                        self.gui_params_sender_slot =
-                            Some((self.gui_params.clone(), self.runs.runs.clone()));
                     }
-                }
+                });
             });
         });
     }
 
     fn render_artifact_selector(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .id_source("artifact_selector")
-            .show(ui, |ui| {
-                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                for artifact_name in self
-                    .runs
-                    .time_filtered_runs
-                    // .active_runs
-                    .iter()
-                    .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
-                    .flatten()
-                    .unique()
-                    .sorted()
-                {
-                    if ui
-                        .add(
-                            egui::Button::new(artifact_name)
-                                .selected(self.gui_params.artifact_filters.contains(artifact_name)),
-                        )
-                        .clicked()
+        ui.collapsing("artifacts", |ui| {
+            egui::ScrollArea::vertical()
+                .id_source("artifact_selector")
+                .show(ui, |ui| {
+                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                    for artifact_name in self
+                        .runs
+                        .time_filtered_runs
+                        // .active_runs
+                        .iter()
+                        .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
+                        .flatten()
+                        .unique()
+                        .sorted()
                     {
-                        if self.gui_params.artifact_filters.contains(artifact_name) {
-                            self.gui_params.artifact_filters.remove(artifact_name);
-                        } else {
-                            self.gui_params
-                                .artifact_filters
-                                .insert(artifact_name.clone());
+                        if ui
+                            .add(
+                                egui::Button::new(artifact_name).selected(
+                                    self.gui_params.artifact_filters.contains(artifact_name),
+                                ),
+                            )
+                            .clicked()
+                        {
+                            if self.gui_params.artifact_filters.contains(artifact_name) {
+                                self.gui_params.artifact_filters.remove(artifact_name);
+                            } else {
+                                self.gui_params
+                                    .artifact_filters
+                                    .insert(artifact_name.clone());
+                            }
                         }
                     }
-                }
-            });
+                });
+        });
     }
 
     fn render_artifacts(
@@ -3125,10 +3583,46 @@ fn main() -> Result<(), sqlx::Error> {
     });
     // });
 
+    // let options = eframe::NativeOptions {
+    //     viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 800.0]),
+    //     ..Default::default()
+    // };
     let options = eframe::NativeOptions {
+        // initial_window_size: Some(egui::vec2(320.0, 240.0)),
+        // initial_window_pos: Some((200., 200.).into()),
         viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 800.0]),
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            // supported_backends: wgpu::Backends::VULKAN,
+            device_descriptor: std::sync::Arc::new(|adapter| {
+                let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                };
+
+                let features = wgpu::Features::MAPPABLE_PRIMARY_BUFFERS;
+
+                // if adapter.get_info().backend == wgpu::Backend::Vulkan {
+                //     features |= wgpu::Features::SPIRV_SHADER_PASSTHROUGH;
+                // }
+                wgpu::DeviceDescriptor {
+                    label: Some("egui wgpu device"),
+                    // features: wgpu::Features::SHADER_F16 | wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
+                    // features: wgpu::Features::default(),
+                    required_features: features,
+                    required_limits: wgpu::Limits {
+                        // When using a depth buffer, we have to be able to create a texture
+                        // large enough for the entire surface, and we want to support 4k+ displays.
+                        max_texture_dimension_2d: 8192,
+                        ..base_limits
+                    },
+                }
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
+
     let _ = eframe::run_native(
         "Visualizer",
         options,
@@ -3156,6 +3650,7 @@ fn main() -> Result<(), sqlx::Error> {
                     param_name_filter: "".to_string(),
                     table_sorting: HashSet::new(),
                     npy_plot_size: 0.48,
+                    render_format: cc.wgpu_render_state.as_ref().unwrap().target_format,
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
@@ -3205,7 +3700,8 @@ fn main() -> Result<(), sqlx::Error> {
                 gui_params_sender_slot: None,
             })
         }),
-    );
+    )
+    .unwrap();
 
     Ok(())
 }
