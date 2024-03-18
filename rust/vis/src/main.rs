@@ -6,10 +6,11 @@ use egui::{epaint, Stroke};
 use egui_plot::{Axis, Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
-use ndarray::{s, IxDyn, SliceInfo, SliceInfoElem};
+use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem, ViewRepr};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::Cow;
+use std::num::NonZeroU64;
 use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -151,6 +152,13 @@ struct HPShader {
     render_format: wgpu::TextureFormat,
     angle1: f32,
     angle2: f32,
+    min: f32,
+    max: f32,
+    array: ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+    artifact_view: NPYArtifactView,
 }
 
 #[allow(dead_code)]
@@ -158,12 +166,33 @@ struct HPShader {
 struct HPShaderUniform {
     angle1: f32,
     angle2: f32,
+    min: f32,
+    max: f32,
+    nside: i32,
 }
 
 struct HPShaderResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: HashMap<ArtifactId, wgpu::BindGroup>,
+    bind_group: HashMap<NPYArtifactView, wgpu::BindGroup>,
+    hp_buf: Option<(wgpu::Buffer, usize)>,
+}
+
+fn make_bind_group_layout_entry(
+    binding_num: u32,
+    stage: wgpu::ShaderStages,
+    read_only: bool,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: binding_num,
+        visibility: stage,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
 }
 
 fn make_uniform_layout_entry(
@@ -198,6 +227,35 @@ fn upload_uniform<T: glsl_layout::Uniform>(device: &wgpu::Device, uniform: T) ->
     uniform_buf
 }
 
+fn ensure_buffer_size<'a>(
+    current: &'a mut Option<(wgpu::Buffer, usize)>,
+    device: &wgpu::Device,
+    required_size: u64,
+    usage: wgpu::BufferUsages,
+) -> (&'a wgpu::Buffer, usize) {
+    let buf = if current.is_none() {
+        let mut buf_init_bytes = Vec::with_capacity(required_size as usize);
+        buf_init_bytes.resize(required_size as usize, 0);
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            usage,
+            contents: &buf_init_bytes,
+        })
+    } else if current.as_ref().unwrap().0.size() < required_size {
+        let mut buf_init_bytes = Vec::with_capacity(required_size as usize);
+        buf_init_bytes.resize(required_size as usize, 0);
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            usage,
+            contents: &buf_init_bytes,
+        })
+    } else {
+        current.take().unwrap().0
+    };
+    *current = Some((buf, required_size as usize));
+    (&current.as_ref().unwrap().0, required_size as usize)
+}
+
 impl eframe::egui_wgpu::CallbackTrait for HPShader {
     fn paint<'a>(
         &'a self,
@@ -219,18 +277,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
             //     bind_group,
             // );
 
-            render_pass.set_bind_group(
-                0,
-                &res.bind_group
-                    .get(&ArtifactId {
-                        artifact_id: 0,
-                        train_id: "".to_string(),
-                        name: "".to_string(),
-                        artifact_type: ArtifactType::NPYHealpix,
-                    })
-                    .unwrap(),
-                &[],
-            );
+            render_pass.set_bind_group(0, &res.bind_group.get(&self.artifact_view).unwrap(), &[]);
 
             render_pass.draw(0..4, 0..1);
         }
@@ -251,7 +298,10 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
         if callback_resources.get::<HPShaderResources>().is_none() {
             let spectrograph_vert = load_shader(device, include_bytes!("../hpshader.vertex.spv"));
             let spectrograph_frag = load_shader(device, include_bytes!("../hpshader.fragment.spv"));
-            let bindings = vec![make_uniform_layout_entry(0, wgpu::ShaderStages::FRAGMENT)];
+            let bindings = vec![
+                make_uniform_layout_entry(0, wgpu::ShaderStages::FRAGMENT),
+                make_bind_group_layout_entry(1, wgpu::ShaderStages::FRAGMENT, true),
+            ];
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: None,
@@ -293,6 +343,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                 pipeline: render_pipeline,
                 bind_group: [].into(),
                 bind_group_layout,
+                hp_buf: None,
                 // bind_group: [((self.node, self.out_port), bind_group)].into(),
             });
             let uniform_buf = upload_uniform(
@@ -300,52 +351,109 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                 HPShaderUniform {
                     angle1: self.angle1,
                     angle2: self.angle2,
+                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
+                        as i32,
+                    min: self.min,
+                    max: self.max,
                 },
             );
-            let resources = callback_resources.get::<HPShaderResources>().unwrap();
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            // let (hp_buf, hp_buf_size) = ensure_buffer_size(
+            //     &mut resources.hp_buf,
+            //     device,
+            //     self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
+            //     wgpu::BufferUsages::STORAGE,
+            // );
+            let hp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: true,
+            });
+            let hp_buf_size = self.array.len() as u64 * core::mem::size_of::<f32>() as u64;
+            // resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
+            // let (hp_buf, hp_buf_size) = resources.hp_buf.unwrap();
+
+            let mut mapped_hp_buf = hp_buf.slice(0..).get_mapped_range_mut();
+            let mapped_buffer_ptr = mapped_hp_buf.as_mut_ptr().cast::<f32>();
+            if let Some(slice) = self.array.as_slice() {
+                unsafe {
+                    mapped_buffer_ptr.copy_from_nonoverlapping(
+                        slice.as_ptr(),
+                        slice.len(), // self.array.as_ptr(),
+                                     // self.array.len() * core::mem::size_of::<f32>(),
+                    );
+                }
+            }
+            drop(mapped_hp_buf);
+            hp_buf.unmap();
+            // let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
+
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &resources.bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(uniform_buf.as_entire_buffer_binding()),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            uniform_buf.as_entire_buffer_binding(),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &hp_buf,
+                            offset: 0,
+                            size: Some(NonZeroU64::new(hp_buf_size as u64).unwrap()),
+                        }),
+                    },
+                ],
             });
+            resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
+
             let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
-            resources.bind_group.insert(
-                ArtifactId {
-                    artifact_id: 0,
-                    train_id: "".to_string(),
-                    name: "".to_string(),
-                    artifact_type: ArtifactType::NPYHealpix,
-                },
-                bind_group,
-            );
+            resources
+                .bind_group
+                .insert(self.artifact_view.clone(), bind_group);
         } else {
             let uniform_buf = upload_uniform(
                 device,
                 HPShaderUniform {
                     angle1: self.angle1,
                     angle2: self.angle2,
+                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
+                        as i32,
+                    min: self.min,
+                    max: self.max,
                 },
             );
             let resources = callback_resources.get::<HPShaderResources>().unwrap();
+            let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
+            // if let Some(hp_buf, hp_buf_size) = resources.
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &resources.bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(uniform_buf.as_entire_buffer_binding()),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(
+                            uniform_buf.as_entire_buffer_binding(),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: hp_buf,
+                            offset: 0,
+                            size: Some(NonZeroU64::new(*hp_buf_size as u64).unwrap()),
+                        }),
+                    },
+                ],
             });
             let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
-            if let Some(bg) = resources.bind_group.get_mut(&ArtifactId {
-                artifact_id: 0,
-                train_id: "".to_string(),
-                name: "".to_string(),
-                artifact_type: ArtifactType::NPYHealpix,
-            }) {
+            if let Some(bg) = resources.bind_group.get_mut(&self.artifact_view) {
                 *bg = bind_group;
+                // bg
             }
         }
 
@@ -734,13 +842,13 @@ fn sample_hp_array(
     v
 }
 
-fn min_max_hp(
+fn slice_array(
     view: &NPYArtifactView,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
-) -> (f32, f32) {
+) -> ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> {
     let si = unsafe {
         SliceInfo::<_, IxDyn, IxDyn>::new(
             view.index
@@ -755,7 +863,17 @@ fn min_max_hp(
         )
         .unwrap()
     };
-    let aslice = array.slice(&si);
+    array.slice(&si).into_owned()
+}
+
+fn min_max_hp(
+    view: &NPYArtifactView,
+    array: &ndarray::prelude::ArrayBase<
+        ndarray::OwnedRepr<f32>,
+        ndarray::prelude::Dim<ndarray::IxDynImpl>,
+    >,
+) -> (f32, f32) {
+    let aslice = slice_array(view, array);
     let max = aslice.max().unwrap();
     let min = aslice.min().unwrap();
     (*max, *min)
@@ -1104,32 +1222,6 @@ impl eframe::App for GuiRuns {
                 self.render_artifact_selector(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            let (resp, painter) = ui.allocate_painter(
-                egui::Vec2::new(300.0, 300.0),
-                egui::Sense::focusable_noninteractive(),
-            );
-            let angle1 = if let Some(pos) = ctx.pointer_latest_pos() {
-                pos.x / 500.0
-            } else {
-                0.0
-            };
-            let angle2 = if let Some(pos) = ctx.pointer_latest_pos() {
-                pos.y / 500.0
-            } else {
-                0.0
-            };
-            painter.add(egui::Shape::Callback(
-                eframe::egui_wgpu::Callback::new_paint_callback(
-                    resp.rect,
-                    HPShader {
-                        render_format: self.gui_params.render_format,
-                        angle1,
-                        angle2, // node: *node_idx,
-                                // out_port: output_id,
-                    },
-                ),
-            ));
-
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Time").clicked() {
@@ -1714,6 +1806,40 @@ fn render_npy_artifact_hp(
         );
         // texture.set(img, egui::TextureOptions::default());
         // ui.image((texture.id(), texture.size_vec2()));
+        let (resp, painter) = ui.allocate_painter(
+            egui::Vec2::new(300.0, 300.0),
+            egui::Sense::focusable_noninteractive(),
+        );
+        let angle1 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+            pos.x / 200.0
+        } else {
+            0.0
+        };
+        let angle2 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+            pos.y / 200.0
+        } else {
+            0.0
+        };
+        let subarray = slice_array(view, array);
+        // dbg!(&view);
+        // dbg!(&subarray);
+        painter.add(egui::Shape::Callback(
+            eframe::egui_wgpu::Callback::new_paint_callback(
+                resp.rect,
+                HPShader {
+                    render_format: gui_params.render_format,
+                    angle1: angle1,
+                    angle2: angle2,
+                    min: *subarray.min().unwrap(),
+                    max: *subarray.max().unwrap(), // min: min_max_hp(, ),
+                    array: subarray,
+                    artifact_view: view.clone(), // array: array.clone(),
+                                                 // max: 0.0, // node: *node_idx,
+                                                 // out_port: output_id,
+                },
+            ),
+        ));
+
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 Plot::new(artifact_id)
