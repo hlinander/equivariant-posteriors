@@ -6,6 +6,8 @@
 #define VERTEXARG in
 #endif
 
+#define PI 3.14150265358
+
 layout(location = 0) VERTEXARG vec2 uv;
 
 #ifdef FRAGMENT
@@ -77,9 +79,9 @@ const int x2pix[] = int[](0, 1, 4, 5, 16, 17, 20, 21, 64, 65, 68, 69, 80, 81, 84
 const int y2pix[] = int[](0, 2, 8, 10, 32, 34, 40, 42, 128, 130, 136, 138, 160, 162, 168, 170, 512, 514, 520, 522, 544, 546, 552, 554, 640, 642, 648, 650, 672, 674, 680, 682, 2048, 2050, 2056, 2058, 2080, 2082, 2088, 2090, 2176, 2178, 2184, 2186, 2208, 2210, 2216, 2218, 2560, 2562, 2568, 2570, 2592, 2594, 2600, 2602, 2688, 2690, 2696, 2698, 2720, 2722, 2728, 2730, 8192, 8194, 8200, 8202, 8224, 8226, 8232, 8234, 8320, 8322, 8328, 8330, 8352, 8354, 8360, 8362, 8704, 8706, 8712, 8714, 8736, 8738, 8744, 8746, 8832, 8834, 8840, 8842, 8864, 8866, 8872, 8874, 10240, 10242, 10248, 10250, 10272, 10274, 10280, 10282, 10368, 10370, 10376, 10378, 10400, 10402, 10408, 10410, 10752, 10754, 10760, 10762, 10784, 10786, 10792, 10794, 10880, 10882, 10888, 10890, 10912, 10914, 10920, 10922);
 // const int ns_max = 8192;
 const int ns_max = 4096;
-const float piover2 = 3.14159265358979323846 * 0.5;
-const float pi = 3.14159265358979323846;
-const float twopi = 2.0 * 3.14159265358979323846;
+const float piover2 = PI * 0.5;
+const float pi = PI;
+const float twopi = 2.0 * PI;
 
 int vec2pix_nest(int nside, vec3 vec) {
     float z, za, z0, tt, tp, tmp, phi;
@@ -167,8 +169,15 @@ void main() {
     // float d = uv.length();
     // color = vec4(uv.x, uv.y, 0.0, 1.0);
     vec2 uv_center = uv - vec2(0.5, 0.5);
+    uv_center.y = -uv_center.y;
     vec3 ro = vec3(0, 0, -2);
     vec3 rd = normalize(vec3(uv_center, 2));
+
+    ro = rotateVector(ro, vec3(1, 0, 0), PI/2.0 + angle2);
+    rd = rotateVector(rd, vec3(1, 0, 0), PI/2.0 + angle2);
+
+    ro = rotateVector(ro, vec3(0, 0, 1), -PI/2.0 - angle1);
+    rd = rotateVector(rd, vec3(0, 0, 1), -PI/2.0 - angle1);
 
     vec4 sph = vec4(0, 0, 0, 0.5);
     float t = sphIntersect(ro, rd, sph);
@@ -176,8 +185,8 @@ void main() {
     if (t > 0.0) {
         vec3 pos = ro + t*rd;
         vec3 nor = normalize( pos - sph.xyz );
-        nor = rotateVector(nor, vec3(1, 0, 0), angle1);
-        nor = rotateVector(nor, vec3(0, 1, 0), angle2);
+        // nor = rotateVector(nor, vec3(0, 1, 0), -angle1);
+        // nor = rotateVector(nor, vec3(1, 0, 0), 3.14159 / 2.0 + angle2);
         int hp = vec2pix_nest(nside, nor);
         // int npix = 12 * 64 * 64;
         col = plasma_quintic((hp_data[hp] - min) / (max - min));

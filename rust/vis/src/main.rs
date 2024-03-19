@@ -174,8 +174,9 @@ struct HPShaderUniform {
 struct HPShaderResources {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: HashMap<NPYArtifactView, wgpu::BindGroup>,
-    hp_buf: Option<(wgpu::Buffer, usize)>,
+    bind_groups: HashMap<NPYArtifactView, wgpu::BindGroup>,
+    uniform_buffers: HashMap<NPYArtifactView, wgpu::Buffer>, // hp_buf: Option<(wgpu::Buffer, usize)>,
+                                                             // uniform_buf: Option<wgpu::Buffer>,
 }
 
 fn make_bind_group_layout_entry(
@@ -221,10 +222,21 @@ fn upload_uniform<T: glsl_layout::Uniform>(device: &wgpu::Device, uniform: T) ->
     };
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        usage: wgpu::BufferUsages::UNIFORM,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         contents: byte_slice,
     });
     uniform_buf
+}
+
+fn update_uniform<T: glsl_layout::Uniform>(buffer: &wgpu::Buffer, uniform: T, queue: &wgpu::Queue) {
+    let std_140_data = uniform.std140();
+    let byte_slice: &[u8] = unsafe {
+        core::slice::from_raw_parts(
+            (&std_140_data as *const <T as Uniform>::Std140).cast::<u8>(),
+            core::mem::size_of_val::<<T as Uniform>::Std140>(&std_140_data),
+        )
+    };
+    queue.write_buffer(buffer, 0, byte_slice);
 }
 
 fn ensure_buffer_size<'a>(
@@ -277,7 +289,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
             //     bind_group,
             // );
 
-            render_pass.set_bind_group(0, &res.bind_group.get(&self.artifact_view).unwrap(), &[]);
+            render_pass.set_bind_group(0, &res.bind_groups.get(&self.artifact_view).unwrap(), &[]);
 
             render_pass.draw(0..4, 0..1);
         }
@@ -287,7 +299,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
     fn prepare(
         &self,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         _screen_descriptor: &ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
@@ -341,11 +353,62 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
             });
             callback_resources.insert(HPShaderResources {
                 pipeline: render_pipeline,
-                bind_group: [].into(),
+                bind_groups: [].into(),
                 bind_group_layout,
-                hp_buf: None,
+                // hp_buf: None,
+                uniform_buffers: HashMap::new(),
                 // bind_group: [((self.node, self.out_port), bind_group)].into(),
             });
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            // resources.uniform_buf = Some(uniform_buf);
+            self.create_or_get_bind_group(device, resources);
+            // resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
+
+            // let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+        } else {
+            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
+            self.create_or_get_bind_group(
+                device, resources,
+                // resources.uniform_buf.as_ref().unwrap(),
+            );
+            update_uniform(
+                resources.uniform_buffers.get(&self.artifact_view).unwrap(),
+                HPShaderUniform {
+                    angle1: self.angle1,
+                    angle2: self.angle2,
+                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
+                        as i32,
+                    min: self.min,
+                    max: self.max,
+                },
+                queue,
+            );
+        }
+
+        Vec::new()
+    }
+
+    fn finish_prepare(
+        &self,
+        _device: &eframe::wgpu::Device,
+        _queue: &eframe::wgpu::Queue,
+        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
+        _callback_resources: &mut eframe::egui_wgpu::CallbackResources,
+    ) -> Vec<eframe::wgpu::CommandBuffer> {
+        Vec::new()
+    }
+}
+
+impl HPShader {
+    fn create_or_get_bind_group<'a>(
+        &self,
+        device: &wgpu::Device,
+        resources: &'a mut HPShaderResources,
+        // uniform_buf: &wgpu::Buffer,
+    ) -> &'a wgpu::BindGroup {
+        if resources.bind_groups.contains_key(&self.artifact_view) {
+            resources.bind_groups.get(&self.artifact_view).unwrap()
+        } else {
             let uniform_buf = upload_uniform(
                 device,
                 HPShaderUniform {
@@ -357,13 +420,10 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                     max: self.max,
                 },
             );
-            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
-            // let (hp_buf, hp_buf_size) = ensure_buffer_size(
-            //     &mut resources.hp_buf,
-            //     device,
-            //     self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
-            //     wgpu::BufferUsages::STORAGE,
-            // );
+            resources
+                .uniform_buffers
+                .insert(self.artifact_view.clone(), uniform_buf);
+
             let hp_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size: self.array.len() as u64 * core::mem::size_of::<f32>() as u64,
@@ -371,8 +431,6 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                 mapped_at_creation: true,
             });
             let hp_buf_size = self.array.len() as u64 * core::mem::size_of::<f32>() as u64;
-            // resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
-            // let (hp_buf, hp_buf_size) = resources.hp_buf.unwrap();
 
             let mut mapped_hp_buf = hp_buf.slice(0..).get_mapped_range_mut();
             let mapped_buffer_ptr = mapped_hp_buf.as_mut_ptr().cast::<f32>();
@@ -387,7 +445,6 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
             }
             drop(mapped_hp_buf);
             hp_buf.unmap();
-            // let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
@@ -396,7 +453,11 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(
-                            uniform_buf.as_entire_buffer_binding(),
+                            resources
+                                .uniform_buffers
+                                .get(&self.artifact_view)
+                                .unwrap()
+                                .as_entire_buffer_binding(),
                         ),
                     },
                     wgpu::BindGroupEntry {
@@ -409,65 +470,11 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                     },
                 ],
             });
-            resources.hp_buf = Some((hp_buf, hp_buf_size as usize));
-
-            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
             resources
-                .bind_group
+                .bind_groups
                 .insert(self.artifact_view.clone(), bind_group);
-        } else {
-            let uniform_buf = upload_uniform(
-                device,
-                HPShaderUniform {
-                    angle1: self.angle1,
-                    angle2: self.angle2,
-                    nside: ((self.array.shape()[self.array.shape().len() - 1] / 12) as f64).sqrt()
-                        as i32,
-                    min: self.min,
-                    max: self.max,
-                },
-            );
-            let resources = callback_resources.get::<HPShaderResources>().unwrap();
-            let (hp_buf, hp_buf_size) = resources.hp_buf.as_ref().unwrap();
-            // if let Some(hp_buf, hp_buf_size) = resources.
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &resources.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(
-                            uniform_buf.as_entire_buffer_binding(),
-                        ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: hp_buf,
-                            offset: 0,
-                            size: Some(NonZeroU64::new(*hp_buf_size as u64).unwrap()),
-                        }),
-                    },
-                ],
-            });
-            let resources = callback_resources.get_mut::<HPShaderResources>().unwrap();
-            if let Some(bg) = resources.bind_group.get_mut(&self.artifact_view) {
-                *bg = bind_group;
-                // bg
-            }
+            resources.bind_groups.get(&self.artifact_view).unwrap()
         }
-
-        Vec::new()
-    }
-
-    fn finish_prepare(
-        &self,
-        _device: &eframe::wgpu::Device,
-        _queue: &eframe::wgpu::Queue,
-        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
-        _callback_resources: &mut eframe::egui_wgpu::CallbackResources,
-    ) -> Vec<eframe::wgpu::CommandBuffer> {
-        Vec::new()
     }
 }
 
@@ -1207,10 +1214,13 @@ impl eframe::App for GuiRuns {
 
         egui::SidePanel::left("Controls")
             .resizable(true)
-            .default_width(200.0)
-            .min_width(200.0)
+            // .default_width(200.0)
+            .min_width(10.0)
             .show(ctx, |ui| {
-                self.render_parameters(ui, param_values, filtered_values, ctx);
+                // ui.separator();
+                ui.collapsing("", |ui| {
+                    self.render_parameters(ui, param_values, filtered_values, ctx);
+                });
             });
         egui::SidePanel::right("Metrics")
             .resizable(true)
@@ -1352,11 +1362,15 @@ fn show_artifacts(
                         {
                             ui.group(|ui| {
                                 ui.label(egui::RichText::new(artifact_name).size(20.0));
-                                ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                ui.end_row();
+                                // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                 for (artifact_id, array) in array_group {
-                                    if ui.button("reload").clicked() {
-                                        to_remove.push(artifact_id.clone());
-                                    }
+                                    // ui.end_row();
+                                    // if ui.button("reload").clicked() {
+                                    // to_remove.push(artifact_id.clone());
+                                    // }
+                                    // ui.end_row();
+                                    // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                     match &array.array {
                                         NPYArray::Loading(binary_artifact) => {
                                             render_artifact_download_progress(&binary_artifact, ui);
@@ -1806,42 +1820,23 @@ fn render_npy_artifact_hp(
         );
         // texture.set(img, egui::TextureOptions::default());
         // ui.image((texture.id(), texture.size_vec2()));
-        let (resp, painter) = ui.allocate_painter(
-            egui::Vec2::new(300.0, 300.0),
-            egui::Sense::focusable_noninteractive(),
-        );
-        let angle1 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
-            pos.x / 200.0
-        } else {
-            0.0
-        };
-        let angle2 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
-            pos.y / 200.0
-        } else {
-            0.0
-        };
-        let subarray = slice_array(view, array);
-        // dbg!(&view);
-        // dbg!(&subarray);
-        painter.add(egui::Shape::Callback(
-            eframe::egui_wgpu::Callback::new_paint_callback(
-                resp.rect,
-                HPShader {
-                    render_format: gui_params.render_format,
-                    angle1: angle1,
-                    angle2: angle2,
-                    min: *subarray.min().unwrap(),
-                    max: *subarray.max().unwrap(), // min: min_max_hp(, ),
-                    array: subarray,
-                    artifact_view: view.clone(), // array: array.clone(),
-                                                 // max: 0.0, // node: *node_idx,
-                                                 // out_port: output_id,
-                },
-            ),
-        ));
 
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
+                let min = textures.get(&view).unwrap().min_val as f32;
+                let max = textures.get(&view).unwrap().max_val as f32;
+                render_hp_shader(
+                    ui,
+                    view,
+                    array,
+                    gui_params,
+                    *hover_lon,
+                    *hover_lat,
+                    min,
+                    max,
+                    plot_width / 2.0,
+                    plot_width / 2.0,
+                );
                 Plot::new(artifact_id)
                     .width(plot_width)
                     .height(plot_width / 2.0)
@@ -1902,6 +1897,53 @@ fn render_npy_artifact_hp(
             ui.label(format!("{}", v));
         });
     });
+}
+
+fn render_hp_shader(
+    ui: &mut egui::Ui,
+    view: &mut NPYArtifactView,
+    array: &ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>>,
+    gui_params: &GuiParams,
+    lon: f64,
+    lat: f64,
+    min: f32,
+    max: f32,
+    width: f32,
+    height: f32,
+) {
+    let (resp, painter) = ui.allocate_painter(
+        egui::Vec2::new(width, height),
+        egui::Sense::focusable_noninteractive(),
+    );
+    // let angle1 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+    //     pos.x / 200.0
+    // } else {
+    //     0.0
+    // };
+    // let angle2 = if let Some(pos) = ui.ctx().pointer_latest_pos() {
+    //     pos.y / 200.0
+    // } else {
+    //     0.0
+    // };
+    let subarray = slice_array(view, array);
+    // dbg!(&view);
+    // dbg!(&subarray);
+    painter.add(egui::Shape::Callback(
+        eframe::egui_wgpu::Callback::new_paint_callback(
+            resp.rect,
+            HPShader {
+                render_format: gui_params.render_format,
+                angle1: lon as f32,
+                angle2: lat as f32,
+                min,
+                max, // min: min_max_hp(, ),
+                array: subarray,
+                artifact_view: view.clone(), // array: array.clone(),
+                                             // max: 0.0, // node: *node_idx,
+                                             // out_port: output_id,
+            },
+        ),
+    ));
 }
 fn render_npy_artifact_driscoll_healy(
     ui: &mut egui::Ui,
