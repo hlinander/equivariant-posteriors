@@ -179,7 +179,7 @@ void main() {
     ro = rotateVector(ro, vec3(0, 0, 1), -PI/2.0 - angle1);
     rd = rotateVector(rd, vec3(0, 0, 1), -PI/2.0 - angle1);
 
-    vec4 sph = vec4(0, 0, 0, 0.5);
+    vec4 sph = vec4(0, 0, 0, 0.4);
     float t = sphIntersect(ro, rd, sph);
     vec3 col = vec3(0);
     if (t > 0.0) {
