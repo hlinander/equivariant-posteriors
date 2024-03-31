@@ -66,7 +66,7 @@ def serialize(config: SerializeConfig):
     train_run = config.train_run
 
     keep_checkpoint_condition = config.train_run.keep_epoch_checkpoints and (
-        train_epoch_state.epoch % config.train_run.keep_nth_epoch_checkpoints != 0
+        train_epoch_state.epoch % config.train_run.keep_nth_epoch_checkpoints == 0
     )
     serialize_condition = train_epoch_state.epoch % train_run.save_nth_epoch != 0
 
@@ -93,7 +93,7 @@ def serialize(config: SerializeConfig):
 
     checkpoint_path = get_or_create_checkpoint_path(train_config)
 
-    if config.train_run.keep_epoch_checkpoints:
+    if config.train_run.keep_epoch_checkpoints and keep_checkpoint_condition:
         model_epoch_checkpoint = get_model_epoch_checkpoint_path(
             config.train_run.train_config, train_epoch_state.epoch
         )

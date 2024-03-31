@@ -76,6 +76,7 @@ class NestRollShift:
         return attn_mask
 
     def shift(self, x):
+        # breakpoint()
         return torch.roll(
             x, shifts=[-self.window_size_d // 2, -self.window_size_hp // 2], dims=[1, 2]
         )
@@ -333,12 +334,16 @@ class NestGridShift:
 
 
 class RingShift:
-    def __init__(self, nside, base_pix, window_size, shift_size):
+    def __init__(self, nside, base_pix, window_size, shift_size, input_resolution):
         self.nside = nside
         self.base_pix = base_pix
         self.npix = base_pix * self.nside**2
         self.ws = window_size
         self.shift_size = shift_size
+        self.window_size_d, self.window_size_hp = window_size
+        self.input_resolution = input_resolution
+        self.shift_size_d = self.window_size_d // 2
+        self.shift_size_hp = shift_size  # self.window_size_hp // 2
 
         self.shift_idcs, self.mask = self._get_shifted_idcs_and_mask()
         self._validate_shift_result()
@@ -349,9 +354,10 @@ class RingShift:
         nest ordering
 
         """
+        D, N = self.input_resolution
 
         ring_idcs = np.arange(12 * self.nside**2)
-        shifted_ring_idcs = np.roll(ring_idcs, self.shift_size)
+        shifted_ring_idcs = np.roll(ring_idcs, -self.shift_size_hp)
         shifted_ring_idcs_in_nest = chp.ring2nest(self.nside, shifted_ring_idcs)
         # shifted_ring_idcs_in_nest = hp.ring2nest(self.nside, shifted_ring_idcs)
 
@@ -362,56 +368,37 @@ class RingShift:
         nest_idcs_in_ring = chp.nest2ring(self.nside, nest_idcs)
         result = shifted_ring_idcs_in_nest[nest_idcs_in_ring]
 
-        # mask pixels that come from outside the domain we use, for each base pixel
-        max_idx = nest_idcs.max()
-        pixel_size = self.nside**2
-        mask = np.zeros(self.npix)
-        for i in range(self.base_pix):
-            subset_slice = slice(i * pixel_size, (i + 1) * pixel_size)
-            mask_subset = mask[subset_slice]
-            result_subset = result[subset_slice]
-            mask_subset[result_subset > max_idx] = i + 1  # the unmasked area is 0
+        mask = np.zeros((D, N))
+        # mask[-self.shift_size :] = 1
 
-        # get pixels which were lost in mapping, per base pixel
-        lost_pix = []
-        for i in range(self.base_pix):
-            lost_pix.append(
-                np.setdiff1d(np.arange(i * pixel_size, (i + 1) * pixel_size), result)
-            )
+        # H, W = self.input_resolution
+        # img_mask = torch.zeros((1, D, N, 1))  # 1 H W 1
+        d_slices = (
+            slice(0, -self.window_size_d),
+            slice(-self.window_size_d, -self.shift_size_d),
+            slice(-self.shift_size_d, None),
+        )
+        n_slices = (
+            slice(0, -self.window_size_hp),
+            slice(-self.window_size_hp, -self.shift_size_hp),
+            slice(-self.shift_size_hp, None),
+        )
+        cnt = 0
+        for d in d_slices:
+            for n in n_slices:
+                mask[d, n] = cnt
+                cnt += 1
 
-        # fill in pixel which come from outside domain we use with lost pixels
+        # mask_windows = window_partition(
+        #     img_mask, self.window_size
+        # )  # nW, window_size, window_size, 1
+        # mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        # attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        # attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(
+        #     attn_mask == 0, float(0.0)
+        # )
 
-        # which base pixel to take from
-        GET_LOST_FROM = {4: 7, 5: 4, 6: 5, 7: 6}
-        unused_source_pix = []
-        for i in range(4, self.base_pix):
-            subset_slice = slice(i * pixel_size, (i + 1) * pixel_size)
-            result_subset = result[subset_slice]
-            source_pix = lost_pix[GET_LOST_FROM[i]]
-            pix_to_be_filled = result_subset[result_subset > max_idx]
-            assert (
-                pix_to_be_filled.shape[0] <= source_pix.shape[0]
-            ), f"for base pixel {i}, there were not enough source pixel"
-            result_subset[result_subset > max_idx] = source_pix[
-                : pix_to_be_filled.shape[0]
-            ]
-            unused_source_pix.append(source_pix[pix_to_be_filled.shape[0] :])
-        unused_pix = np.concatenate(unused_source_pix).flatten()
-
-        # fill in the remaining base pixels with the unused pixels
-        assert (
-            unused_pix.shape[0] == (result > max_idx).sum()
-        ), "the number of unused source pixels does not match the number of pixels to be filled"
-        first = 0
-        for i in range(4):
-            subset_slice = slice(i * pixel_size, (i + 1) * pixel_size)
-            result_subset = result[subset_slice]
-            no_to_be_filled = result_subset[result_subset > max_idx].shape[0]
-            result_subset[result_subset > max_idx] = unused_pix[
-                first : first + no_to_be_filled
-            ]
-            first += no_to_be_filled
-
+        # mask = get_attn_mask_from_mask(mask, self.window_size)
         mask = torch.tensor(mask, dtype=torch.int64)
         result = torch.tensor(result, dtype=torch.int64)
 
@@ -435,7 +422,15 @@ class RingShift:
             return mask
 
     def shift(self, x):
-        return x[:, self.shift_idcs, ...].contiguous()
+        return torch.roll(
+            x[:, :, self.shift_idcs, ...].contiguous(),
+            shifts=[-self.window_size_d // 2],
+            dims=[1],
+        )
 
     def shift_back(self, x):
-        return x[:, self.back_shift_idcs, ...].contiguous()
+        return torch.roll(
+            x[:, :, self.back_shift_idcs, ...].contiguous(),
+            shifts=[self.window_size_d // 2],
+            dims=[1],
+        )

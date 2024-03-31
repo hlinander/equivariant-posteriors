@@ -167,7 +167,8 @@ def anomaly_correlation_coefficient_hp(model, dataloader, device_id):
         # )
         # traced_model = torch.jit.freeze(traced_model)
         # print("Model forward...")
-        output = model(batch)
+        with torch.no_grad():
+            output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
         # print("Denorming...")
         out_surface, out_upper = denormalize_sample(
@@ -246,7 +247,8 @@ def rmse_hp(model, dataloader, device_id):
     stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
     for idx, batch in enumerate(dataloader):
         batch = {k: v.to(device_id) for k, v in batch.items()}
-        output = model(batch)
+        with torch.no_grad():
+            output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
         out_surface, out_upper = denormalize_sample(
             stats, output["logits_surface"].double(), output["logits_upper"].double()

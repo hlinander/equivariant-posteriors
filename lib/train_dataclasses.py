@@ -151,6 +151,7 @@ class TrainRun:
     keep_epoch_checkpoints: bool = False
     keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
+    notes: object = None
 
     def serialize_human(self):
         return dict(
@@ -162,6 +163,7 @@ class TrainRun:
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,
             visualize_terminal=self.visualize_terminal,
+            notes=self.notes,
         )
 
 
