@@ -108,7 +108,8 @@ class WindowAttention(nn.Module):
                 torch.zeros(
                     (
                         n_windows,
-                        self.num_heads,
+                        1,
+                        # self.num_heads,
                         window_size_d * window_size_hp,
                         window_size_d * window_size_hp,
                     )
@@ -282,6 +283,7 @@ class SwinTransformerBlock(nn.Module):
                     "base_pix": base_pix,
                     "window_size": self.window_size,
                     "shift_size": self.shift_size,
+                    "input_resolution": self.input_resolution,
                 },
             ),
         }
@@ -399,6 +401,7 @@ class PatchExpand(nn.Module):
         x = self.expand(x)
         B, D, N, C = x.shape
         # breakpoint()
+        # TODO Let's do shifted upsample and combine?
         x = rearrange(x, "b d n (p c)-> b d (n p) c", p=4, c=C // 4)
         x = self.norm(x)
         x = self.linear(x)
