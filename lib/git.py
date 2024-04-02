@@ -1,15 +1,28 @@
 import git
 from pathlib import Path
 
-GIT_REPO = git.Repo(Path(__file__).parent, search_parent_directories=True)
-GIT_ROOT = Path(GIT_REPO.git.rev_parse("--show-toplevel"))
+# git_root = Path(git_repo.git.rev_parse("--show-toplevel"))
+
+
+def is_git_repo():
+    try:
+        git.Repo(Path(__file__).parent, search_parent_directories=True)
+    except git.exc.InvalidGitRepositoryError:
+        return False
+    return True
 
 
 def get_rev_short():
-    sha = GIT_REPO.head.commit.hexsha
-    return GIT_REPO.git.rev_parse(sha, short=7)
+    if not is_git_repo():
+        return "no_git_repo"
+    git_repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
+    sha = git_repo.head.commit.hexsha
+    return git_repo.git.rev_parse(sha, short=7)
 
 
 def get_rev():
-    sha = GIT_REPO.head.commit.hexsha
-    return GIT_REPO.git.rev_parse(sha)
+    if not is_git_repo():
+        return "no_git_repo"
+    git_repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
+    sha = git_repo.head.commit.hexsha
+    return git_repo.git.rev_parse(sha)

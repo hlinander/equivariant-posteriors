@@ -15,6 +15,8 @@ from lib.train import load_or_create_state
 from lib.train import do_training
 from lib.ddp import ddp_setup
 
+from lib.files import prepare_results
+
 
 def main():
     device_id = ddp_setup("gloo")
@@ -71,6 +73,7 @@ def main():
         validate_nth_epoch=5,
     )
     state = load_or_create_state(train_run, device_id)
+    prepare_results("test", train_run.train_config)
     do_training(train_run, state, device_id)
 
 
