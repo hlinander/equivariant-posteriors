@@ -54,6 +54,16 @@ from experiments.weather.metrics import (
     MeteorologicalData,
 )
 
+from experiments.weather.persisted_configs import train_nside_256_ring_full
+from experiments.weather.persisted_configs import (
+    train_nside_256_ring_full_fixed_shift_size,
+)
+from experiments.weather.persisted_configs import train_nside_256_nested_fixed_window
+from experiments.weather.persisted_configs import train_nside64
+from experiments.weather.persisted_configs import (
+    train_nside_256_ring_full_fixed_shift_size,
+)
+
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
 NSIDE = 256
@@ -159,7 +169,9 @@ if __name__ == "__main__":
 
     # register()
 
-    ensemble_config = create_ensemble_config(create_config, 1)
+    ensemble_config = create_ensemble_config(
+        train_nside_256_ring_full_fixed_shift_size.create_config, 1
+    )
     # print("Maybe training...")
     # if not is_ensemble_serialized(ensemble_config):
     #     request_ensemble(ensemble_config)
@@ -209,10 +221,10 @@ if __name__ == "__main__":
     )
     era5_meta = MeteorologicalData()
 
-    for epoch in range(1, 137, 5):
-        continue
-        if epoch < 100:
-            continue
+    for epoch in range(0, 200, 10):
+        # continue
+        # if epoch < 100:
+        # continue
         lock = FileLock(
             get_lock_path(
                 train_config=train_run.train_config, lock_name=f"eval_{epoch}"
@@ -231,7 +243,10 @@ if __name__ == "__main__":
             print(f"[eval] Epoch {epoch}")
             deser_config = DeserializeConfig(
                 train_run=create_ensemble_config(
-                    lambda eid: create_config(eid, epoch), 1
+                    lambda eid: train_nside_256_ring_full_fixed_shift_size.create_config(
+                        eid, epoch
+                    ),
+                    1,
                 ).members[0],
                 device_id=device_id,
             )
@@ -242,12 +257,6 @@ if __name__ == "__main__":
             model.eval()
             print("[eval] rmse")
             rmse_res = rmse_hp(model, dl_rmse, device_id)
-            print("[eval] acc")
-            acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-            save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
-            save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
-            save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
-            save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
 
             with connect_psql() as conn:
                 for var_idx, var_data in enumerate(rmse_res.mean_surface):
@@ -257,6 +266,15 @@ if __name__ == "__main__":
                         f"rmse_surface_{era5_meta.surface.names[var_idx]}",
                         var_data.item(),
                     )
+
+            print("[eval] acc")
+            acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+            save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
+            save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
+            save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
+            save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
+
+            with connect_psql() as conn:
                 for var_idx, var_data in enumerate(acc.acc_surface):
                     add_metric_epoch_values(
                         conn,

@@ -31,6 +31,7 @@ from lib.files import prepare_results
 from lib.serialization import deserialize_model, DeserializeConfig
 
 from lib.data_factory import get_factory as get_dataset_factory
+import experiments.weather.models.swin_hp_pangu as swin_hp_pangu
 
 # from lib.model_factory import get_factory as get_model_factory
 
@@ -52,6 +53,19 @@ from experiments.weather.metrics import (
     anomaly_correlation_coefficient_hp,
     rmse_hp,
     MeteorologicalData,
+)
+
+from experiments.weather.persisted_configs.train_nside_256_ring_shift import (
+    create_config as create_ring_config,
+)
+from experiments.weather.persisted_configs.train_nside_256_ring_full import (
+    create_config as create_ring_config_full,
+)
+from experiments.weather.persisted_configs import (
+    train_nside_256_ring_full_fixed_shift_size,
+)
+from experiments.weather.persisted_configs import (
+    train_nside_256_ring_full,
 )
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
@@ -159,13 +173,15 @@ if __name__ == "__main__":
 
     # register()
 
-    ensemble_config = create_ensemble_config(create_config, 1)
+    ensemble_config = create_ensemble_config(train_nside_256_ring_full.create_config, 1)
     train_run = ensemble_config.members[0]
     result_path = prepare_results(
         # Path(__file__).parent,
         f"{Path(__file__).stem}_{train_run.train_config.model_config.__class__.__name__}_nside_{NSIDE}_lite",
         ensemble_config,
     )
+
+    # global save_and_register
 
     def save_and_register(name, array):
         path = result_path / f"{name}.npy"
@@ -176,6 +192,8 @@ if __name__ == "__main__":
         )
         add_artifact(train_run, name, path)
 
+    swin_hp_pangu.INJECT_SAVE = save_and_register
+
     ds_rmse = DataHP(train_run.train_config.train_data_config.validation())
     dl_rmse = torch.utils.data.DataLoader(
         ds_rmse,
@@ -185,7 +203,8 @@ if __name__ == "__main__":
     )
     deser_config = DeserializeConfig(
         train_run=create_ensemble_config(
-            lambda eid: create_config(eid, 199), 1
+            lambda eid: train_nside_256_ring_full.create_config(eid, 200),
+            1,
         ).members[0],
         device_id=device_id,
     )
@@ -203,11 +222,11 @@ if __name__ == "__main__":
         batch = {k: v.to(device_id) for k, v in batch.items()}
 
         #     start = time.time()
-        output = model(batch)
+        output = model.forward_debug(batch)
         # output = ensemble.members[0](batch)
         #     model_time = time.time()
         #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
-        save_and_register(f"debug_{idx}_surface_out.npy", output["logits_surface"])
+        # save_and_register(f"debug_{idx}_surface_out.npy", output["logits_surface"])
         for layer_idx, (layer_name, out_slice) in enumerate(output["layer_out"]):
             save_and_register(
                 f"debug_epoch_{deser_model.epoch}_layer_{layer_idx:02d}_{layer_name}.npy",
