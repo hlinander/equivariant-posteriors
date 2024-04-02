@@ -26,6 +26,8 @@ from experiments.weather.models.hp_windowing import (
 from experiments.weather.data import DataSpecHP
 from lib.serialize_human import serialize_human
 
+INJECT_SAVE = None
+
 
 class Mlp(nn.Module):
     def __init__(
@@ -306,7 +308,28 @@ class SwinTransformerBlock(nn.Module):
             x = self.norm1(x)
 
         # cyclic shift
+        # breakpoint()
+        # x[0, 0, 0:16, 0] = 15
+        # x[0, 0, (16 * 100) : (16 * 101), 0] = 10
+        # x[0, 0, -16:, 0] = 5
+        # x[0, 0, :, 0] = torch.arange(0, N)
+
+        # if self.shift_size > 0:
+        #     INJECT_SAVE(
+        #         "pre_shift_vis_windows_deep.npy", x[0, 0, ...].detach().permute(1, 0)
+        #     )
+
         shifted_x = self.shifter.shift(x)
+        # debug_shifted_x = shifted_x
+
+        # if self.shift_size > 0:
+        #     # global save_and_register
+        #     INJECT_SAVE(
+        #         "post_shift_vis_windows_deep.npy",
+        #         shifted_x[0, -1, ...].detach().permute(1, 0),
+        #     )
+
+        # breakpoint()
         # shifted_x = x
 
         # partition windows
@@ -322,6 +345,14 @@ class SwinTransformerBlock(nn.Module):
         # reverse cyclic shift
         x = self.shifter.shift_back(shifted_x)
         # x = shifted_x
+        # if self.shift_size > 0:
+        #     inverse_shift = self.shifter.shift_back(debug_shifted_x)
+        #     INJECT_SAVE(
+        #         "inverse_shifted_back_vis.npy",
+        #         inverse_shift[0, 0, ...].detach().permute(1, 0),
+        #     )
+
+        # breakpoint()
 
         # FFN
         if self.use_v2_norm_placement:
@@ -545,7 +576,7 @@ class BasicLayer(nn.Module):
         )
 
     def forward(self, x):
-        for blk in self.blocks:
+        for blk_idx, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x)
             else:
@@ -794,6 +825,45 @@ class SwinHPPangu(nn.Module):
         # x_upper = batch["input_upper"]
         # input = x
         x = self.patch_embed(x_surface, x_upper)
+        # layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
+        # skip2 = x
+        # x = x + self.absolute_pos_embed
+        # x = x.permute(0, 2, 1)
+        x = self.layers[0](x)
+        # layer_out.append(("layer0", x[0, 0].permute(1, 0).detach()))
+        skip = x
+        x = self.downsample(x)
+        # layer_out.append(("downsample", x[0, 0, :, 0].detach()))
+        x = self.layers[1](x)
+        # layer_out.append(("layer1", x[0, 0].permute(1, 0).detach()))
+        x = self.layers[2](x)
+        # layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
+        x = self.norm(x)
+        # # layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
+        # # layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
+        # # layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
+        # # layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
+        x = self.upsample(x)
+        # layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
+        x = self.layers[3](x)
+        # layer_out.append(("layer3", x[0, 0].permute(1, 0).detach()))
+        x = torch.concatenate([skip, x], -1)
+        # layer_out.append(("post_skip", x[0, 0].permute(1, 0).detach()))
+        # breakpoint()
+        # x = torch.concatenate([x, x], -1)
+        x_surface, x_upper = self.final_up(x)
+        # layer_out.append(("final_up_surface", x_surface[0, :, 0].detach()))
+        # layer_out.append(("final_up_upper", x_upper[0, 0, :, 0].detach()))
+        x_surface = x_surface.permute(0, 2, 1)
+        x_upper = x_upper.permute(0, 3, 1, 2)
+        return x_surface, x_upper[:, :, :13, :], layer_out
+
+    def _forward_debug(self, batch_tuple):  # , batch):
+        x_surface, x_upper = batch_tuple  # ["input_surface"]
+        layer_out = []
+        # x_upper = batch["input_upper"]
+        # input = x
+        x = self.patch_embed(x_surface, x_upper)
         layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
         # skip2 = x
         # x = x + self.absolute_pos_embed
@@ -808,10 +878,10 @@ class SwinHPPangu(nn.Module):
         x = self.layers[2](x)
         layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
         x = self.norm(x)
-        layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
-        layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
-        layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
-        layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
+        # layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
+        # layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
+        # layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
+        # layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
         x = self.upsample(x)
         layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
         x = self.layers[3](x)
@@ -840,4 +910,14 @@ class SwinHPPangu(nn.Module):
             (batch["input_surface"], batch["input_upper"])
         )
 
+        return dict(logits_surface=x_surface, logits_upper=x_upper)
+
+    def forward_debug(self, batch):
+        # x = x.permute(0, 2, 1)  # B,C,N
+        # x = self.output(x)
+        x_surface, x_upper, layer_out = self._forward_debug(
+            (batch["input_surface"], batch["input_upper"])
+        )
+
+        # return dict(logits_surface=x_surface, logits_upper=x_upper)
         return dict(logits_surface=x_surface, logits_upper=x_upper, layer_out=layer_out)
