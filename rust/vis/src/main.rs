@@ -1,17 +1,15 @@
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use clap::Parser;
 use eframe::egui;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
 use egui::{epaint, Stroke};
-use egui_plot::{Axis, Legend, PlotPoint, PlotPoints, Points};
+use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
-use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem, ViewRepr};
+use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
-use std::borrow::Cow;
 use std::num::NonZeroU64;
-use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -25,7 +23,7 @@ use std::ops::RangeInclusive;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
 pub mod np;
-use colorous::{CIVIDIS, PLASMA};
+use colorous::PLASMA;
 use ndarray_stats::QuantileExt;
 use np::load_npy_bytes;
 
@@ -79,12 +77,15 @@ struct GuiParams {
     metric_filters: HashSet<String>,
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
-    table_sorting: HashSet<String>,
+    // table_sorting: HashSet<String>,
     time_filter_idx: usize,
     time_filter: Option<chrono::NaiveDateTime>,
     x_axis: XAxis,
     npy_plot_size: f64,
     render_format: wgpu::TextureFormat,
+    param_values: HashMap<String, HashSet<String>>,
+    filtered_values: HashMap<String, HashSet<String>>,
+    next_param_update: std::time::Instant,
 }
 
 impl Default for GuiParams {
@@ -1189,8 +1190,14 @@ impl eframe::App for GuiRuns {
                 )
             })
             .collect();
-        let param_values = get_parameter_values(&self.runs, true);
-        for param_name in param_values.keys() {
+        // let param_values = get_parameter_values(&self.runs, true);
+        if std::time::Instant::now() > self.gui_params.next_param_update {
+            self.gui_params.next_param_update =
+                std::time::Instant::now() + std::time::Duration::from_secs(1);
+            self.gui_params.param_values = get_parameter_values(&self.runs, true);
+            self.gui_params.filtered_values = get_parameter_values(&self.runs, false);
+        }
+        for param_name in self.gui_params.param_values.keys() {
             if !self.gui_params.param_filters.contains_key(param_name) {
                 self.gui_params
                     .param_filters
@@ -1200,7 +1207,7 @@ impl eframe::App for GuiRuns {
         // for run in &filtered_runs {
         //     println!("{:?}", run.1.params.get("epochs"))
         // }
-        let filtered_values = get_parameter_values(&self.runs, false);
+        // let filtered_values = get_parameter_values(&self.runs, false);
         let metric_names: Vec<String> = self
             .runs
             .time_filtered_runs
@@ -1219,7 +1226,12 @@ impl eframe::App for GuiRuns {
             .show(ctx, |ui| {
                 // ui.separator();
                 ui.collapsing("", |ui| {
-                    self.render_parameters(ui, param_values, filtered_values, ctx);
+                    self.render_parameters(
+                        ui,
+                        self.gui_params.param_values.clone(),
+                        self.gui_params.filtered_values.clone(),
+                        ctx,
+                    );
                 });
             });
         egui::SidePanel::right("Metrics")
@@ -2374,7 +2386,7 @@ impl GuiRuns {
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 id,
-                !param_group_name.ends_with("_id"),
+                false, // !param_group_name.ends_with("_id"),
             )
             .show_header(ui, |ui| {
                 if param_group_vec
@@ -3103,7 +3115,7 @@ fn get_parameter_values(
         .map(|run| run.params.keys().cloned())
         .flatten()
         .unique()
-        .map(|param_name| (param_name, HashSet::new()))
+        .map(|param_name| (param_name, HashSet::with_capacity(train_ids.len())))
         .collect();
     for run in train_ids
         .iter()
@@ -3690,9 +3702,12 @@ fn main() -> Result<(), sqlx::Error> {
                     time_filter_idx: 0,
                     x_axis: XAxis::Batch,
                     param_name_filter: "".to_string(),
-                    table_sorting: HashSet::new(),
+                    // table_sorting: HashSet::new(),
                     npy_plot_size: 0.48,
                     render_format: cc.wgpu_render_state.as_ref().unwrap().target_format,
+                    param_values: HashMap::new(),
+                    filtered_values: HashMap::new(),
+                    next_param_update: std::time::Instant::now(),
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
