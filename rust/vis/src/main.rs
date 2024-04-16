@@ -613,6 +613,7 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
 enum ArtifactHandlerType {
     SpatialNPY,
     TabularNPY,
+    SpecedNPY,
     Image,
     Unknown,
 }
@@ -701,6 +702,7 @@ fn handle_add_npy(
                     array_type: match artifact_id.artifact_type {
                         ArtifactType::NPYHealpix => NPYArrayType::HealPix,
                         ArtifactType::NPYDriscollHealy => NPYArrayType::DriscollHealy,
+                        ArtifactType::NPYTabular => NPYArrayType::Tabular,
                         _ => todo!(),
                     },
                 },
@@ -1291,6 +1293,7 @@ enum ArtifactType {
     NPYHealpix,
     NPYDriscollHealy,
     NPYTabular,
+    NPYSpeced,
     Unknown,
 }
 
@@ -1299,6 +1302,7 @@ fn get_artifact_type(path: &String) -> ArtifactType {
         "npy" => ArtifactType::NPYHealpix,
         "npydh" => ArtifactType::NPYDriscollHealy,
         "tabular" => ArtifactType::NPYTabular,
+        "npyspec" => ArtifactType::NPYSpeced,
         "png" => ArtifactType::PngImage,
         _ => ArtifactType::Unknown,
     }
@@ -3278,7 +3282,7 @@ async fn get_state_metrics(
             if query_elapsed_time < 0.5 {
                 chunk_size *= 2;
                 println!("Increased chunks: {}", chunk_size);
-            } else if query_elapsed_time > 2.0 {
+            } else if query_elapsed_time > 2.0 && chunk_size >= 2 {
                 chunk_size /= 2;
                 println!("Decreased chunks: {}", chunk_size);
             }
@@ -3744,6 +3748,7 @@ fn main() -> Result<(), sqlx::Error> {
                         ArtifactHandlerType::SpatialNPY,
                     ),
                     (ArtifactType::NPYTabular, ArtifactHandlerType::TabularNPY),
+                    (ArtifactType::NPYSpeced, ArtifactHandlerType::SpecedNPY),
                     (ArtifactType::PngImage, ArtifactHandlerType::Image), // ("tabular".to_string(), "tabular".to_string()),
                                                                           // ("png".to_string(), "images".to_string()),
                 ]),

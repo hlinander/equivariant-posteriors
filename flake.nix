@@ -185,6 +185,8 @@
       };
 
       pythonPackages = with pkgs.python3Packages; [
+        # pycapnp
+        flatbuffers
         psutil
         jupyter
         healpix
@@ -227,6 +229,7 @@
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
       devinputs = with pkgs; [
+      flatbuffers
           glslang
       shaderc
       gitui
