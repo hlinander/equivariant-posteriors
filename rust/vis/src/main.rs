@@ -29,6 +29,12 @@ use np::load_npy_bytes;
 
 pub mod era5;
 
+static HIDDEN_PARAMS: [&str; 3] = [
+    "train_config.data.config",
+    "train_config.extra.al_config.data_pool_config.subset",
+    "train_config.extra.al_config.ensemble_config",
+];
+
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(default_value = "../../")]
@@ -3386,12 +3392,15 @@ async fn get_state_parameters(
     // println!("[db] in get_state_parameters");
     let run_rows = sqlx::query(
         r#"
-        SELECT * FROM runs ORDER BY train_id
+        SELECT * FROM runs 
+        WHERE variable <> ALL($1) 
+        ORDER BY train_id 
         "#,
     )
+    .bind(HIDDEN_PARAMS)
     .fetch_all(pool)
     .await?;
-    // println!("[db] parameters query done");
+    println!("[db] parameters query done");
     Ok(
         for (train_id, db_params) in &run_rows
             .into_iter()
