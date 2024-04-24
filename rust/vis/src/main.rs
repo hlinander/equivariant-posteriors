@@ -74,12 +74,26 @@ enum XAxis {
     Time,
 }
 
+#[derive(Clone, Debug)]
+struct RunsFilter {
+    filter: HashMap<String, HashSet<String>>,
+    param_name_filter: String,
+}
+
+impl RunsFilter {
+    fn new() -> RunsFilter {
+        Self {
+            filter: HashMap::new(),
+            param_name_filter: "".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct GuiParams {
     n_average: usize,
     max_n: usize,
-    param_filters: HashMap<String, HashSet<String>>,
-    param_name_filter: String,
+    param_filters: Vec<RunsFilter>,
     metric_filters: HashSet<String>,
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
@@ -1018,33 +1032,39 @@ fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams) -> Vec<String> {
     if gui_params
         .param_filters
-        .values()
-        .map(|hs| hs.is_empty())
-        .all(|x| x)
+        .iter()
+        .flat_map(|hs| hs.filter.values())
+        .all(|hs| hs.is_empty())
     {
         return Vec::new();
     }
     runs.iter()
         .filter_map(|run| {
-            for (param_name, values) in gui_params
-                .param_filters
-                .iter()
-                .filter(|(_, vs)| !vs.is_empty())
-            {
-                if let Some(run_value) = run.1.params.get(param_name) {
-                    if !values.contains(run_value) {
-                        return None;
+            for param_filters in &gui_params.param_filters {
+                let mut contains_run = true;
+                for (param_name, values) in
+                    param_filters.filter.iter().filter(|(_, vs)| !vs.is_empty())
+                {
+                    if let Some(run_value) = run.1.params.get(param_name) {
+                        if !values.contains(run_value) {
+                            contains_run = false;
+                            // return None;
+                        }
+                    } else {
+                        contains_run = false;
+                        // return None;
                     }
-                } else {
-                    return None;
+                    // if let Some(time_filter) = gui_params.time_filter {
+                    //     if run.1.created_at < time_filter {
+                    //         return None;
+                    //     }
+                    // }
                 }
-                // if let Some(time_filter) = gui_params.time_filter {
-                //     if run.1.created_at < time_filter {
-                //         return None;
-                //     }
-                // }
+                if contains_run {
+                    return Some(run.0);
+                }
             }
-            Some(run.0)
+            None
         })
         .cloned()
         .collect()
@@ -1205,13 +1225,7 @@ impl eframe::App for GuiRuns {
             self.gui_params.param_values = get_parameter_values(&self.runs, true);
             self.gui_params.filtered_values = get_parameter_values(&self.runs, false);
         }
-        for param_name in self.gui_params.param_values.keys() {
-            if !self.gui_params.param_filters.contains_key(param_name) {
-                self.gui_params
-                    .param_filters
-                    .insert(param_name.clone(), HashSet::new());
-            }
-        }
+        // for param_
         // for run in &filtered_runs {
         //     println!("{:?}", run.1.params.get("epochs"))
         // }
@@ -1233,14 +1247,49 @@ impl eframe::App for GuiRuns {
             .min_width(10.0)
             .show(ctx, |ui| {
                 // ui.separator();
-                ui.collapsing("", |ui| {
-                    self.render_parameters(
-                        ui,
-                        self.gui_params.param_values.clone(),
-                        self.gui_params.filtered_values.clone(),
-                        ctx,
-                    );
-                });
+                // for param_filter in &mut self.gui_params.param_filters {
+                if ui.small_button("+").clicked() {
+                    self.gui_params.param_filters.push(RunsFilter::new());
+                }
+                for param_filter in &mut self.gui_params.param_filters {
+                    for param_name in self.gui_params.param_values.keys() {
+                        if !param_filter.filter.contains_key(param_name) {
+                            param_filter
+                                .filter
+                                .insert(param_name.clone(), HashSet::new());
+                        }
+                    }
+                }
+                let mut temp_param_filters = self.gui_params.param_filters.clone();
+                let mut changed = false;
+                for i in 0..temp_param_filters.len() {
+                    ui.collapsing(format!("filter {}", i), |ui| {
+                        changed |= self.render_parameters(
+                            ui,
+                            self.gui_params.param_values.clone(),
+                            self.gui_params.filtered_values.clone(),
+                            &mut temp_param_filters[i],
+                            ctx,
+                        );
+                    });
+                }
+                self.gui_params.param_filters = temp_param_filters;
+                if changed {
+                    println!("changed!");
+                    self.update_filtered_runs();
+                    for (idx, param_filter) in self.gui_params.param_filters.iter().enumerate() {
+                        println!("filter {}", idx);
+                        for (k, v) in param_filter.filter.iter() {
+                            if !v.is_empty() {
+                                println!("{}: {:?}", k, v);
+                            }
+                        }
+                        // for param_filter.filter
+                    }
+                    self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                    self.gui_params_sender_slot =
+                        Some((self.gui_params.clone(), self.runs.runs.clone()));
+                }
             });
         egui::SidePanel::right("Metrics")
             .resizable(true)
@@ -2274,13 +2323,15 @@ impl GuiRuns {
         ui: &mut egui::Ui,
         param_values: HashMap<String, HashSet<String>>,
         filtered_values: HashMap<String, HashSet<String>>,
+        param_filter: &mut RunsFilter,
         ctx: &egui::Context,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.vertical(|ui| {
                 if ui
                     .add(egui::TextEdit::singleline(
-                        &mut self.gui_params.param_name_filter,
+                        &mut param_filter.param_name_filter,
                     ))
                     .changed()
                 {}
@@ -2308,7 +2359,7 @@ impl GuiRuns {
                 };
                 let param_names = param_values.keys().cloned().collect_vec();
                 for name in param_names.iter().sorted() {
-                    if let Some(values) = self.gui_params.param_filters.get(name) {
+                    if let Some(values) = param_filter.filter.get(name) {
                         if !values.is_empty() {
                             let id = ui.make_persistent_id(format!("{}_currently_filtered", name));
                             egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -2327,11 +2378,12 @@ impl GuiRuns {
                                 }
                             })
                             .body(|ui| {
-                                self.render_parameter_key(
+                                changed |= self.render_parameter_key(
                                     name,
                                     ui,
                                     &param_values,
                                     &filtered_values,
+                                    param_filter,
                                     ctx,
                                 );
                             });
@@ -2339,16 +2391,18 @@ impl GuiRuns {
                     }
                 }
                 ui.separator();
-                self.render_parameters_one_level(
+                changed |= self.render_parameters_one_level(
                     &param_values,
                     param_names,
                     ui,
                     &filtered_values,
+                    param_filter,
                     ctx,
                     0,
                 );
             });
         });
+        changed
     }
 
     fn render_parameters_one_level(
@@ -2357,9 +2411,11 @@ impl GuiRuns {
         param_names: Vec<String>,
         ui: &mut egui::Ui,
         filtered_values: &HashMap<String, HashSet<String>>,
+        param_filter: &mut RunsFilter,
         ctx: &egui::Context,
         depth: usize,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         let groups = param_names //param_values
             .iter()
             // .keys()
@@ -2380,14 +2436,14 @@ impl GuiRuns {
                     // }
                 })
                 .collect_vec();
-            let param_filter = self.gui_params.param_name_filter.as_str();
+            let param_filter_str = param_filter.param_name_filter.as_str();
             if param_group_vec.iter().all(|name| {
                 !param_values
                     .get(name)
                     .unwrap()
                     .iter()
-                    .any(|value_str| value_str.to_lowercase().contains(param_filter))
-                    && !name.contains(param_filter)
+                    .any(|value_str| value_str.to_lowercase().contains(param_filter_str))
+                    && !name.contains(param_filter_str)
             }) {
                 continue;
             }
@@ -2426,11 +2482,12 @@ impl GuiRuns {
                     //     "{:?}: {}",
                     //     param_group_vec, self.gui_params.param_name_filter
                     // );
-                    self.render_parameters_one_level(
+                    changed |= self.render_parameters_one_level(
                         param_values,
                         param_group_vec,
                         ui,
                         filtered_values,
+                        param_filter,
                         ctx,
                         depth + 1,
                     );
@@ -2443,19 +2500,20 @@ impl GuiRuns {
                             .any(|value_str| {
                                 value_str
                                     .to_lowercase()
-                                    .contains(self.gui_params.param_name_filter.as_str())
+                                    .contains(param_filter.param_name_filter.as_str())
                             })
-                            && !param_name.contains(self.gui_params.param_name_filter.as_str())
+                            && !param_name.contains(param_filter.param_name_filter.as_str())
                         {
                             continue;
                         }
                         // ui.
                         // ui.separator();
-                        self.render_parameter_key(
+                        changed |= self.render_parameter_key(
                             param_name,
                             ui,
                             param_values,
                             filtered_values,
+                            param_filter,
                             ctx,
                         );
                     }
@@ -2466,6 +2524,7 @@ impl GuiRuns {
             // .default_open(!param_group_name.ends_with("_id"))
             // .show(ui, |ui| {});
         }
+        changed
     }
 
     fn render_parameter_key(
@@ -2474,14 +2533,16 @@ impl GuiRuns {
         ui: &mut egui::Ui,
         param_values: &HashMap<String, HashSet<String>>,
         filtered_values: &HashMap<String, HashSet<String>>,
+        param_filter: &mut RunsFilter,
         ctx: &egui::Context,
-    ) {
+    ) -> bool {
         let frame_border = if self.gui_params.inspect_params.contains(param_name) {
             1.0
         } else {
             0.0
         };
         // ui.allocate_ui(egui::Vec2::new(0.0, 0.0), |ui| {})
+        let mut changed = false;
         let param_frame = egui::Frame::none()
             // .fill(egui::Color32::GREEN)
             .stroke(egui::Stroke::new(frame_border, egui::Color32::GREEN))
@@ -2510,10 +2571,12 @@ impl GuiRuns {
                         //     }
                         // };
                     }
-                    self.render_parameter_values(
+                    changed = self.render_parameter_values(
                         &param_values,
                         &param_name,
                         &filtered_values,
+                        param_filter,
+                        // param_f
                         ctx,
                         ui,
                     );
@@ -2533,6 +2596,7 @@ impl GuiRuns {
         //             .insert(param_name.to_string());
         //     }
         // }
+        changed
     }
 
     fn render_parameter_values(
@@ -2540,10 +2604,12 @@ impl GuiRuns {
         param_values: &HashMap<String, HashSet<String>>,
         param_name: &str,
         filtered_values: &HashMap<String, HashSet<String>>,
+        param_filter: &mut RunsFilter,
         ctx: &egui::Context,
         ui: &mut egui::Ui,
-    ) {
+    ) -> bool {
         let param_name = param_name.replace("#", ".");
+        let mut changed = false;
         for value in param_values
             .get(&param_name)
             .unwrap()
@@ -2563,9 +2629,8 @@ impl GuiRuns {
                 name1.cmp(name2)
             })
         {
-            let active_filter = self
-                .gui_params
-                .param_filters
+            let active_filter = param_filter
+                .filter
                 .get(&param_name)
                 .unwrap()
                 .contains(value);
@@ -2589,33 +2654,30 @@ impl GuiRuns {
                     output.copied_text = value.clone();
                 });
             } else if button.clicked() {
-                if self
-                    .gui_params
-                    .param_filters
+                if param_filter
+                    .filter
                     .get(&param_name)
                     .unwrap()
                     .contains(value)
                 {
-                    self.gui_params
-                        .param_filters
+                    param_filter
+                        .filter
                         .get_mut(&param_name)
                         .unwrap()
                         .remove(value);
                 } else {
-                    self.gui_params
-                        .param_filters
+                    param_filter
+                        .filter
                         .get_mut(&param_name)
                         .unwrap()
                         .insert(value.clone());
                     dbg!(&param_name, value);
                 }
+                changed = true;
                 // self.dirty = true;
-                self.update_filtered_runs();
-                self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
-                self.gui_params_sender_slot =
-                    Some((self.gui_params.clone(), self.runs.runs.clone()));
             }
         }
+        changed
     }
 
     fn render_table(
@@ -3706,7 +3768,7 @@ fn main() -> Result<(), sqlx::Error> {
                 data_status: DataStatus::Waiting,
                 gui_params: GuiParams {
                     max_n: 1000,
-                    param_filters: HashMap::new(),
+                    param_filters: Vec::new(),
                     metric_filters: HashSet::new(),
                     inspect_params: HashSet::new(),
                     n_average: 0,
@@ -3714,7 +3776,7 @@ fn main() -> Result<(), sqlx::Error> {
                     time_filter: None,
                     time_filter_idx: 0,
                     x_axis: XAxis::Batch,
-                    param_name_filter: "".to_string(),
+                    // param_name_filter: "".to_string(),
                     // table_sorting: HashSet::new(),
                     npy_plot_size: 0.48,
                     render_format: cc.wgpu_render_state.as_ref().unwrap().target_format,
