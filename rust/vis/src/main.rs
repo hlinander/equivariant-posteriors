@@ -62,9 +62,9 @@ struct Run {
 #[derive(Default, Debug, Clone)]
 struct Runs {
     runs: HashMap<String, Run>,
-    active_runs: Vec<String>, // filtered_runs: HashMap<String, Run>,
+    active_runs: Vec<String>,
     active_runs_time_ordered: Vec<(String, chrono::NaiveDateTime)>,
-    time_filtered_runs: Vec<String>,
+    runs_time_ordered: Vec<(String, chrono::NaiveDateTime)>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -78,6 +78,8 @@ enum XAxis {
 struct RunsFilter {
     filter: HashMap<String, HashSet<String>>,
     param_name_filter: String,
+    time_filter_idx: usize,
+    time_filter: Option<chrono::NaiveDateTime>,
 }
 
 impl RunsFilter {
@@ -85,6 +87,8 @@ impl RunsFilter {
         Self {
             filter: HashMap::new(),
             param_name_filter: "".to_string(),
+            time_filter_idx: 0,
+            time_filter: None,
         }
     }
 }
@@ -98,8 +102,6 @@ struct GuiParams {
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
     // table_sorting: HashSet<String>,
-    time_filter_idx: usize,
-    time_filter: Option<chrono::NaiveDateTime>,
     x_axis: XAxis,
     npy_plot_size: f64,
     render_format: wgpu::TextureFormat,
@@ -1042,16 +1044,24 @@ fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams
         .filter_map(|run| {
             for param_filters in &gui_params.param_filters {
                 let mut contains_run = true;
+                if let Some(time_filter) = param_filters.time_filter {
+                    if run.1.created_at < time_filter {
+                        contains_run = false;
+                    }
+                }
+
                 for (param_name, values) in
                     param_filters.filter.iter().filter(|(_, vs)| !vs.is_empty())
                 {
                     if let Some(run_value) = run.1.params.get(param_name) {
                         if !values.contains(run_value) {
                             contains_run = false;
+                            break;
                             // return None;
                         }
                     } else {
                         contains_run = false;
+                        break;
                         // return None;
                     }
                     // if let Some(time_filter) = gui_params.time_filter {
@@ -1232,7 +1242,7 @@ impl eframe::App for GuiRuns {
         // let filtered_values = get_parameter_values(&self.runs, false);
         let metric_names: Vec<String> = self
             .runs
-            .time_filtered_runs
+            .active_runs
             .iter()
             .map(|train_id| self.runs.runs.get(train_id).unwrap())
             .map(|run| run.metrics.keys().cloned())
@@ -1264,6 +1274,7 @@ impl eframe::App for GuiRuns {
                 let mut changed = false;
                 for i in 0..temp_param_filters.len() {
                     ui.collapsing(format!("filter {}", i), |ui| {
+                        self.render_time_selector(ui, &mut temp_param_filters[i]);
                         changed |= self.render_parameters(
                             ui,
                             self.gui_params.param_values.clone(),
@@ -1286,7 +1297,7 @@ impl eframe::App for GuiRuns {
                         }
                         // for param_filter.filter
                     }
-                    self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                    self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
                     self.gui_params_sender_slot =
                         Some((self.gui_params.clone(), self.runs.runs.clone()));
                 }
@@ -1309,7 +1320,7 @@ impl eframe::App for GuiRuns {
                     if ui.button("Batch").clicked() {
                         self.gui_params.x_axis = XAxis::Batch;
                     }
-                    self.render_time_selector(ui);
+                    // self.render_time_selector(ui);
                     while let Ok(batch_status) = self.rx_batch_status.try_recv() {
                         self.batch_status = batch_status;
                     }
@@ -2687,7 +2698,7 @@ impl GuiRuns {
     ) {
         let param_keys = self
             .runs
-            .time_filtered_runs
+            .active_runs
             .iter()
             .flat_map(|run_id| self.runs.runs.get(run_id).unwrap().params.keys())
             .unique()
@@ -2721,7 +2732,7 @@ impl GuiRuns {
                     }
                 })
                 .body(|mut table| {
-                    for run_id in &self.runs.time_filtered_runs {
+                    for run_id in &self.runs.active_runs {
                         let run = self.runs.runs.get(run_id).unwrap();
                         let mut clipboard = None;
                         table.row(20.0, |mut row| {
@@ -2890,12 +2901,8 @@ impl GuiRuns {
                         ui.label(&metric_name);
                         plot.show(ui, |plot_ui| {
                             if self.gui_params.n_average > 1 {
-                                for (run_id, run) in self
-                                    .runs
-                                    .time_filtered_runs
-                                    .iter()
-                                    .sorted()
-                                    .map(|train_id| {
+                                for (run_id, run) in
+                                    self.runs.active_runs.iter().sorted().map(|train_id| {
                                         (train_id, self.runs.runs.get(train_id).unwrap())
                                     })
                                 {
@@ -2924,12 +2931,10 @@ impl GuiRuns {
                                     }
                                 }
                             }
-                            for (run_id, run) in self
-                                .runs
-                                .time_filtered_runs
-                                .iter()
-                                .sorted()
-                                .map(|train_id| (train_id, self.runs.runs.get(train_id).unwrap()))
+                            for (run_id, run) in
+                                self.runs.active_runs.iter().sorted().map(|train_id| {
+                                    (train_id, self.runs.runs.get(train_id).unwrap())
+                                })
                             {
                                 if let Some(metric) = run.metrics.get(&metric_name) {
                                     let label =
@@ -2984,8 +2989,7 @@ impl GuiRuns {
                             }
                             // self.dirty = true;
                             self.update_filtered_runs();
-                            self.db_train_runs_sender_slot =
-                                Some(self.runs.time_filtered_runs.clone());
+                            self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
                             self.gui_params_sender_slot =
                                 Some((self.gui_params.clone(), self.runs.runs.clone()));
                         }
@@ -3003,7 +3007,7 @@ impl GuiRuns {
                     ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                     for artifact_name in self
                         .runs
-                        .time_filtered_runs
+                        .active_runs
                         // .active_runs
                         .iter()
                         .map(|train_id| self.runs.runs.get(train_id).unwrap().artifacts.keys())
@@ -3043,7 +3047,7 @@ impl GuiRuns {
             .iter()
             .map(|artifact_name| {
                 self.runs
-                    .time_filtered_runs
+                    .active_runs
                     .iter()
                     .map(|train_id| (train_id, self.runs.runs.get(train_id).unwrap()))
                     .filter_map(|(_train_id, run)| {
@@ -3078,7 +3082,7 @@ impl GuiRuns {
             ) {
                 for (run_id, run) in self
                     .runs
-                    .time_filtered_runs
+                    .active_runs
                     .iter()
                     .map(|run_id| (run_id, self.runs.runs.get(run_id).unwrap()))
                 {
@@ -3105,7 +3109,7 @@ impl GuiRuns {
                     handler,
                     &mut self.gui_params,
                     &self.runs.runs,
-                    &self.runs.time_filtered_runs,
+                    &self.runs.active_runs,
                     &run_ensemble_color,
                 );
             }
@@ -3113,26 +3117,26 @@ impl GuiRuns {
         }
     }
 
-    fn render_time_selector(&mut self, ui: &mut egui::Ui) {
-        if self.runs.active_runs.len() > 1 {
-            ui.group(|ui| {
-                ui.spacing_mut().slider_width = ui.available_width() - 300.0;
+    fn render_time_selector(&mut self, ui: &mut egui::Ui, param_filter: &mut RunsFilter) {
+        if self.runs.runs_time_ordered.len() > 1 {
+            ui.vertical(|ui| {
+                // ui.spacing_mut().slider_width = ui.available_width(); // - 300.0;
                 ui.label("Cut-off time");
                 let time_slider = egui::Slider::new(
-                    &mut self.gui_params.time_filter_idx,
-                    0..=self.runs.active_runs.len() - 1,
+                    &mut param_filter.time_filter_idx,
+                    0..=self.runs.runs.len() - 1,
                 )
                 .custom_formatter(|fval, _| {
                     let idx = fval as usize;
-                    let created_at = self.runs.active_runs_time_ordered[idx].1;
+                    let created_at = self.runs.runs_time_ordered[idx].1;
                     created_at.to_string()
                 });
                 if ui.add(time_slider).changed() {
                     // self.dirty = true;
-                    self.gui_params.time_filter =
-                        Some(self.runs.active_runs_time_ordered[self.gui_params.time_filter_idx].1);
+                    param_filter.time_filter =
+                        Some(self.runs.runs_time_ordered[param_filter.time_filter_idx].1);
                     self.update_filtered_runs();
-                    self.db_train_runs_sender_slot = Some(self.runs.time_filtered_runs.clone());
+                    self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
                     self.gui_params_sender_slot =
                         Some((self.gui_params.clone(), self.runs.runs.clone()));
                 }
@@ -3155,19 +3159,12 @@ impl GuiRuns {
             })
             .sorted_by_key(|(_train_id, created_at)| *created_at)
             .collect();
-        self.runs.time_filtered_runs = self
+        self.runs.runs_time_ordered = self
             .runs
-            .active_runs_time_ordered
+            .runs
             .iter()
-            .cloned()
-            .filter(|(_train_id, created_at)| {
-                if let Some(time_filter) = self.gui_params.time_filter {
-                    *created_at >= time_filter
-                } else {
-                    true
-                }
-            })
-            .map(|(train_id, _)| train_id)
+            .map(|(run_id, run)| (run_id.clone(), run.created_at))
+            .sorted_by_key(|(_train_id, created_at)| *created_at)
             .collect();
     }
 }
@@ -3773,8 +3770,8 @@ fn main() -> Result<(), sqlx::Error> {
                     inspect_params: HashSet::new(),
                     n_average: 0,
                     artifact_filters: HashSet::new(),
-                    time_filter: None,
-                    time_filter_idx: 0,
+                    // time_filter: None,
+                    // time_filter_idx: 0,
                     x_axis: XAxis::Batch,
                     // param_name_filter: "".to_string(),
                     // table_sorting: HashSet::new(),
