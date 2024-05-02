@@ -63,6 +63,7 @@ from experiments.weather.persisted_configs import train_nside64
 from experiments.weather.persisted_configs import (
     train_nside_256_ring_full_fixed_shift_size,
 )
+from experiments.weather.persisted_configs import eval_fullchannel
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
@@ -169,9 +170,10 @@ if __name__ == "__main__":
 
     # register()
 
-    ensemble_config = create_ensemble_config(
-        train_nside_256_ring_full_fixed_shift_size.create_config, 1
-    )
+    ensemble_config = create_ensemble_config(eval_fullchannel.create_config, 1)
+    # ensemble_config = create_ensemble_config(
+    # train_nside_256_ring_full_fixed_shift_size.create_config, 1
+    # )
     # print("Maybe training...")
     # if not is_ensemble_serialized(ensemble_config):
     #     request_ensemble(ensemble_config)
@@ -243,9 +245,7 @@ if __name__ == "__main__":
             print(f"[eval] Epoch {epoch}")
             deser_config = DeserializeConfig(
                 train_run=create_ensemble_config(
-                    lambda eid: train_nside_256_ring_full_fixed_shift_size.create_config(
-                        eid, epoch
-                    ),
+                    lambda eid: eval_fullchannel.create_config(eid, epoch),
                     1,
                 ).members[0],
                 device_id=device_id,

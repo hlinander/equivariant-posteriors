@@ -37,3 +37,4 @@ class ComputeEnvironment:
     paths: Paths = field(default_factory=lambda: Paths())
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    postgres_password: str = "postgres"

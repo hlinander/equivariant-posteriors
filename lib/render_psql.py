@@ -35,6 +35,7 @@ def dict_to_normalized_json(input_dict):
 def setup_psql():
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
+    pw = env().postgres_password
     # if "EP_POSTGRES" in os.environ:
     #     hostname = os.environ.get("EP_POSTGRES")
     #     # print(f"PSQL: {hostname}")
@@ -45,7 +46,7 @@ def setup_psql():
     #         pass
     print(f"[db] Connection to {hostname}:{port}")
     with psycopg.connect(
-        "dbname=postgres user=postgres password=postgres",
+        f"dbname=postgres user=postgres password={pw}",
         host=hostname,
         port=port,
         autocommit=True,
@@ -60,7 +61,7 @@ def setup_psql():
             pass
 
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={pw}",
         host=hostname,
         port=port,
         autocommit=True,
@@ -248,7 +249,8 @@ def get_url():
     # port = int(os.getenv("EP_POSTGRES_PORT", env().postgres_port))
     hostname = env().postgres_host
     port = env().postgres_port
-    return f"postgresql://postgres:postgres@{hostname}:{port}/equiv"
+    pw = env().postgres_password
+    return f"postgresql://postgres:{pw}@{hostname}:{port}/equiv"
 
 
 def _render_psql(
@@ -272,7 +274,7 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
 
     train_epoch_state.timing_metric.start("psql_connection")
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,
@@ -460,7 +462,7 @@ def add_parameter(train_run: TrainRun, name: str, value: str):
     train_run_dict = train_run.serialize_human()
 
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,
@@ -475,7 +477,7 @@ def add_parameter(train_run: TrainRun, name: str, value: str):
 
 def connect_psql():
     return psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,
@@ -513,7 +515,7 @@ def _add_artifact(train_id: str, ensemble_id: str, name: str, path: Path):
     )
 
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,
@@ -579,7 +581,7 @@ def has_artifact(train_run: TrainRun, name: str):
 
     train_run_dict = train_run.serialize_human()
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,
@@ -604,7 +606,7 @@ def get_parameter(train_run: TrainRun, name: str):
 
     train_run_dict = train_run.serialize_human()
     with psycopg.connect(
-        "dbname=equiv user=postgres password=postgres",
+        f"dbname=equiv user=postgres password={env().postgres_password}",
         host=env().postgres_host,
         port=int(env().postgres_port),
         autocommit=False,

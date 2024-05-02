@@ -4,6 +4,13 @@ from pathlib import Path
 # git_root = Path(git_repo.git.rev_parse("--show-toplevel"))
 
 
+def git_repo():
+    try:
+        return git.Repo(Path(__file__).parent, search_parent_directories=True)
+    except git.exc.InvalidGitRepositoryError:
+        return None
+
+
 def is_git_repo():
     try:
         git.Repo(Path(__file__).parent, search_parent_directories=True)
