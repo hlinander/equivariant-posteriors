@@ -1,0 +1,19 @@
+// namespace EP;
+
+table Component {
+	name: string;
+	unit: string;
+}
+
+table Dimension {
+	components: [Component];
+}
+
+table NPY {
+	dims: [Dimension];
+	data: [byte];
+}
+
+root_type NPY;
+
+
