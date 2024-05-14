@@ -3399,6 +3399,30 @@ async fn get_state_metrics(
     }
     Ok(())
 }
+async fn get_last_runs_log(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    // runs: &mut HashMap<String, Run>,
+    // tx_runs: Option<&SyncSender<HashMap<String, Run>>>,
+) -> Result<(), sqlx::Error> {
+    // let mut new_epoch_timestamp = last_timestamp.clone();
+    let q = format!(
+        r#"
+SELECT train_id,
+       CURRENT_TIMESTAMP - MAX(created_at) AS time_since_last
+FROM (
+    SELECT train_id, created_at
+    FROM metrics
+    ORDER BY created_at DESC limit 100
+) AS sorted_table
+GROUP BY train_id limit 10;
+        "#,
+    );
+    let runs_with_time_rows = sqlx::query(q.as_str())
+        // .bind(offset)
+        .fetch_all(pool)
+        .await?;
+    Ok(())
+}
 
 async fn get_state_epoch_metrics(
     train_ids: &Vec<String>,
