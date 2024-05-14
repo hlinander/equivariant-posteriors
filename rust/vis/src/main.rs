@@ -811,8 +811,9 @@ fn image_from_ndarray_healpix(
     }
     // Visualize the borders of the windows (window_size = 16 => nside_window = nside / sqrt(16))
     if view.visualize_grid {
-        let vis_depth =
-            cdshealpix::depth(nside / (2_u32.pow(view.nside_div as u32)).clamp(1, nside));
+        // let vis_depth =
+        // cdshealpix::depth(nside / (2_u32.pow(view.nside_div as u32)).clamp(1, nside));
+        let vis_depth = cdshealpix::depth(2_u32.pow(view.nside_div as u32) as u32);
         let n_vis_pixels = cdshealpix::n_hash(vis_depth);
         for pixel_hash in 0..n_vis_pixels {
             let lonlats = cdshealpix::nested::path_along_cell_edge(
@@ -828,13 +829,13 @@ fn image_from_ndarray_healpix(
                 let xu = (x as usize).clamp(0, width - 1);
                 let yu = (y as usize).clamp(0, height - 1);
                 // println!("{}, {}", xu, yu);
-                // for xu in xu - 1..=xu + 1 {
-                // for yu in yu - 1..=yu + 1 {
-                let xu = xu.clamp(0, width - 1);
-                let yu = yu.clamp(0, height - 1);
-                img.pixels[yu * width + xu] = egui::Color32::from_rgb(0, 255, 0);
-                // }
-                // }
+                for xu in xu - 1..=xu + 1 {
+                    for yu in yu - 1..=yu + 1 {
+                        let xu = xu.clamp(0, width - 1);
+                        let yu = yu.clamp(0, height - 1);
+                        img.pixels[yu * width + xu] = egui::Color32::from_rgb(0, 255, 0);
+                    }
+                }
             }
         }
     }
@@ -1414,7 +1415,7 @@ fn show_artifacts(
             hover_lat,
         } => {
             // let texture = texture.get_or_insert_with(|| {});
-            let to_remove = Vec::new();
+            let mut to_remove = Vec::new();
             let npy_axis_id = ui.id().with("npy_axis");
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
             // let mut to_be_reloaded = None;
@@ -1449,12 +1450,12 @@ fn show_artifacts(
                                 ui.end_row();
                                 // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                 for (artifact_id, array) in array_group {
-                                    // ui.end_row();
-                                    // if ui.button("reload").clicked() {
-                                    // to_remove.push(artifact_id.clone());
-                                    // }
-                                    // ui.end_row();
-                                    // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                    ui.end_row();
+                                    if ui.button("reload").clicked() {
+                                        to_remove.push(artifact_id.clone());
+                                    }
+                                    ui.end_row();
+                                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                                     match &array.array {
                                         NPYArray::Loading(binary_artifact) => {
                                             render_artifact_download_progress(&binary_artifact, ui);
@@ -1797,7 +1798,10 @@ fn render_npy_artifact_hp(
             ui.spacing_mut().slider_width = 300.0; // ui.available_width() - 300.0;
             ui.checkbox(&mut view.visualize_grid, "Show grid");
             if view.visualize_grid {
-                ui.add(egui::Slider::new(&mut view.nside_div, 1..=16));
+                ui.add(
+                    egui::Slider::new(&mut view.nside_div, 0..=16)
+                        .custom_formatter(|index_f, _| format!("{}", 2_u32.pow(index_f as u32))),
+                );
             }
             ui.add(
                 egui::Slider::new(&mut view.index[dim_idx], 0..=(dim - 1)).custom_formatter(
