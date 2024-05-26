@@ -258,7 +258,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
     )
     train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=False, num_workers=10),
+        compute_config=ComputeConfig(),
         train_config=train_config,
         train_eval=train_eval,
         epochs=200,
