@@ -43,7 +43,7 @@ from experiments.weather.data import DataHPConfig
 NSIDE = 256
 
 
-def create_config(ensemble_id):
+def create_config(ensemble_id, epoch=300):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):
@@ -82,7 +82,7 @@ def create_config(ensemble_id):
         # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=250,
+        epochs=epoch,
         save_nth_epoch=1,
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=10,

@@ -43,7 +43,7 @@ from experiments.weather.data import DataHPConfig
 NSIDE = 256
 
 
-def create_config(ensemble_id):
+def create_config(ensemble_id, epoch):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):
@@ -78,11 +78,11 @@ def create_config(ensemble_id):
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
-        compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),
-        # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
+        # compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=2),
+        compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=250,
+        epochs=epoch,
         save_nth_epoch=1,
         validate_nth_epoch=20,
         visualize_terminal=False,
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     # register()
 
-    ensemble_config = create_ensemble_config(create_config, 1)
+    ensemble_config = create_ensemble_config(lambda eid: create_config(eid, 250), 1)
     if not is_ensemble_serialized(ensemble_config):
         request_ensemble(ensemble_config)
         distributed_train(ensemble_config.members)

@@ -57,6 +57,9 @@ from experiments.weather.metrics import (
     dh_numpy_to_xr_surface_hp,
 )
 
+# from experiments.weather.persisted_configs import train_pangu_nside256
+import experiments.weather.train_pangu_nside256 as train_pangu_nside256
+
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
 NSIDE = 256
@@ -134,7 +137,9 @@ if __name__ == "__main__":
 
     # register()
 
-    ensemble_config = create_ensemble_config(create_config, 1)
+    ensemble_config = create_ensemble_config(
+        lambda eid: train_pangu_nside256.create_config(eid, 250), 1
+    )
     train_run = ensemble_config.members[0]
     result_path = prepare_results(
         # Path(__file__).parent,
@@ -168,7 +173,7 @@ if __name__ == "__main__":
         drop_last=False,
     )
     # torch.cuda.memory._record_memory_history(stacks="python")
-    for epoch in range(1, 137, 5):
+    for epoch in range(120, 220, 10):
         lock = FileLock(
             get_lock_path(
                 train_config=train_run.train_config, lock_name=f"eval_{epoch}"
@@ -186,7 +191,7 @@ if __name__ == "__main__":
                 continue
             deser_config = DeserializeConfig(
                 train_run=create_ensemble_config(
-                    lambda eid: create_config(eid, epoch), 1
+                    lambda eid: train_pangu_nside256.create_config(eid, epoch), 1
                 ).members[0],
                 device_id=device_id,
             )
