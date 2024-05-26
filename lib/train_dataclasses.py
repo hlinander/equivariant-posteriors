@@ -130,9 +130,22 @@ def is_distributed():
     return get_num_gpus() > 1
 
 
+def get_num_workers():
+    if os.getenv("EP_DEBUG") is not None:
+        return 0
+    elif cpus_on_node := os.getenv("SLURM_CPUS_ON_NODE") is not None:
+        try:
+            return int(cpus_on_node)
+        except ValueError:
+            print(
+                f"SLURM_CPUS_ON_NODE exists but can't do integer conversion ({cpus_on_node})"
+            )
+    return os.cpu_count()
+
+
 @dataclass
 class ComputeConfig:
-    num_workers: int
+    num_workers: int = field(default_factory=get_num_workers)
     distributed: bool = field(default_factory=is_distributed)
     num_gpus: int = field(default_factory=get_num_gpus)
 

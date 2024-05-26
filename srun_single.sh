@@ -7,6 +7,7 @@ mkdir -p slurm_tmp
 mkdir -p slurm_log
 cat <<EOM >$SCRIPT_FILE
 #!/bin/bash
+export SINGULARITYENV_CUDA_VISIBLE_DEVICES=\$CUDA_VISIBLE_DEVICES
 singularity exec --nv --cleanenv --no-home --env COLUMNS=200 --env LINES=60 --env SLURM_ARRAY_TASK_ID=\$SLURM_ARRAY_TASK_ID --env PYTHONNOUSERSITE=1 $ENTVAR/equivariant-posteriors/image.img sh $@ 
 EOM
 
