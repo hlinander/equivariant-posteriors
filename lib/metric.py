@@ -92,8 +92,8 @@ class Metric:
 
 
 def detach_tensors(output, batch):
-    output = {k: v.detach() for k, v in output.items()}
-    batch = {k: v.detach() for k, v in batch.items()}
+    output = {k: v.detach() for k, v in output.items() if torch.is_tensor(v)}
+    batch = {k: v.detach() for k, v in batch.items() if torch.is_tensor(v)}
     return dict(output=output, batch=batch)
 
 

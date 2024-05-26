@@ -450,6 +450,18 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
     # print(f"Updated psql {time.time() - start_time}s")
 
 
+def add_train_run(train_run):
+    with psycopg.connect(
+        f"dbname=equiv user=postgres password={env().postgres_password}",
+        host=env().postgres_host,
+        port=int(env().postgres_port),
+        autocommit=False,
+        prepare_threshold=None,
+    ) as conn:
+        insert_or_update_train_run(conn, train_run)
+        conn.commit()
+
+
 def add_parameter(train_run: TrainRun, name: str, value: str):
     # train_run_dict = train_run.serialize_human()
     try:
