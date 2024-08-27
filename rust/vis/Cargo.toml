@@ -24,8 +24,8 @@ eframe = { version = "0.26.2", features = ["wgpu",
 ], default-features = false}
 winit = { version = "*", features = ["default"]}
 egui = "0.26.2"
-egui_extras = {version="*", features=["all_loaders"]}
-egui_plot = "*"
+egui_extras = {version="0.26.2", features=["all_loaders"]}
+egui_plot = "0.26.2"
 flamegraph = "0.6.4"
 image = {version="*", features=["png"]}
 itertools = "0.12.0"
@@ -39,6 +39,12 @@ tokio = { version = "1.34.0", features = ["rt", "macros"]}
 glsl-layout = "0.5.0"
 capnp = "0.19.3"
 flatbuffers = "23.5.26"
+# duckdb = { version="0.10.2", features=["polars"] }
+duckdb = {git = "https://github.com/duckdb/duckdb-rs", features=["polars", "r2d2"]}
+r2d2 = "0.8.9"
+# r2d2-duckdb = "0.1.0"
+# r2d2 = "0.8.10"
+polars = {version="0.35.4", features=["lazy", "rolling_window", "polars-io", "json"]}
 
 # profiling = {version = "*", features=["profile-with-tracy"]}
 # console-subscriber = "0.2.0"

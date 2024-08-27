@@ -14,4 +14,7 @@ host    all             all             0.0.0.0/0               md5
 host    all             all             ::1/128                 md5
 host    replication     postgres        ::1/128                 md5
 EOM
+if ! grep -q timescaledb $PG_PATH/postgresql.conf; then
+  echo "shared_preload_libraries = 'timescaledb'" >> $PG_PATH/postgresql.conf  
+fi
 $(readlink -f $(which postgres)) -D $PG_PATH -k $PG_PATH -i
