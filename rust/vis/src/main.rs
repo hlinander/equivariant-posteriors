@@ -1,16 +1,24 @@
 use chrono::NaiveDateTime;
 use clap::Parser;
+use duckdb::arrow2::legacy::utils::CustomIterTools;
+use duckdb::polars::frame::DataFrame;
 use eframe::egui;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
-use egui::{epaint, Stroke};
+use egui::{epaint, Stroke, TextBuffer};
 use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
+use polars::lazy::dsl::{col, lit};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
+use std::borrow::{Borrow, BorrowMut};
+use std::error::Error;
+use std::fs::File;
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use wgpu::util::DeviceExt;
@@ -21,6 +29,14 @@ use std::collections::HashSet;
 use std::env;
 use std::ops::RangeInclusive;
 use std::sync::mpsc::{self, Receiver, SyncSender};
+
+use duckdb::polars::prelude::*;
+use duckdb::{params, Connection, Polars, Result};
+use duckdb::{polars, DuckdbConnectionManager};
+// duckdb::polars::co
+use r2d2::{ManageConnection, Pool};
+// use polars::prelude::DataFrame;
+// use r2d2_duckdb::DuckDBConnectionManager;
 
 pub mod np;
 use colorous::PLASMA;
@@ -50,6 +66,12 @@ struct Metric {
     last_value: chrono::NaiveDateTime,
 }
 
+struct Run2 {
+    params: DataFrame,
+    metrics: DataFrame,
+    artifacts: HashMap<String, ArtifactId>,
+}
+
 #[derive(Default, Debug, Clone)]
 struct Run {
     params: HashMap<String, String>,
@@ -57,6 +79,21 @@ struct Run {
     metrics: HashMap<String, Metric>,
     created_at: chrono::NaiveDateTime,
     // last_update:
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct PlotMapKey {
+    train_id: String,
+    variable: String,
+    xaxis: String,
+}
+
+struct Runs2 {
+    runs: DataFrame,
+    metrics: Option<DataFrame>,
+    run_params: HashMap<(String, String), String>,
+    plot_map: HashMap<PlotMapKey, Vec<[f64; 2]>>,
+    active_runs: Vec<String>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -74,7 +111,7 @@ enum XAxis {
     Time,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct RunsFilter {
     filter: HashMap<String, HashSet<String>>,
     param_name_filter: String,
@@ -872,7 +909,6 @@ fn sample_hp_array(
     let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
     let ndim = local_index.len();
     local_index[ndim - 1] = hp_idx as usize;
-    // println!("{:?}", local_index);
     let v = *array.get(local_index.as_slice()).unwrap() as f32;
     v
 }
@@ -951,7 +987,6 @@ fn image_from_ndarray_driscoll_healy(
             // let depth = cdshealpix::depth(nside);
             // let hp_idx = cdshealpix::nested::hash(depth, lon, lat);
             // if hp_idx < cdshealpix::n_hash(depth) {
-            // println!("nside {}, depth {}, idx {}", nside, depth, hp_idx);
             // dbg!(array.shape());
             local_index[ndim - 1] = lon_idx;
             local_index[ndim - 2] = lat_idx;
@@ -1009,16 +1044,22 @@ fn min_max_driscoll_healy(
     (*min, *max)
 }
 struct GuiRuns {
+    duckdb: r2d2::Pool<DuckdbConnectionManager>,
     runs: Runs,
+    runs2: Runs2,
+    plot_timer: Instant,
+    rx_plot_map: Receiver<HashMap<PlotMapKey, Vec<[f64; 2]>>>,
+    tx_active_runs: SyncSender<Vec<String>>,
     // dirty: bool,
     db_train_runs_sender: SyncSender<Vec<String>>,
     db_train_runs_sender_slot: Option<Vec<String>>,
     gui_params_sender: SyncSender<(GuiParams, HashMap<String, Run>)>,
     gui_params_sender_slot: Option<(GuiParams, HashMap<String, Run>)>,
     db_reciever: Receiver<HashMap<String, Run>>,
-    recomputed_reciever: Receiver<HashMap<String, Run>>,
+    // recomputed_reciever: Receiver<HashMap<String, Run>>,
     tx_db_artifact_path: Arc<Mutex<SyncSender<i32>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
+    rx_run_params: Receiver<HashMap<(String, String), String>>,
     rx_batch_status: Receiver<(usize, usize)>,
     batch_status: (usize, usize),
     initialized: bool,
@@ -1032,6 +1073,48 @@ struct GuiRuns {
 
 fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
     resample(runs, gui_params);
+}
+
+fn get_train_ids_from_filter_duck(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+    runs: &DataFrame,
+    gui_params: &GuiParams,
+) -> Vec<String> {
+    let duck = pool.get().unwrap();
+
+    let mut train_ids = Vec::new();
+    for param_filter in &gui_params.param_filters {
+        let non_empty_filters = param_filter
+            .filter
+            .iter()
+            .filter(|(_, vs)| !vs.is_empty())
+            .collect_vec();
+        let sql_where = non_empty_filters
+            .iter()
+            .map(|(param_name, values)| {
+                let ored_values = values
+                    .iter()
+                    .map(|value| format!("(variable='{}' AND value_text='{}')", param_name, value))
+                    .join(" OR ");
+                format!("({})", ored_values)
+            })
+            .join(" OR ");
+        let n_filters = non_empty_filters.len();
+        if n_filters == 0 {
+            continue;
+        }
+        let sql = format!(
+            "SELECT train_id FROM local.runs WHERE {sql_where} GROUP BY train_id HAVING COUNT(*)={n_filters}"
+        );
+        let mut stmt = duck.prepare(&sql).unwrap();
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        train_ids.extend_from_slice(&ids);
+    }
+    train_ids.into_iter().unique().collect()
 }
 
 fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams) -> Vec<String> {
@@ -1158,6 +1241,8 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 
 impl eframe::App for GuiRuns {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let t_update = Instant::now();
+
         if !self.initialized {
             ctx.set_zoom_factor(1.0);
         }
@@ -1179,17 +1264,27 @@ impl eframe::App for GuiRuns {
                 self.db_train_runs_sender_slot = Some(db_train_runs_package);
             }
         }
-        while let Ok(new_runs) = self.recomputed_reciever.try_recv() {
-            self.runs.runs = new_runs;
-            if self.runs.runs.len() > 0 && self.data_status == DataStatus::FirstDataArrived {
-                self.data_status = DataStatus::FirstDataProcessed;
-            }
+        // let t = Instant::now();
+        if Instant::now() > self.plot_timer {
+            // self.runs2.metrics = Some(get_metrics_duck(&self.duckdb, &self.runs2.active_runs));
+            self.plot_timer = Instant::now() + std::time::Duration::from_secs(2);
+            self.tx_active_runs
+                .send(self.runs2.active_runs.clone())
+                .unwrap();
+        }
+        if let Ok(new_data) = self.rx_plot_map.try_recv() {
+            self.runs2.plot_map = new_data;
+        }
+        if let Ok(new_run_params) = self.rx_run_params.try_recv() {
+            self.runs2.run_params = new_run_params;
         }
         while let Ok(new_runs) = self.db_reciever.try_recv() {
             for train_id in new_runs.keys() {
                 if !self.runs.runs.contains_key(train_id) {
+                    let t = Instant::now();
                     let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
-                    println!("[app] recieved new runs, sending to compute...");
+                    // println!("get_train_ids_from_filter {}", t.elapsed().as_millis());
+                    // println!("[app] recieved new runs, sending to compute...");
                     self.db_train_runs_sender_slot = Some(new_active);
                     // self.db_train_runs_sender.try_send(new_active);
                     // .expect("Failed to send train runs to db thread");
@@ -1204,11 +1299,23 @@ impl eframe::App for GuiRuns {
         }
         // return;
 
+        // let t = Instant::now();
+        // let run_params = get_run_params(&self.duckdb);
+        // println!("get_run_params {}", t.elapsed().as_millis());
+
+        let t = Instant::now();
+
         let ensemble_colors: HashMap<String, egui::Color32> = self
-            .runs
-            .runs
-            .values()
-            .map(|run| label_from_active_inspect_params(run, &self.gui_params))
+            .runs2
+            .active_runs
+            .iter()
+            .map(|run_id| {
+                label_from_active_inspect_params(
+                    run_id.clone(),
+                    &self.runs2.run_params,
+                    &self.gui_params,
+                )
+            })
             .unique()
             .sorted()
             .enumerate()
@@ -1219,40 +1326,38 @@ impl eframe::App for GuiRuns {
             })
             .collect();
         let run_ensemble_color: HashMap<String, egui::Color32> = self
-            .runs
-            .runs
-            .values()
-            .map(|run| {
-                let train_id = run.params.get("train_id").unwrap();
-                let ensemble_id = label_from_active_inspect_params(run, &self.gui_params); // run.params.get("ensemble_id").unwrap();
+            .runs2
+            .active_runs
+            .iter()
+            .map(|run_id| {
+                // let train_id = run.params.get("train_id").unwrap();
+                let ensemble_id = label_from_active_inspect_params(
+                    run_id.clone(),
+                    &self.runs2.run_params,
+                    &self.gui_params,
+                ); // run.params.get("ensemble_id").unwrap();
                 (
-                    train_id.clone(),
+                    // train_id.clone(),
+                    run_id.clone(),
                     *ensemble_colors.get(&ensemble_id).unwrap(),
                 )
             })
             .collect();
+        // println!("colors {}", t.elapsed().as_millis());
+
         // let param_values = get_parameter_values(&self.runs, true);
         if std::time::Instant::now() > self.gui_params.next_param_update {
             self.gui_params.next_param_update =
-                std::time::Instant::now() + std::time::Duration::from_secs(1);
-            self.gui_params.param_values = get_parameter_values(&self.runs, true);
-            self.gui_params.filtered_values = get_parameter_values(&self.runs, false);
+                std::time::Instant::now() + std::time::Duration::from_secs(10);
+            // self.gui_params.param_values = get_parameter_values(&self.runs, true);
+            let t = Instant::now();
+
+            self.runs2.runs = get_runs_duck(&self.duckdb);
+            self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
+            // println!("get runs and param values {}", t.elapsed().as_millis());
+
+            // self.gui_params.filtered_values = get_parameter_values(&self.runs, false);
         }
-        // for param_
-        // for run in &filtered_runs {
-        //     println!("{:?}", run.1.params.get("epochs"))
-        // }
-        // let filtered_values = get_parameter_values(&self.runs, false);
-        let metric_names: Vec<String> = self
-            .runs
-            .active_runs
-            .iter()
-            .map(|train_id| self.runs.runs.get(train_id).unwrap())
-            .map(|run| run.metrics.keys().cloned())
-            .flatten()
-            .unique()
-            .sorted()
-            .collect();
 
         egui::SidePanel::left("Controls")
             .resizable(true)
@@ -1261,6 +1366,8 @@ impl eframe::App for GuiRuns {
             .show(ctx, |ui| {
                 // ui.separator();
                 // for param_filter in &mut self.gui_params.param_filters {
+                let t = Instant::now();
+
                 if ui.small_button("+").clicked() {
                     self.gui_params.param_filters.push(RunsFilter::new());
                 }
@@ -1278,21 +1385,28 @@ impl eframe::App for GuiRuns {
                 for i in 0..temp_param_filters.len() {
                     ui.collapsing(format!("filter {}", i), |ui| {
                         self.render_time_selector(ui, &mut temp_param_filters[i]);
-                        changed |= self.render_parameters(
-                            ui,
-                            self.gui_params.param_values.clone(),
-                            self.gui_params.filtered_values.clone(),
-                            &mut temp_param_filters[i],
-                            ctx,
-                        );
+                        self.render_params2(&mut temp_param_filters[i], ui);
+                        // changed |= self.render_parameters(
+                        //     ui,
+                        //     self.gui_params.param_values.clone(),
+                        //     self.gui_params.filtered_values.clone(),
+                        //     &mut temp_param_filters[i],
+                        //     ctx,
+                        // );
                     });
+                    changed |= temp_param_filters[i] != self.gui_params.param_filters[i];
                 }
                 self.gui_params.param_filters = temp_param_filters;
                 if changed {
-                    println!("changed!");
+                    // println!("changed!");
+                    get_train_ids_from_filter_duck(
+                        &self.duckdb,
+                        &self.runs2.runs,
+                        &self.gui_params,
+                    );
                     self.update_filtered_runs();
                     for (idx, param_filter) in self.gui_params.param_filters.iter().enumerate() {
-                        println!("filter {}", idx);
+                        // println!("filter {}", idx);
                         for (k, v) in param_filter.filter.iter() {
                             if !v.is_empty() {
                                 println!("{}: {:?}", k, v);
@@ -1300,20 +1414,25 @@ impl eframe::App for GuiRuns {
                         }
                         // for param_filter.filter
                     }
-                    self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
-                    self.gui_params_sender_slot =
-                        Some((self.gui_params.clone(), self.runs.runs.clone()));
+                    self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
+                    // self.gui_params_sender_slot =
+                    // Some((self.gui_params.clone(), self.runs.runs.clone()));
                 }
+                // println!("render controls {}", t.elapsed().as_millis());
             });
+        let t = Instant::now();
+
         egui::SidePanel::right("Metrics")
             .resizable(true)
             .default_width(300.0)
             .width_range(100.0..=500.0)
             .show(ctx, |ui| {
-                self.render_metrics(ui, &metric_names);
+                // self.render_metrics(ui, &metric_names);
                 ui.separator();
                 self.render_artifact_selector(ui);
             });
+        // println!("render_artifact_selector {}", t.elapsed().as_millis());
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -1342,17 +1461,22 @@ impl eframe::App for GuiRuns {
             egui::ScrollArea::vertical()
                 .id_source("central_space")
                 .show(ui, |ui| {
+                    let t = Instant::now();
                     let collapsing = ui.collapsing("Tabular", |ui| {
                         self.render_table(ui, &run_ensemble_color);
                     });
                     self.table_active = collapsing.fully_open();
-                    self.render_artifacts(ui, &run_ensemble_color);
-                    self.render_plots(ui, metric_names, &run_ensemble_color);
+                    // self.render_artifacts(ui, &run_ensemble_color);
+                    // self.render_plots(ui, metric_names, &run_ensemble_color);
+
+                    self.render_plots2(ui, &run_ensemble_color);
+                    // println!("render_plot2 and table {}", t.elapsed().as_millis());
                 });
         });
         self.initialized = true;
         ctx.request_repaint();
         // ctx.repaint_causes()
+        // println!("update {}", t_update.elapsed().as_millis());
     }
 }
 
@@ -1377,9 +1501,17 @@ fn get_artifact_type(path: &String) -> ArtifactType {
     }
 }
 
-fn label_from_active_inspect_params(run: &Run, gui_params: &GuiParams) -> String {
+fn label_from_active_inspect_params(
+    train_id: String,
+    run_params: &HashMap<(String, String), String>,
+    gui_params: &GuiParams,
+) -> String {
     let label = if gui_params.inspect_params.is_empty() {
-        run.params.get("ensemble_id").unwrap().clone()
+        run_params
+            .get(&(train_id, "ensemble_id".into()))
+            .unwrap()
+            .clone()[0..6]
+            .to_string()
     } else {
         let empty = "".to_string();
         gui_params
@@ -1390,13 +1522,40 @@ fn label_from_active_inspect_params(run: &Run, gui_params: &GuiParams) -> String
                 format!(
                     "{}:{}",
                     param.split(".").last().unwrap_or(param),
-                    run.params.get(param).unwrap_or(&empty)
+                    run_params
+                        .get(&(train_id.clone(), param.clone()))
+                        .unwrap_or(&empty)
                 )
             })
             .join(", ")
     };
     label
 }
+// fn label_from_active_inspect_params2(runs: &DataFrame, train_id: String, gui_params: &GuiParams) -> String {
+//     let label = if gui_params.inspect_params.is_empty() {
+//         // run.params.get("ensemble_id").unwrap().clone()
+//         // runs.filter()
+//         runs.column("name").unwrap().equal("ensemble_id");
+//         runs.column("train_id").unwrap().utf8().unwrap().equal(train_id);
+//         String::new()
+//         // runs.
+//     } else {
+//         let empty = "".to_string();
+//         gui_params
+//             .inspect_params
+//             .iter()
+//             .sorted()
+//             .map(|param| {
+//                 format!(
+//                     "{}:{}",
+//                     param.split(".").last().unwrap_or(param),
+//                     run.params.get(param).unwrap_or(&empty)
+//                 )
+//             })
+//             .join(", ")
+//     };
+//     label
+// }
 fn show_artifacts(
     ui: &mut egui::Ui,
     handler: &mut ArtifactHandler,
@@ -1404,6 +1563,7 @@ fn show_artifacts(
     runs: &HashMap<String, Run>,
     filtered_runs: &Vec<String>,
     run_ensemble_color: &HashMap<String, egui::Color32>,
+    run_params: &HashMap<(String, String), String>,
 ) {
     match handler {
         ArtifactHandler::NPYArtifact {
@@ -1476,6 +1636,7 @@ fn show_artifacts(
                                                             artifact_id,
                                                             gui_params,
                                                             run_ensemble_color,
+                                                            run_params,
                                                             views,
                                                             &npyarray,
                                                             textures,
@@ -1492,6 +1653,7 @@ fn show_artifacts(
                                                             artifact_id,
                                                             gui_params,
                                                             run_ensemble_color,
+                                                            run_params,
                                                             views,
                                                             &npyarray,
                                                             textures,
@@ -1614,7 +1776,8 @@ fn show_artifacts(
                             ui.push_id(artifact_id, |ui| {
                                 ui.vertical(|ui| {
                                     let label = label_from_active_inspect_params(
-                                        runs.get(&artifact_id.train_id).unwrap(),
+                                        artifact_id.train_id.clone(),
+                                        run_params,
                                         &gui_params,
                                     );
                                     ui.colored_label(
@@ -1700,6 +1863,7 @@ fn show_artifacts(
                                         artifact_id,
                                         gui_params,
                                         run_ensemble_color,
+                                        run_params,
                                         views,
                                         &array,
                                         // textures,
@@ -1758,6 +1922,7 @@ fn render_npy_artifact_hp(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
+    run_params: &HashMap<(String, String), String>,
     views: &mut HashMap<ArtifactId, NPYArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -1772,7 +1937,7 @@ fn render_npy_artifact_hp(
 ) {
     ui.vertical(|ui| {
         let label =
-            label_from_active_inspect_params(runs.get(&artifact_id.train_id).unwrap(), &gui_params);
+            label_from_active_inspect_params(artifact_id.train_id.clone(), run_params, &gui_params);
         ui.colored_label(
             run_ensemble_color
                 .get(&artifact_id.train_id)
@@ -2039,6 +2204,7 @@ fn render_npy_artifact_driscoll_healy(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
+    run_params: &HashMap<(String, String), String>,
     views: &mut HashMap<ArtifactId, NPYArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -2051,7 +2217,7 @@ fn render_npy_artifact_driscoll_healy(
 ) {
     ui.vertical(|ui| {
         let label =
-            label_from_active_inspect_params(runs.get(&artifact_id.train_id).unwrap(), &gui_params);
+            label_from_active_inspect_params(artifact_id.train_id.clone(), run_params, &gui_params);
         ui.colored_label(
             run_ensemble_color
                 .get(&artifact_id.train_id)
@@ -2220,6 +2386,7 @@ fn render_npy_artifact_tabular(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
+    run_params: &HashMap<(String, String), String>,
     views: &mut HashMap<ArtifactId, NPYTabularArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -2229,7 +2396,7 @@ fn render_npy_artifact_tabular(
 ) {
     ui.vertical(|ui| {
         let label =
-            label_from_active_inspect_params(runs.get(&artifact_id.train_id).unwrap(), &gui_params);
+            label_from_active_inspect_params(artifact_id.train_id.clone(), run_params, &gui_params);
         ui.colored_label(
             run_ensemble_color
                 .get(&artifact_id.train_id)
@@ -2334,7 +2501,245 @@ fn render_npy_artifact_tabular(
             });
     });
 }
+enum Tree {
+    Node(String, String, String),
+    Leaf(String, String),
+}
 
+#[derive(PartialEq)]
+enum Group {
+    Leaf,
+    Category(String),
+}
+
+fn update_plot_map(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+    active_runs: &Vec<String>,
+) -> HashMap<PlotMapKey, Vec<[f64; 2]>> {
+    // self.runs2.plot_map.clear();
+    let mut plot_map = HashMap::new();
+    if active_runs.len() == 0 {
+        return HashMap::new();
+    }
+    // println!("update_plot_map");
+    // let duck = pool.get().unwrap();
+    // let metrics_sql = format!(
+    //     "
+    //         select distinct variable
+    //         from local.metrics
+    //         where xaxis='batch' AND train_id IN ({})",
+    //     repeat_vars(active_runs.len())
+    // );
+    // // let mut stmt = duck.prepare(&metrics_sql).unwrap();
+    // let rows = stmt
+    //     .query_map(duckdb::params_from_iter(active_runs.iter()), |row| {
+    //         row.get(0)
+    //     })
+    //     .unwrap();
+    // let metric_names: Vec<_> = rows.map(|x| x.unwrap()).collect();
+
+    let mut df = get_metrics_duck(pool, active_runs);
+    // df.writejkj
+    // polars::io::csv::CsvWriter::new()
+
+    if df.height() == 0 {
+        return HashMap::new();
+    }
+    // println!("{}", df);
+    // for (name, data) in df.group_by(["train_id", "variable"]).unwrap() {}
+    let train_ids = df.column("train_id").unwrap().rechunk();
+    let mut train_ids = train_ids.iter();
+    let variables = df.column("variable").unwrap().rechunk();
+    let mut variables = variables.iter();
+    let xaxis = df.column("xaxis").unwrap().rechunk();
+    let mut xaxis = xaxis.iter();
+    let xs = df.column("xs").unwrap().rechunk();
+    let mut xs = xs.iter();
+    let values = df.column("values").unwrap().rechunk();
+    let mut values = values.iter();
+    // let mut iters = df
+    //     .columns(["train_id", "variable", "x", "value"])
+    //     .unwrap()
+    //     .iter()
+    //     .map(|c| c.iter())
+    //     .collect::<Vec<_>>();
+    // let mut last_train_id = String::new();
+    for row in 0..df.height() {
+        let tid = train_ids.next().unwrap();
+        let train_id = tid.get_str().unwrap();
+        let var = variables.next().unwrap();
+        let variable = var.get_str().unwrap();
+        let xaxis = xaxis.next().unwrap();
+        let xaxis = xaxis.get_str().unwrap();
+        let x = xs.next().unwrap();
+        // println!("pre x");
+        let x = match x {
+            AnyValue::List(sx) => sx
+                .f64()
+                .unwrap()
+                .to_vec()
+                .into_iter()
+                .flatten()
+                .collect::<Vec<f64>>(),
+            _ => {
+                panic!()
+            }
+        };
+        let y = values.next().unwrap();
+        let y = match y {
+            AnyValue::List(sy) => sy
+                .f64()
+                .unwrap()
+                .to_vec()
+                .into_iter()
+                .flatten()
+                .collect::<Vec<f64>>(),
+            _ => {
+                panic!()
+            }
+        };
+        for (idx, w) in x.windows(2).enumerate() {
+            if w[1] < w[0] {
+                println!(
+                    "{}: {}, {} < {} [{idx} ({})]",
+                    train_id,
+                    variable,
+                    w[1],
+                    w[0],
+                    x.len()
+                );
+                // panic!();
+                let output_file: File =
+                    File::create("out.json").expect("Failed to create an output file.");
+
+                let mut writer: polars::io::json::JsonWriter<File> = JsonWriter::new(output_file);
+
+                writer
+                    .finish(&mut df)
+                    .expect("Failed to write the CSV file.");
+                panic!();
+            }
+        }
+        // println!("to xy");
+        let xy = x.into_iter().zip(y).map(|(x, y)| [x, y]).collect_vec();
+        plot_map.insert(
+            PlotMapKey {
+                train_id: train_id.into(),
+                variable: variable.into(),
+                xaxis: xaxis.into(),
+            },
+            // (
+            //     variable.to_string(),
+            //     train_id.to_string(),
+            //     xaxis.to_string(),
+            // ),
+            xy,
+        );
+    }
+    // for x in df.group_by(["train_id", "variable"]).unwrap() {}
+    return plot_map;
+    // return HashMap::new();
+
+    let sql = format!(
+        "
+WITH range_info AS (
+    SELECT 
+        MIN(x) AS min_x, 
+        MAX(x) AS max_x 
+    FROM local.metrics
+    WHERE train_id = $2 AND variable = $1
+),
+bucket_size AS (
+    SELECT 
+        (max_x - min_x) / 10 AS size 
+    FROM range_info
+)
+SELECT 
+    t.train_id as train_id, 
+    t.variable as variable,
+    FLOOR(x / bs.size) AS bucket, 
+    AVG(value) AS value,
+    AVG(x) AS x
+FROM local.metrics t
+JOIN bucket_size bs 
+ON t.train_id = $2 AND t.variable = $1
+WHERE t.train_id = $2 AND t.variable = $1
+GROUP BY train_id, variable, bucket
+ORDER BY x;
+        "
+    );
+    // let sql = format!("select x, value from local.metrics where xaxis='batch' AND variable=$1 AND train_id=$2 ORDER BY x");
+    // let mut stmt = duck.prepare(&sql).expect("plotmap");
+    // for metric_name in metric_names.iter().sorted() {
+    //     for train_id in active_runs.iter().sorted() {
+    //         let polars = stmt.query_polars([metric_name, train_id]).expect("plotmap");
+    //         if let Some(df) = polars.reduce(|acc, e| acc.vstack(&e).unwrap()) {
+    //             // df.column("x").unwrap().iter()
+    //             let n = df.shape().0;
+    //             let window_size = 1.max(n / 1000) as i64;
+    //             // let df = df
+    //             //     .lazy()
+    //             //     .with_columns([
+    //             //         col("x").rolling_mean(RollingOptions {
+    //             //             window_size: Duration::new(window_size),
+    //             //             min_periods: 1,
+    //             //             ..Default::default()
+    //             //         }),
+    //             //         col("value").rolling_mean(RollingOptions {
+    //             //             window_size: Duration::new(window_size),
+    //             //             min_periods: 1,
+    //             //             ..Default::default()
+    //             //         }),
+    //             //     ])
+    //             //     .collect()
+    //             //     .unwrap();
+    //             let x = df.column("x").unwrap().f32().unwrap();
+    //             let x = x.to_vec().into_iter().step_by(window_size as usize);
+    //             let y = df.column("value").unwrap().f32().unwrap().rechunk();
+    //             let y = y.to_vec().into_iter().step_by(window_size as usize);
+    //             let xy = x
+    //                 .zip(y)
+    //                 .map(|(x, y)| [x.unwrap_or(0.0) as f64, y.unwrap_or(0.0) as f64])
+    //                 .collect_vec();
+    //             plot_map.insert((metric_name.clone(), train_id.clone()), xy);
+    //         }
+    //     }
+    // }
+    // plot_map
+}
+// fn update_plot_map2(
+//     pool: &r2d2::Pool<DuckdbConnectionManager>,
+//     active_runs: &Vec<String>,
+// ) -> HashMap<(String, String), Vec<[f64; 2]>> {
+//     // self.runs2.plot_map.clear();
+//     let mut plot_map = HashMap::new();
+//     if active_runs.len() == 0 {
+//         return HashMap::new();
+//     }
+
+//     let metrics = get_metrics_duck(pool, active_runs);
+//     let metric_names = metrics
+//         .column("variable")
+//         .unwrap()
+//         .sort(false)
+//         .unique_stable()
+//         .unwrap();
+//     for metric_name in metric_names.iter() {
+//         for train_id in active_runs.iter().sorted() {
+//             // let df =
+//             let x = df.column("x").unwrap().f32().unwrap();
+//             let x = x.to_vec().into_iter().step_by(window_size as usize);
+//             let y = df.column("value").unwrap().f32().unwrap().rechunk();
+//             let y = y.to_vec().into_iter().step_by(window_size as usize);
+//             let xy = x
+//                 .zip(y)
+//                 .map(|(x, y)| [x.unwrap_or(0.0) as f64, y.unwrap_or(0.0) as f64])
+//                 .collect_vec();
+//             plot_map.insert((metric_name.clone(), train_id.clone()), xy);
+//         }
+//     }
+//     plot_map
+// }
 impl GuiRuns {
     fn render_parameters(
         &mut self,
@@ -2823,6 +3228,124 @@ impl GuiRuns {
         });
     }
 
+    fn render_params2(&mut self, param_filter: &mut RunsFilter, ui: &mut egui::Ui) {
+        // let runs = get_runs_duck(&self.duckdb);
+        let runs = &self.runs2.runs;
+        // let variables = self
+        //     .runs2
+        //     .runs
+        let variables = runs
+            .column("variable")
+            .unwrap()
+            .unique()
+            .unwrap()
+            .sort(false);
+
+        let v: Vec<_> = variables
+            .iter()
+            .map(|x| x.get_str().unwrap().to_string())
+            .collect();
+        // println!("{:?}", v);
+
+        let tree = v
+            .iter()
+            .map(|x| match x.split_once(".") {
+                Some((cat, rest)) => Tree::Node(cat.to_string(), rest.to_string(), x.clone()),
+                None => Tree::Leaf(x.clone(), x.clone()),
+            })
+            .collect_vec();
+
+        render_param_tree(param_filter, &runs, tree, ui);
+        // ui.add(egui::CollapsingHeader::new("test").show()
+        // dbg!(runs.group_by([col("variable")]))
+    }
+
+    fn render_plots2(
+        &mut self,
+        ui: &mut egui::Ui,
+        run_ensemble_color: &HashMap<String, egui::Color32>,
+        // run_params: &HashMap<(String, String), String>,
+    ) {
+        // let metrics = self.runs2.metrics.take();
+        // if let Some(metrics) = metrics {
+        //     if metrics.shape().0 == 0 {
+        //         return;
+        // }
+        // let metric_names = metrics
+        //     .column("variable")
+        //     .unwrap()
+        //     .unique()
+        //     .unwrap()
+        //     .iter()
+        //     .map(|x| x.get_str().unwrap().to_string())
+        //     .collect_vec();
+        let metric_names = self
+            .runs2
+            .plot_map
+            .keys()
+            .map(|key| (key.variable.clone(), key.xaxis.clone()))
+            .unique();
+        // let metric_names: Vec<String> = Vec::new();
+
+        let plot_width = ui.available_width() / 2.1;
+        let plot_height = ui.available_width() / 4.1;
+
+        let plots = metric_names
+            // .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    Plot::new(name.0)
+                        .legend(Legend::default())
+                        .width(plot_width)
+                        .height(plot_height),
+                )
+            })
+            .collect_vec();
+
+        // let lazy_df = self.runs2.metrics.clone().lazy();
+        // let mut plot_val_map = self.update_plot_map(lazy_df);
+
+        // for (metric_name, plot) in plots {
+        ui.horizontal_wrapped(|ui| {
+            for (metric_name_and_axis, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone())
+            {
+                ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(metric_name_and_axis.0.clone());
+                        plot.show(ui, |plot_ui| {
+                            for train_id in self.runs2.active_runs.iter().sorted() {
+                                // let run = self.runs2.runs.get()
+                                // self.runs2.runs.get_row()
+                                if let Some(xy) = self.runs2.plot_map.get(&PlotMapKey {
+                                    train_id: train_id.clone(),
+                                    variable: metric_name_and_axis.0.clone(),
+                                    xaxis: metric_name_and_axis.1.clone(),
+                                }) {
+                                    plot_ui.line(
+                                        Line::new(PlotPoints::from(xy.clone()))
+                                            .stroke(Stroke::new(
+                                                1.0,
+                                                *run_ensemble_color.get(train_id).unwrap(),
+                                            ))
+                                            .name(label_from_active_inspect_params(
+                                                train_id.clone(),
+                                                &self.runs2.run_params,
+                                                &self.gui_params,
+                                            )),
+                                    );
+                                }
+                            }
+                        });
+                    });
+                });
+            }
+        });
+        // }
+        //     self.runs2.metrics = Some(metrics);
+        // }
+    }
+
     fn render_plots(
         &mut self,
         ui: &mut egui::Ui,
@@ -2985,8 +3508,8 @@ impl GuiRuns {
                                 })
                             {
                                 if let Some(metric) = run.metrics.get(&metric_name) {
-                                    let label =
-                                        label_from_active_inspect_params(run, &self.gui_params);
+                                    let label = "test".into();
+                                    //label_from_active_inspect_params(run, &self.gui_params);
                                     let running = metric.last_value
                                         > chrono::Utc::now()
                                             .naive_utc()
@@ -3088,6 +3611,7 @@ impl GuiRuns {
         &mut self,
         ui: &mut egui::Ui,
         run_ensemble_color: &HashMap<String, egui::Color32>,
+        run_params: &HashMap<(String, String), String>,
     ) {
         let active_artifact_types: Vec<ArtifactType> = self
             .gui_params
@@ -3159,6 +3683,7 @@ impl GuiRuns {
                     &self.runs.runs,
                     &self.runs.active_runs,
                     &run_ensemble_color,
+                    run_params,
                 );
             }
             // if let Some(handler) = self.artifact_handlers.get(artifact_type) {}
@@ -3193,7 +3718,9 @@ impl GuiRuns {
     }
 
     fn update_filtered_runs(&mut self) {
-        self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
+        // self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
+        self.runs2.active_runs =
+            get_train_ids_from_filter_duck(&self.duckdb, &self.runs2.runs, &self.gui_params);
         self.runs.active_runs_time_ordered = self
             .runs
             .active_runs
@@ -3215,6 +3742,131 @@ impl GuiRuns {
             .sorted_by_key(|(_train_id, created_at)| *created_at)
             .collect();
     }
+}
+
+fn render_param_tree(
+    param_filter: &mut RunsFilter,
+    runs: &DataFrame,
+    tree: Vec<Tree>,
+    ui: &mut egui::Ui,
+) {
+    let groups = tree.into_iter().group_by(|el| match el {
+        Tree::Node(cat, _, _) => Group::Category(cat.clone()),
+        Tree::Leaf(name, _) => Group::Leaf,
+    });
+    for (key, group) in groups.into_iter() {
+        let group = group.collect_vec();
+        match key {
+            Group::Leaf => {
+                for node in group {
+                    if let Tree::Leaf(name, path) = node {
+                        // ui.button(name);
+                        ui.collapsing(name, |ui| {
+                            let values = runs
+                                .filter(
+                                    &runs
+                                        .column("variable")
+                                        .unwrap()
+                                        .equal(path.as_str())
+                                        .unwrap(),
+                                )
+                                .unwrap();
+                            let values = values.columns(["value_int", "value_text"]).unwrap();
+                            let mut multival = values[0]
+                                .iter()
+                                .map(|x| match x {
+                                    AnyValue::Int32(val) => val,
+                                    _ => 0,
+                                })
+                                .zip(values[1].iter().map(|x| x.get_str().unwrap().to_string()))
+                                .unique()
+                                .collect_vec();
+                            multival.sort();
+                            ui.horizontal_wrapped(|ui| {
+                                for (_val_int, val_str) in multival.into_iter() {
+                                    let has_val =
+                                        param_filter.filter.get(&path).unwrap().contains(&val_str);
+                                    // ui.label(val_str);
+                                    let color = if has_val {
+                                        egui::Color32::LIGHT_GREEN
+                                    } else {
+                                        ui.ctx().style().visuals.widgets.inactive.bg_fill
+                                    };
+                                    let button = ui.add(
+                                        egui::Button::new(&val_str)
+                                            .stroke(egui::Stroke::new(1.0, color)),
+                                    );
+                                    if button.clicked() {
+                                        if has_val {
+                                            param_filter
+                                                .filter
+                                                .get_mut(&path)
+                                                .unwrap()
+                                                .remove(&val_str);
+                                        } else {
+                                            param_filter
+                                                .filter
+                                                .get_mut(&path)
+                                                .unwrap()
+                                                .insert(val_str.clone());
+                                            dbg!(&path, val_str);
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                    }
+                }
+            }
+            Group::Category(cat) => {
+                ui.collapsing(cat, |ui| {
+                    let subtree = group
+                        .iter()
+                        .map(|el| {
+                            if let Tree::Node(_, rest, path) = el {
+                                match rest.split_once(".") {
+                                    Some((cat, rest)) => {
+                                        Tree::Node(cat.to_string(), rest.to_string(), path.clone())
+                                    }
+                                    None => Tree::Leaf(rest.clone(), path.clone()),
+                                }
+                            } else {
+                                Tree::Leaf("error".to_string(), "error".to_string())
+                            }
+                        })
+                        .collect_vec();
+                    render_param_tree(param_filter, runs, subtree, ui);
+                });
+                // ui.label(cat);
+            }
+        }
+    }
+}
+
+fn get_parameter_values_duck(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+) -> HashMap<String, HashSet<String>> {
+    println!("get_parameter_values_duck");
+    let conn = pool.get().unwrap();
+    let sql = "SELECT variable, string_agg(DISTINCT value_text ORDER BY value_text) FROM local.runs GROUP BY variable";
+    let mut stmt = conn.prepare(sql).unwrap();
+    let rows = stmt
+        .query_map([], |row| {
+            duckdb::Result::Ok((row.get::<_, String>(0), row.get::<_, String>(1)))
+        })
+        .unwrap()
+        .map(|row| {
+            let (a, b) = row.unwrap();
+            (
+                a.unwrap(),
+                b.unwrap()
+                    .split(",")
+                    .map(|x| x.to_string())
+                    .collect::<HashSet<String>>(),
+            )
+        });
+    // .collect();
+    return HashMap::from_iter(rows);
 }
 
 fn get_parameter_values(
@@ -3516,6 +4168,274 @@ async fn get_state_artifacts(
     )
 }
 
+async fn get_latest_runs(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<Vec<String>, sqlx::Error> {
+    let run_rows = sqlx::query(
+        r#"
+SELECT train_id
+FROM (
+    SELECT DISTINCT ON (train_id) train_id, created_at
+    FROM runs
+    ORDER BY train_id, created_at DESC
+) subquery
+ORDER BY created_at DESC
+LIMIT 5;
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(run_rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("train_id"))
+        .collect_vec())
+}
+
+fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
+    // println!("ensure_duckdb_schema");
+    let conn = pool.get().unwrap();
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS local.serial_metrics", [])
+        .expect("create sequence");
+    conn.execute(
+        "
+            CREATE TABLE IF NOT EXISTS local.metrics (
+                      id INTEGER PRIMARY KEY DEFAULT nextval('local.serial_metrics'),
+                      created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                      train_id text,
+                      ensemble_id text,
+                      x float,
+                      xaxis text,
+                      variable text,
+                      value float,
+                      value_text text,
+                      UNIQUE(train_id, x, xaxis, variable)
+                  )
+        ",
+        [],
+    )
+    .expect("create metrics");
+
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS local.serial_runs", [])
+        .expect("create sequence runs");
+    conn.execute(
+        "
+                CREATE TABLE IF NOT EXISTS local.runs (
+                    id INTEGER PRIMARY KEY DEFAULT nextval('local.serial_runs'),
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                    train_id text,
+                    ensemble_id text,
+                    variable text,
+                    value_float float,
+                    value_int integer,
+                    value_text text,
+                    UNIQUE(train_id, variable)
+                )",
+        [],
+    )
+    .expect("create local runs");
+    conn.execute("SET pg_experimental_filter_pushdown=true", [])
+        .expect("set filter push down");
+    conn.execute("SET pg_use_ctid_scan=false", [])
+        .expect("set ctid scan false");
+}
+
+fn repeat_vars(count: usize) -> String {
+    assert_ne!(count, 0);
+    let mut s = "?,".repeat(count);
+    // Remove trailing comma
+    s.pop();
+    s
+}
+
+fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude::DataFrame {
+    // println!("get_runs_duck");
+    let conn = pool.get().unwrap();
+    let query = format!(
+        "
+        SELECT * FROM local.runs 
+        WHERE variable NOT IN ({}) 
+        ",
+        repeat_vars(HIDDEN_PARAMS.len()),
+    );
+    // println!("{}", query);
+    let mut stmt = conn.prepare(&query).unwrap();
+    let polars = stmt
+        .query_polars(duckdb::params_from_iter(HIDDEN_PARAMS.iter()))
+        .expect("duck runs");
+    // println!("{:?}", polars);
+    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
+    large_df
+        .sort(vec!["variable", "train_id"], false, true)
+        .unwrap()
+}
+
+fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<(String, String), String> {
+    let t = Instant::now();
+
+    let df = get_runs_duck(pool);
+    // println!("get_runs_duck {}", t.elapsed().as_millis());
+    let t = Instant::now();
+
+    let train_ids = df.column("train_id").unwrap().rechunk();
+    let train_ids = train_ids.iter();
+    let variables = df.column("variable").unwrap().rechunk();
+    let variables = variables.iter();
+    let values = df.column("value_text").unwrap().rechunk();
+    let values = values.iter();
+    let ret = train_ids
+        .zip(variables)
+        .zip(values)
+        .map(|((tid, var), val)| {
+            (
+                (
+                    tid.get_str().unwrap().to_string(),
+                    var.get_str().unwrap().to_string(),
+                ),
+                val.get_str().unwrap().to_string(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    // println!("get_run_params to hash map {}", t.elapsed().as_millis());
+    ret
+}
+
+// fn get_run_label_duck(pool: &r2d2::Pool<DuckdbConnectionManager>, gui_params: &GuiParams) {
+//     let conn = pool.get().unwrap();
+//     let query = format!(
+//         "
+//         SELECT * FROM local.runs
+//         WHERE variable NOT IN ({})
+//         ",
+//         repeat_vars(HIDDEN_PARAMS.len()),
+//     );
+//     let mut stmt = conn.prepare(&query).unwrap();
+
+// }
+
+fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
+    ensure_duckdb_schema(pool);
+    let conn = pool.get().unwrap();
+    let max_id: i32 = conn
+        .query_row("SELECT COALESCE(max(id), 0) FROM local.runs", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let query = format!(
+        "
+        INSERT INTO local.runs
+        SELECT * FROM db.runs 
+        WHERE id > {}
+        ",
+        max_id
+    );
+    conn.execute(&query, []).expect("sync runs failed");
+}
+
+fn get_metrics_duck(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+    active_runs: &Vec<String>,
+) -> polars::prelude::DataFrame {
+    if active_runs.len() == 0 {
+        return DataFrame::empty();
+    }
+    // println!("get_metrics_duck");
+    let conn = pool.get().unwrap();
+    let query = format!(
+        // "
+        // SELECT train_id, variable, FLOOR(x / 1000.0) as bucket, AVG(x) as x, AVG(value) FROM local.metrics
+        // WHERE xaxis='batch' AND train_id IN ({})
+        // GROUP BY (train_id, variable, bucket)
+        // ORDER BY train_id, variable, x, value
+        // ",
+        "
+            WITH range_info AS (
+             SELECT
+                 train_id,
+                 variable,
+                 xaxis,
+                 MIN(x) AS min_x,
+                 MAX(x) AS max_x
+             FROM local.metrics
+             -- WHERE xaxis='batch'
+             GROUP BY train_id, variable, xaxis
+         ),
+         bucket_size AS (
+             SELECT
+                 train_id,
+                 variable,
+                 xaxis,
+                 (max_x - min_x) / 1000.0 AS size
+             FROM range_info
+         ),
+         bucket_table AS (
+         SELECT
+             t.train_id as train_id,
+             t.variable as variable,
+             t.xaxis as xaxis,
+             FLOOR(t.x / bs.size) AS bucket,
+             AVG(t.value) AS value, AVG(t.x) as x
+         FROM local.metrics t
+         JOIN bucket_size bs
+         ON t.train_id = bs.train_id AND t.variable = bs.variable
+         -- WHERE xaxis='batch'
+             WHERE t.train_id IN ({})
+         GROUP BY t.train_id, t.variable, t.xaxis, bucket
+         ORDER BY t.train_id, t.variable, t.xaxis, x)
+         SELECT 
+             train_id, variable, xaxis, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
+            FROM bucket_table
+            GROUP BY train_id, variable, xaxis
+        ",
+        repeat_vars(active_runs.len()),
+    );
+    let mut stmt = conn.prepare(&query).unwrap();
+    let polars = stmt
+        .query_polars(duckdb::params_from_iter(active_runs.iter()))
+        .unwrap();
+    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
+    large_df.unwrap_or(DataFrame::empty())
+}
+
+fn sync_metrics_duck(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+    active_runs: &Vec<String>,
+    limit: usize,
+) -> bool {
+    ensure_duckdb_schema(pool);
+    let conn = pool.get().unwrap();
+    let mut updated = false;
+    for train_id in active_runs {
+        let max_id: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) from local.metrics WHERE train_id=?",
+                [train_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        println!("max id {} for {}", max_id, train_id);
+        let query = format!(
+            "
+        INSERT INTO local.metrics
+        SELECT * FROM db.metrics
+        WHERE id > {}
+        AND
+        train_id=?
+        LIMIT {}
+        ",
+            max_id, limit
+        );
+        conn.execute(&query, [train_id]).expect("sync runs failed");
+        let max_id_post: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) from local.metrics WHERE train_id=?",
+                [train_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if max_id_post != max_id {
+            updated = true;
+        }
+    }
+    updated
+}
 async fn get_state_parameters(
     pool: &sqlx::Pool<sqlx::Postgres>,
     runs: &mut HashMap<String, Run>,
@@ -3676,11 +4596,14 @@ fn main() -> Result<(), sqlx::Error> {
     // dotenv::dotenv().ok();
     let args = Args::parse();
     println!("Args: {:?}", args);
-    let (tx, rx) = mpsc::sync_channel(1);
+    let (tx, rx_new_runs_from_db) = mpsc::sync_channel(1);
     let (tx_gui_dirty, rx_gui_dirty) = mpsc::sync_channel(100);
-    let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::sync_channel(100);
-    let (tx_db_filters, rx_db_filters) = mpsc::sync_channel::<Vec<String>>(1);
-    let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_db_filters));
+    // let (tx_gui_recomputed, rx_gui_recomputed) = mpsc::sync_channel(100);
+    let (tx_new_train_runs_to_db, rx_new_train_runs_to_db) = mpsc::sync_channel::<Vec<String>>(1);
+    let (tx_active_runs, rx_active_runs) = mpsc::sync_channel::<Vec<String>>(1);
+    let (tx_plot_map, rx_plot_map) = mpsc::sync_channel::<HashMap<PlotMapKey, Vec<[f64; 2]>>>(1);
+    let (tx_run_params, rx_run_params) = mpsc::sync_channel::<HashMap<(String, String), String>>(1);
+    // let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_new_train_runs_to_db));
     let (tx_db_artifact, rx_db_artifact) = mpsc::sync_channel::<ArtifactTransfer>(1);
     let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::sync_channel::<i32>(1);
     let (tx_batch_status, rx_batch_status) = mpsc::sync_channel::<(usize, usize)>(100);
@@ -3688,82 +4611,85 @@ fn main() -> Result<(), sqlx::Error> {
     let rt_handle = rt.handle().clone();
     let _guard = rt.enter();
 
-    std::thread::spawn(move || loop {
-        // if let Ok((gui_params, mut runs)) = rx_gui_dirty.recv() {
-        //     recompute(&mut runs, &gui_params);
-        //     tx_gui_recomputed
-        //         .send(runs)
-        //         .expect("Failed to send recomputed runs.");
-        // }
-        let mut last_gui_params = None;
-        let mut last_runs = None;
-
-        // Drain the channel to get the last available message
-        // dbg!("draining...");
-        while let Ok((gui_params, runs)) = rx_gui_dirty.try_recv() {
-            last_gui_params = Some(gui_params);
-            last_runs = Some(runs);
-        }
-        // dbg!("done...");
-
-        // Check if there was at least one message received
-        if let (Some(gui_params), Some(mut runs)) = (last_gui_params, last_runs) {
-            recompute(&mut runs, &gui_params);
-            tx_gui_recomputed
-                .send(runs)
-                .expect("Failed to send recomputed runs.");
-        }
-    });
-    rt_handle.spawn(async move {
-        let database_url = env::var("DATABASE_URL").unwrap_or("postgres://postgres:postgres@localhost/equiv".to_string());
-        println!("[db] connecting...");
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&database_url)
-            .await
-            .expect("Can't connect to database");
-        println!("[db] connected!");
-        let mut train_ids: Vec<String> = Vec::new();
-        let mut last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
-        let mut runs: HashMap<String, Run> = Default::default();
+    let manager = DuckdbConnectionManager::memory().unwrap();
+    let duckdb_pool = r2d2::Pool::builder().build(manager).unwrap();
+    let conn = duckdb_pool.get().unwrap();
+    conn.execute("INSTALL postgres;", [])
+        .expect("install postgres failed");
+    conn.execute("LOAD postgres;", [])
+        .expect("load postgres failed");
+    conn.execute(
+        "ATTACH 'dbname=equiv user=postgres password=herdeherde host=127.0.0.1 port=5431' as db (TYPE POSTGRES, READ_ONLY);",
+        [],
+    ).expect("attach to psql failed");
+    conn.execute("ATTACH 'local.db' as local;", [])
+        .expect("attach to psql failed");
+    sync_runs_duck(&duckdb_pool);
+    let db_thread_pool = duckdb_pool.clone();
+    std::thread::spawn(move || {
+        let mut train_runs = Vec::new();
+        let mut limit = 1000;
         loop {
-            let loop_time = std::time::Instant::now();
-            let update_params = async {
-                loop {
-                    {
-                        let rx = rx_db_filters_am.lock().unwrap();
-                        let mut new_train_ids = None;
-                        while let Ok(incoming_train_ids) = rx.try_recv() {
-                            new_train_ids = Some(incoming_train_ids);
-                        }
-                        if let Some(new_train_ids) = new_train_ids {
-                            return new_train_ids;
-                        }
-                        // if let Ok(new_train_ids) = rx.try_recv() {
-                        //     println!("new train ids");
-                        //     return new_train_ids;
-                        // }
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                }
-            };
-            tokio::select! {
-            _ = update_state(&mut runs, &pool, &train_ids, &mut last_timestamp, &tx, &tx_batch_status) => {
-                tx.send(runs.clone()).expect("Failed to send data");
-            },
-            new_train_ids = update_params => { train_ids = new_train_ids;
-                last_timestamp = NaiveDateTime::from_timestamp_millis(0).unwrap();
-                runs = HashMap::new();
+            sync_runs_duck(&db_thread_pool);
+            // sleep(std::time::Duration::from_millis(100));
+            let start = Instant::now();
+            if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
+                train_runs = new_train_ids;
+                limit = 100;
+                println!("{:?}", train_runs);
             }
+            let t = Instant::now();
+            let updated = sync_metrics_duck(&db_thread_pool, &train_runs, limit);
+            if updated {
+                println!("sync elapsed {}", t.elapsed().as_millis());
             }
-            let elapsed_loop_time = loop_time.elapsed();
-            if elapsed_loop_time.as_secs_f32() < 1.0 {
-                println!("Starting sleep");
-                tokio::time::sleep(std::time::Duration::from_secs(1) - elapsed_loop_time).await;
-                println!("Sleep done");
+            if updated && t.elapsed().as_millis() < 500 {
+                limit = limit * 2;
+                println!("increasing metric limit to {}", limit);
             }
+            if updated && t.elapsed().as_millis() > 2000 {
+                limit = (limit / 2).max(100);
+                println!("decreasing metric limit to {}", limit);
+            }
+            // println!("sync loop {}", start.elapsed().as_millis());
+            // if start.elapsed().as_millis() < 10
         }
     });
+
+    let plot_map_thread_pool = duckdb_pool.clone();
+    std::thread::spawn(move || {
+        // let mut train_runs = Vec::new();
+        // let mut active_runs = Vec::new();
+        loop {
+            if let Ok(new_active_runs) = rx_active_runs.try_recv() {
+                println!("updating...");
+                // active_runs = new_active_runs;
+                let t = Instant::now();
+                let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
+                // println!("update plot map {}", t.elapsed().as_millis());
+                tx_plot_map.send(plot_map).unwrap();
+            }
+            sleep(std::time::Duration::from_millis(10));
+        }
+    });
+
+    let run_params_thread_pool = duckdb_pool.clone();
+    std::thread::spawn(move || {
+        loop {
+            // if let Ok(new_active_runs) = rx_active_runs.try_recv() {
+            //     println!("updating...");
+            //     // active_runs = new_active_runs;
+            //     let t = Instant::now();
+            //     let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
+            //     println!("update plot map {}", t.elapsed().as_millis());
+            //     tx_plot_map.send(plot_map).unwrap();
+            // }
+            let params = get_run_params(&run_params_thread_pool);
+            tx_run_params.send(params).expect("send run params");
+            sleep(std::time::Duration::from_millis(100));
+        }
+    });
+
     rt_handle.spawn(async move {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or("postgres://postgres:postgres@localhost/equiv".to_string());
@@ -3786,6 +4712,7 @@ fn main() -> Result<(), sqlx::Error> {
     //     ..Default::default()
     // };
     let options = eframe::NativeOptions {
+        default_theme: eframe::Theme::Light,
         // initial_window_size: Some(egui::vec2(320.0, 240.0)),
         // initial_window_pos: Some((200., 200.).into()),
         viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 800.0]),
@@ -3820,18 +4747,67 @@ fn main() -> Result<(), sqlx::Error> {
         },
         ..Default::default()
     };
-
+    // let active_runs = vec![
+    //     "3cd07788c17d0cd6fdb4d6a10893fd93".to_string(),
+    //     "d71d366dfb4902607e8351284ce247e5".to_string(),
+    //     "c56b5b515c647089b36ffd4c6e98f343".to_string(),
+    // ];
+    // let df_metrics = get_state_metrics_duck(&duckdb_pool, &active_runs).unwrap();
+    // use polars::lazy::prelude::*;
+    // let t = Instant::now();
+    // let df = df
+    //     .lazy()
+    //     .filter(col("variable").eq(lit("loss_batch")))
+    //     .filter(col("train_id").eq(lit("3cd07788c17d0cd6fdb4d6a10893fd93")))
+    //     .sort("x", Default::default())
+    //     .collect()
+    //     .expect("filter");
+    // println!("filter: {}", t.elapsed().as_millis());
+    // let t = Instant::now();
+    // let df = df
+    //     .lazy()
+    //     .filter(col("variable").eq(lit("loss_batch")))
+    //     .filter(col("train_id").eq(lit("3cd07788c17d0cd6fdb4d6a10893fd93")))
+    //     .sort("x", Default::default())
+    //     .collect()
+    //     .expect("filter");
+    // println!("filter: {}", t.elapsed().as_millis());
+    // panic!();
+    // let t = df.lazy()
+    //     .filter(
+    //         &df.column("train_id")
+    //             .unwrap()
+    //             .equal("3cd07788c17d0cd6fdb4d6a10893fd93")
+    //             .unwrap(), // .eq("3cd07788c17d0cd6fdb4d6a10893fd93"),
+    //     )
+    //     .unwrap();
+    // t.column("")
+    // t.wind
+    // t.group_by_rolling(, )
+    // let sampled = t.sample_n_literal(1000, false, false, None).unwrap();
+    // println!("df: {:?
+    let runs2 = Runs2 {
+        runs: DataFrame::empty(),          //duck_runs,
+        metrics: Some(DataFrame::empty()), //df_metrics,
+        active_runs: Vec::new(),
+        plot_map: HashMap::new(),
+        run_params: HashMap::new(),
+    };
     let _ = eframe::run_native(
         "Visualizer",
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Box::<GuiRuns>::new(GuiRuns {
+            let mut gui_runs = GuiRuns {
+                duckdb: duckdb_pool,
                 runs: Default::default(),
+                runs2,
                 // dirty: true,
-                db_train_runs_sender: tx_db_filters,
-                db_reciever: rx,
-                recomputed_reciever: rx_gui_recomputed,
+                db_train_runs_sender: tx_new_train_runs_to_db,
+                db_reciever: rx_new_runs_from_db,
+                rx_plot_map,
+                tx_active_runs,
+                // recomputed_reciever: rx_gui_recomputed,
                 gui_params_sender: tx_gui_dirty,
                 initialized: false,
                 data_status: DataStatus::Waiting,
@@ -3900,7 +4876,16 @@ fn main() -> Result<(), sqlx::Error> {
                 table_active: false,
                 db_train_runs_sender_slot: None,
                 gui_params_sender_slot: None,
-            })
+                plot_timer: Instant::now() + std::time::Duration::from_secs(2),
+                rx_run_params,
+            };
+            gui_runs.update_filtered_runs();
+            gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs.active_runs.clone());
+            gui_runs.gui_params_sender_slot =
+                Some((gui_runs.gui_params.clone(), gui_runs.runs.runs.clone()));
+            // gui_runs.update_plot_map();
+
+            Box::<GuiRuns>::new(gui_runs)
         }),
     )
     .unwrap();
