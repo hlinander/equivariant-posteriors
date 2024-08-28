@@ -2,19 +2,21 @@ use chrono::NaiveDateTime;
 use clap::Parser;
 use duckdb::arrow2::legacy::utils::CustomIterTools;
 use duckdb::polars::frame::DataFrame;
-use eframe::egui;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
+use eframe::{egui, App};
 use egui::{epaint, Stroke, TextBuffer};
 use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
 use polars::lazy::dsl::{col, lit};
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::{Borrow, BorrowMut};
 use std::error::Error;
 use std::fs::File;
+use std::io::{Read, Write};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -111,11 +113,12 @@ enum XAxis {
     Time,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct RunsFilter {
     filter: HashMap<String, HashSet<String>>,
     param_name_filter: String,
     time_filter_idx: usize,
+    #[serde(skip)]
     time_filter: Option<chrono::NaiveDateTime>,
 }
 
@@ -130,14 +133,19 @@ impl RunsFilter {
     }
 }
 
-#[derive(Debug, Clone)]
-struct GuiParams {
-    n_average: usize,
-    max_n: usize,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Filters {
     param_filters: Vec<RunsFilter>,
     metric_filters: HashSet<String>,
     artifact_filters: HashSet<String>,
     inspect_params: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct GuiParams {
+    n_average: usize,
+    max_n: usize,
+    filters: Filters,
     // table_sorting: HashSet<String>,
     x_axis: XAxis,
     npy_plot_size: f64,
@@ -1083,7 +1091,7 @@ fn get_train_ids_from_filter_duck(
     let duck = pool.get().unwrap();
 
     let mut train_ids = Vec::new();
-    for param_filter in &gui_params.param_filters {
+    for param_filter in &gui_params.filters.param_filters {
         let non_empty_filters = param_filter
             .filter
             .iter()
@@ -1119,6 +1127,7 @@ fn get_train_ids_from_filter_duck(
 
 fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams) -> Vec<String> {
     if gui_params
+        .filters
         .param_filters
         .iter()
         .flat_map(|hs| hs.filter.values())
@@ -1128,7 +1137,7 @@ fn get_train_ids_from_filter(runs: &HashMap<String, Run>, gui_params: &GuiParams
     }
     runs.iter()
         .filter_map(|run| {
-            for param_filters in &gui_params.param_filters {
+            for param_filters in &gui_params.filters.param_filters {
                 let mut contains_run = true;
                 if let Some(time_filter) = param_filters.time_filter {
                     if run.1.created_at < time_filter {
@@ -1240,6 +1249,13 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
 }
 
 impl eframe::App for GuiRuns {
+    fn on_exit(&mut self) {
+        // self.gui_params.filters
+        let serialized = ron::to_string(&self.gui_params.filters).expect("Failed to serialize");
+
+        let mut file = File::create("last_filters.ron").unwrap();
+        file.write_all(serialized.as_bytes()).unwrap();
+    }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let t_update = Instant::now();
 
@@ -1365,13 +1381,16 @@ impl eframe::App for GuiRuns {
             .min_width(10.0)
             .show(ctx, |ui| {
                 // ui.separator();
-                // for param_filter in &mut self.gui_params.param_filters {
+                // for param_filter in &mut self.gui_params.filters.param_filters {
                 let t = Instant::now();
 
                 if ui.small_button("+").clicked() {
-                    self.gui_params.param_filters.push(RunsFilter::new());
+                    self.gui_params
+                        .filters
+                        .param_filters
+                        .push(RunsFilter::new());
                 }
-                for param_filter in &mut self.gui_params.param_filters {
+                for param_filter in &mut self.gui_params.filters.param_filters {
                     for param_name in self.gui_params.param_values.keys() {
                         if !param_filter.filter.contains_key(param_name) {
                             param_filter
@@ -1380,7 +1399,7 @@ impl eframe::App for GuiRuns {
                         }
                     }
                 }
-                let mut temp_param_filters = self.gui_params.param_filters.clone();
+                let mut temp_param_filters = self.gui_params.filters.param_filters.clone();
                 let mut changed = false;
                 for i in 0..temp_param_filters.len() {
                     ui.collapsing(format!("filter {}", i), |ui| {
@@ -1394,9 +1413,9 @@ impl eframe::App for GuiRuns {
                         //     ctx,
                         // );
                     });
-                    changed |= temp_param_filters[i] != self.gui_params.param_filters[i];
+                    changed |= temp_param_filters[i] != self.gui_params.filters.param_filters[i];
                 }
-                self.gui_params.param_filters = temp_param_filters;
+                self.gui_params.filters.param_filters = temp_param_filters;
                 if changed {
                     // println!("changed!");
                     get_train_ids_from_filter_duck(
@@ -1405,7 +1424,9 @@ impl eframe::App for GuiRuns {
                         &self.gui_params,
                     );
                     self.update_filtered_runs();
-                    for (idx, param_filter) in self.gui_params.param_filters.iter().enumerate() {
+                    for (idx, param_filter) in
+                        self.gui_params.filters.param_filters.iter().enumerate()
+                    {
                         // println!("filter {}", idx);
                         for (k, v) in param_filter.filter.iter() {
                             if !v.is_empty() {
@@ -1506,7 +1527,7 @@ fn label_from_active_inspect_params(
     run_params: &HashMap<(String, String), String>,
     gui_params: &GuiParams,
 ) -> String {
-    let label = if gui_params.inspect_params.is_empty() {
+    let label = if gui_params.filters.inspect_params.is_empty() {
         run_params
             .get(&(train_id, "ensemble_id".into()))
             .unwrap()
@@ -1515,6 +1536,7 @@ fn label_from_active_inspect_params(
     } else {
         let empty = "".to_string();
         gui_params
+            .filters
             .inspect_params
             .iter()
             .sorted()
@@ -1581,6 +1603,7 @@ fn show_artifacts(
             // let mut to_be_reloaded = None;
             {
                 for (_artifact_name, filtered_arrays) in gui_params
+                    .filters
                     .artifact_filters
                     .iter()
                     .filter(|name| available_artifact_names.contains(name))
@@ -1759,6 +1782,7 @@ fn show_artifacts(
                 // ui.set_max_width(ui.available_width());
                 // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                 for (_artifact_name, filtered_arrays) in gui_params
+                    .filters
                     .artifact_filters
                     .iter()
                     .filter(|name| available_artifact_names.contains(name))
@@ -1832,6 +1856,7 @@ fn show_artifacts(
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
             // println!("render tabular");
             for (_artifact_name, filtered_arrays) in gui_params
+                .filters
                 .artifact_filters
                 .iter()
                 .filter(|name| available_artifact_names.contains(name))
@@ -2502,14 +2527,19 @@ fn render_npy_artifact_tabular(
     });
 }
 enum Tree {
-    Node(String, String, String),
+    Node {
+        cat: String,
+        rest: String,
+        path: String,
+        full_cat: String,
+    },
     Leaf(String, String),
 }
 
 #[derive(PartialEq)]
 enum Group {
     Leaf,
-    Category(String),
+    Category(String, String),
 }
 
 fn update_plot_map(
@@ -2792,12 +2822,12 @@ impl GuiRuns {
                             )
                             .show_header(ui, |ui| {
                                 let mut param_toggle =
-                                    self.gui_params.inspect_params.contains(name);
+                                    self.gui_params.filters.inspect_params.contains(name);
                                 ui.toggle_value(&mut param_toggle, name);
                                 if !param_toggle {
-                                    self.gui_params.inspect_params.remove(name);
+                                    self.gui_params.filters.inspect_params.remove(name);
                                 } else {
-                                    self.gui_params.inspect_params.insert(name.clone());
+                                    self.gui_params.filters.inspect_params.insert(name.clone());
                                 }
                             })
                             .body(|ui| {
@@ -2897,13 +2927,20 @@ impl GuiRuns {
                     false, // !param_group_name.ends_with("_id"),
                 )
                 .show_header(ui, |ui| {
-                    let mut param_toggle =
-                        self.gui_params.inspect_params.contains(&param_group_name);
+                    let mut param_toggle = self
+                        .gui_params
+                        .filters
+                        .inspect_params
+                        .contains(&param_group_name);
                     ui.toggle_value(&mut param_toggle, &param_group_name);
                     if !param_toggle {
-                        self.gui_params.inspect_params.remove(&param_group_name);
+                        self.gui_params
+                            .filters
+                            .inspect_params
+                            .remove(&param_group_name);
                     } else {
                         self.gui_params
+                            .filters
                             .inspect_params
                             .insert(param_group_name.clone());
                     }
@@ -3000,7 +3037,7 @@ impl GuiRuns {
         param_filter: &mut RunsFilter,
         ctx: &egui::Context,
     ) -> bool {
-        let frame_border = if self.gui_params.inspect_params.contains(param_name) {
+        let frame_border = if self.gui_params.filters.inspect_params.contains(param_name) {
             1.0
         } else {
             0.0
@@ -3156,7 +3193,7 @@ impl GuiRuns {
             .flat_map(|run_id| self.runs.runs.get(run_id).unwrap().params.keys())
             .unique()
             .sorted_by_key(|&param_name| {
-                if self.gui_params.inspect_params.contains(param_name) {
+                if self.gui_params.filters.inspect_params.contains(param_name) {
                     (0, param_name.clone())
                 } else {
                     (1, param_name.clone())
@@ -3172,7 +3209,8 @@ impl GuiRuns {
                 .header(20.0, |mut header| {
                     header.col(|_ui| {});
                     for param_name in &param_keys {
-                        let color = if self.gui_params.inspect_params.contains(*param_name) {
+                        let color = if self.gui_params.filters.inspect_params.contains(*param_name)
+                        {
                             egui::Color32::GREEN
                         } else {
                             egui::Color32::WHITE
@@ -3250,12 +3288,24 @@ impl GuiRuns {
         let tree = v
             .iter()
             .map(|x| match x.split_once(".") {
-                Some((cat, rest)) => Tree::Node(cat.to_string(), rest.to_string(), x.clone()),
+                Some((cat, rest)) => Tree::Node {
+                    cat: cat.to_string(),
+                    rest: rest.to_string(),
+                    path: x.clone(),
+                    full_cat: cat.to_string(),
+                },
                 None => Tree::Leaf(x.clone(), x.clone()),
             })
             .collect_vec();
 
-        render_param_tree(param_filter, &runs, tree, ui);
+        // self.gui_params.filters.inspect_params
+        render_param_tree(
+            &mut self.gui_params.filters.inspect_params,
+            param_filter,
+            &runs,
+            tree,
+            ui,
+        );
         // ui.add(egui::CollapsingHeader::new("test").show()
         // dbg!(runs.group_by([col("variable")]))
     }
@@ -3380,8 +3430,8 @@ impl GuiRuns {
         let filtered_metric_names: Vec<String> = metric_names
             .into_iter()
             .filter(|name| {
-                self.gui_params.metric_filters.contains(name)
-                    || self.gui_params.metric_filters.is_empty()
+                self.gui_params.filters.metric_filters.contains(name)
+                    || self.gui_params.filters.metric_filters.is_empty()
             })
             .collect();
         let plot_width = if filtered_metric_names.len() <= 2 {
@@ -3548,15 +3598,19 @@ impl GuiRuns {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical(|ui| {
                     for metric_name in metric_names {
-                        let active_filter = self.gui_params.metric_filters.contains(metric_name);
+                        let active_filter =
+                            self.gui_params.filters.metric_filters.contains(metric_name);
                         if ui
                             .add(egui::Button::new(metric_name).selected(active_filter))
                             .clicked()
                         {
-                            if self.gui_params.metric_filters.contains(metric_name) {
-                                self.gui_params.metric_filters.remove(metric_name);
+                            if self.gui_params.filters.metric_filters.contains(metric_name) {
+                                self.gui_params.filters.metric_filters.remove(metric_name);
                             } else {
-                                self.gui_params.metric_filters.insert(metric_name.clone());
+                                self.gui_params
+                                    .filters
+                                    .metric_filters
+                                    .insert(metric_name.clone());
                             }
                             // self.dirty = true;
                             self.update_filtered_runs();
@@ -3589,15 +3643,27 @@ impl GuiRuns {
                         if ui
                             .add(
                                 egui::Button::new(artifact_name).selected(
-                                    self.gui_params.artifact_filters.contains(artifact_name),
+                                    self.gui_params
+                                        .filters
+                                        .artifact_filters
+                                        .contains(artifact_name),
                                 ),
                             )
                             .clicked()
                         {
-                            if self.gui_params.artifact_filters.contains(artifact_name) {
-                                self.gui_params.artifact_filters.remove(artifact_name);
+                            if self
+                                .gui_params
+                                .filters
+                                .artifact_filters
+                                .contains(artifact_name)
+                            {
+                                self.gui_params
+                                    .filters
+                                    .artifact_filters
+                                    .remove(artifact_name);
                             } else {
                                 self.gui_params
+                                    .filters
                                     .artifact_filters
                                     .insert(artifact_name.clone());
                             }
@@ -3615,6 +3681,7 @@ impl GuiRuns {
     ) {
         let active_artifact_types: Vec<ArtifactType> = self
             .gui_params
+            .filters
             .artifact_filters
             .iter()
             .map(|artifact_name| {
@@ -3660,7 +3727,7 @@ impl GuiRuns {
                 {
                     for (_artifact_name, artifact_id) in
                         run.artifacts.iter().filter(|&(art_name, _)| {
-                            self.gui_params.artifact_filters.contains(art_name)
+                            self.gui_params.filters.artifact_filters.contains(art_name)
                         })
                     {
                         // println!("[artifacts] filtered {} {}", run_id, artifact_name);
@@ -3745,13 +3812,14 @@ impl GuiRuns {
 }
 
 fn render_param_tree(
+    inspect_filters: &mut HashSet<String>,
     param_filter: &mut RunsFilter,
     runs: &DataFrame,
     tree: Vec<Tree>,
     ui: &mut egui::Ui,
 ) {
     let groups = tree.into_iter().group_by(|el| match el {
-        Tree::Node(cat, _, _) => Group::Category(cat.clone()),
+        Tree::Node { cat, full_cat, .. } => Group::Category(cat.clone(), full_cat.clone()),
         Tree::Leaf(name, _) => Group::Leaf,
     });
     for (key, group) in groups.into_iter() {
@@ -3761,82 +3829,146 @@ fn render_param_tree(
                 for node in group {
                     if let Tree::Leaf(name, path) = node {
                         // ui.button(name);
-                        ui.collapsing(name, |ui| {
-                            let values = runs
-                                .filter(
-                                    &runs
-                                        .column("variable")
-                                        .unwrap()
-                                        .equal(path.as_str())
-                                        .unwrap(),
-                                )
-                                .unwrap();
-                            let values = values.columns(["value_int", "value_text"]).unwrap();
-                            let mut multival = values[0]
-                                .iter()
-                                .map(|x| match x {
-                                    AnyValue::Int32(val) => val,
-                                    _ => 0,
-                                })
-                                .zip(values[1].iter().map(|x| x.get_str().unwrap().to_string()))
-                                .unique()
-                                .collect_vec();
-                            multival.sort();
-                            ui.horizontal_wrapped(|ui| {
-                                for (_val_int, val_str) in multival.into_iter() {
-                                    let has_val =
-                                        param_filter.filter.get(&path).unwrap().contains(&val_str);
-                                    // ui.label(val_str);
-                                    let color = if has_val {
-                                        egui::Color32::LIGHT_GREEN
-                                    } else {
-                                        ui.ctx().style().visuals.widgets.inactive.bg_fill
-                                    };
-                                    let button = ui.add(
-                                        egui::Button::new(&val_str)
-                                            .stroke(egui::Stroke::new(1.0, color)),
-                                    );
-                                    if button.clicked() {
-                                        if has_val {
-                                            param_filter
-                                                .filter
-                                                .get_mut(&path)
-                                                .unwrap()
-                                                .remove(&val_str);
+                        let opened = !param_filter.filter.get(&path).unwrap().is_empty();
+                        // .filter
+                        // .iter()
+                        // .any(|(key, vals)| key.starts_with(&path) && !vals.is_empty());
+                        let header_text = if inspect_filters.contains(&path) {
+                            egui::RichText::new(name)
+                                .underline()
+                                .color(egui::Color32::GREEN)
+                        } else {
+                            egui::RichText::new(name)
+                        };
+                        fn circle_icon(
+                            ui: &mut egui::Ui,
+                            openness: f32,
+                            response: &egui::Response,
+                        ) {
+                            let stroke = ui.style().interact(&response).fg_stroke;
+                            let radius = egui::lerp(2.0..=3.0, openness);
+                            ui.painter().circle_filled(
+                                response.rect.center(),
+                                radius,
+                                stroke.color,
+                            );
+                        }
+                        let header_response = egui::CollapsingHeader::new(header_text)
+                            .icon(circle_icon)
+                            .default_open(opened)
+                            .show(ui, |ui| {
+                                // ui.collapsing(name, |ui| {
+                                let values = runs
+                                    .filter(
+                                        &runs
+                                            .column("variable")
+                                            .unwrap()
+                                            .equal(path.as_str())
+                                            .unwrap(),
+                                    )
+                                    .unwrap();
+                                let values = values.columns(["value_int", "value_text"]).unwrap();
+                                let mut multival = values[0]
+                                    .iter()
+                                    .map(|x| match x {
+                                        AnyValue::Int32(val) => val,
+                                        _ => 0,
+                                    })
+                                    .zip(values[1].iter().map(|x| x.get_str().unwrap().to_string()))
+                                    .unique()
+                                    .collect_vec();
+                                multival.sort();
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui
+                                        .selectable_label(inspect_filters.contains(&path), "label")
+                                        .clicked()
+                                    {
+                                        if !inspect_filters.contains(&path) {
+                                            inspect_filters.insert(path.clone());
                                         } else {
-                                            param_filter
-                                                .filter
-                                                .get_mut(&path)
-                                                .unwrap()
-                                                .insert(val_str.clone());
-                                            dbg!(&path, val_str);
+                                            inspect_filters.remove(&path);
                                         }
                                     }
-                                }
+                                    for (_val_int, val_str) in multival.into_iter() {
+                                        let has_val = param_filter
+                                            .filter
+                                            .get(&path)
+                                            .unwrap()
+                                            .contains(&val_str);
+                                        // ui.label(val_str);
+                                        let color = if has_val {
+                                            egui::Color32::LIGHT_GREEN
+                                        } else {
+                                            ui.ctx().style().visuals.widgets.inactive.bg_fill
+                                        };
+                                        let button = ui.add(
+                                            egui::Button::new(&val_str)
+                                                .stroke(egui::Stroke::new(1.0, color)),
+                                        );
+                                        if button.clicked() {
+                                            if has_val {
+                                                param_filter
+                                                    .filter
+                                                    .get_mut(&path)
+                                                    .unwrap()
+                                                    .remove(&val_str);
+                                            } else {
+                                                param_filter
+                                                    .filter
+                                                    .get_mut(&path)
+                                                    .unwrap()
+                                                    .insert(val_str.clone());
+                                                dbg!(&path, val_str);
+                                            }
+                                        }
+                                    }
+                                });
                             });
-                        });
+                        if header_response.header_response.secondary_clicked() {
+                            if !inspect_filters.contains(&path) {
+                                inspect_filters.insert(path.clone());
+                            } else {
+                                inspect_filters.remove(&path);
+                            }
+                        }
                     }
                 }
             }
-            Group::Category(cat) => {
-                ui.collapsing(cat, |ui| {
-                    let subtree = group
-                        .iter()
-                        .map(|el| {
-                            if let Tree::Node(_, rest, path) = el {
-                                match rest.split_once(".") {
-                                    Some((cat, rest)) => {
-                                        Tree::Node(cat.to_string(), rest.to_string(), path.clone())
+            Group::Category(cat, full_cat) => {
+                let opened = param_filter
+                    .filter
+                    .iter()
+                    .any(|(key, vals)| key.starts_with(&full_cat) && !vals.is_empty());
+                egui::CollapsingHeader::new(cat)
+                    .default_open(opened)
+                    .show(ui, |ui| {
+                        // ui.collapsing(cat, |ui| {
+                        let subtree = group
+                            .iter()
+                            .map(|el| {
+                                if let Tree::Node {
+                                    rest,
+                                    path,
+                                    full_cat,
+                                    ..
+                                } = el
+                                {
+                                    match rest.split_once(".") {
+                                        Some((cat, rest)) => Tree::Node {
+                                            cat: cat.to_string(),
+                                            rest: rest.to_string(),
+                                            path: path.clone(),
+                                            full_cat: format!("{full_cat}.{cat}"),
+                                        },
+                                        None => Tree::Leaf(rest.clone(), path.clone()),
                                     }
-                                    None => Tree::Leaf(rest.clone(), path.clone()),
+                                } else {
+                                    Tree::Leaf("error".to_string(), "error".to_string())
                                 }
-                            } else {
-                                Tree::Leaf("error".to_string(), "error".to_string())
-                            }
-                        })
-                        .collect_vec();
-                    render_param_tree(param_filter, runs, subtree, ui);
-                });
+                            })
+                            .collect_vec();
+                        render_param_tree(inspect_filters, param_filter, runs, subtree, ui);
+                    });
                 // ui.label(cat);
             }
         }
@@ -4371,7 +4503,8 @@ fn get_metrics_duck(
              t.variable as variable,
              t.xaxis as xaxis,
              FLOOR(t.x / bs.size) AS bucket,
-             AVG(t.value) AS value, AVG(t.x) as x
+             AVG(t.value) AS value, (bucket * ANY_VALUE(bs.size))::DOUBLE as x
+             -- AVG(t.value) AS value, AVG(t.x) as x
          FROM local.metrics t
          JOIN bucket_size bs
          ON t.train_id = bs.train_id AND t.variable = bs.variable
@@ -4397,7 +4530,7 @@ fn get_metrics_duck(
 fn sync_metrics_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
-    limit: usize,
+    limit: &mut usize,
 ) -> bool {
     ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
@@ -4422,6 +4555,8 @@ fn sync_metrics_duck(
         ",
             max_id, limit
         );
+        println!("{query} {}", train_id);
+        let t = Instant::now();
         conn.execute(&query, [train_id]).expect("sync runs failed");
         let max_id_post: i32 = conn
             .query_row(
@@ -4432,6 +4567,14 @@ fn sync_metrics_duck(
             .unwrap();
         if max_id_post != max_id {
             updated = true;
+        }
+        if max_id_post != max_id && t.elapsed().as_millis() < 500 {
+            *limit = *limit * 2;
+            println!("increasing metric limit to {}", limit);
+        }
+        if max_id_post != max_id && t.elapsed().as_millis() > 2000 {
+            *limit = (*limit / 2).max(100);
+            println!("decreasing metric limit to {}", limit);
         }
     }
     updated
@@ -4614,6 +4757,18 @@ fn main() -> Result<(), sqlx::Error> {
     let manager = DuckdbConnectionManager::memory().unwrap();
     let duckdb_pool = r2d2::Pool::builder().build(manager).unwrap();
     let conn = duckdb_pool.get().unwrap();
+    let threads: i32 = conn
+        .query_row(
+            "
+            SELECT value
+FROM duckdb_settings()
+WHERE name = 'threads';
+        ",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check threads");
+    println!("duckdb threads {}", threads);
     conn.execute("INSTALL postgres;", [])
         .expect("install postgres failed");
     conn.execute("LOAD postgres;", [])
@@ -4635,21 +4790,13 @@ fn main() -> Result<(), sqlx::Error> {
             let start = Instant::now();
             if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
                 train_runs = new_train_ids;
-                limit = 100;
+                limit = 1000;
                 println!("{:?}", train_runs);
             }
             let t = Instant::now();
-            let updated = sync_metrics_duck(&db_thread_pool, &train_runs, limit);
+            let updated = sync_metrics_duck(&db_thread_pool, &train_runs, &mut limit);
             if updated {
                 println!("sync elapsed {}", t.elapsed().as_millis());
-            }
-            if updated && t.elapsed().as_millis() < 500 {
-                limit = limit * 2;
-                println!("increasing metric limit to {}", limit);
-            }
-            if updated && t.elapsed().as_millis() > 2000 {
-                limit = (limit / 2).max(100);
-                println!("decreasing metric limit to {}", limit);
             }
             // println!("sync loop {}", start.elapsed().as_millis());
             // if start.elapsed().as_millis() < 10
@@ -4793,6 +4940,13 @@ fn main() -> Result<(), sqlx::Error> {
         plot_map: HashMap::new(),
         run_params: HashMap::new(),
     };
+    let mut filters: Option<Filters> = None;
+    if let Ok(mut file) = File::open("last_filters.ron") {
+        let mut content = String::new();
+        if let Ok(_) = file.read_to_string(&mut content) {
+            filters = Some(ron::from_str(&content).expect("Failed to deserialize"));
+        }
+    }
     let _ = eframe::run_native(
         "Visualizer",
         options,
@@ -4813,11 +4967,7 @@ fn main() -> Result<(), sqlx::Error> {
                 data_status: DataStatus::Waiting,
                 gui_params: GuiParams {
                     max_n: 1000,
-                    param_filters: Vec::new(),
-                    metric_filters: HashSet::new(),
-                    inspect_params: HashSet::new(),
                     n_average: 0,
-                    artifact_filters: HashSet::new(),
                     // time_filter: None,
                     // time_filter_idx: 0,
                     x_axis: XAxis::Batch,
@@ -4828,6 +4978,12 @@ fn main() -> Result<(), sqlx::Error> {
                     param_values: HashMap::new(),
                     filtered_values: HashMap::new(),
                     next_param_update: std::time::Instant::now(),
+                    filters: filters.unwrap_or(Filters {
+                        param_filters: Vec::new(),
+                        metric_filters: HashSet::new(),
+                        inspect_params: HashSet::new(),
+                        artifact_filters: HashSet::new(),
+                    }),
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
