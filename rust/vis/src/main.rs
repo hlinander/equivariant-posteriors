@@ -23,6 +23,7 @@ use std::thread::sleep;
 use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use wgpu::core::command::render_ffi::wgpu_render_pass_set_index_buffer;
 use wgpu::util::DeviceExt;
 // use sqlx::types::JsonValue
 use glsl_layout::Uniform;
@@ -33,7 +34,7 @@ use std::ops::RangeInclusive;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
 use duckdb::polars::prelude::*;
-use duckdb::{params, Connection, Polars, Result};
+use duckdb::{params, params_from_iter, Connection, Polars, Result};
 use duckdb::{polars, DuckdbConnectionManager};
 // duckdb::polars::co
 use r2d2::{ManageConnection, Pool};
@@ -1115,12 +1116,20 @@ fn get_train_ids_from_filter_duck(
             .iter()
             .filter(|(_, vs)| !vs.is_empty())
             .collect_vec();
+        // let p = repeat_vars(non_empty_filters.len());
         let sql_where = non_empty_filters
             .iter()
+            // .zip(p)
             .map(|(param_name, values)| {
                 let ored_values = values
                     .iter()
-                    .map(|value| format!("(variable='{}' AND value_text='{}')", param_name, value))
+                    .map(|value| {
+                        format!(
+                            "(variable='{}' AND value_text=?)",
+                            param_name,
+                            // value.escape_default()
+                        )
+                    })
                     .join(" OR ");
                 format!("({})", ored_values)
             })
@@ -1132,13 +1141,21 @@ fn get_train_ids_from_filter_duck(
         let sql = format!(
             "SELECT train_id FROM local.runs WHERE {sql_where} GROUP BY train_id HAVING COUNT(*)={n_filters}"
         );
-        let mut stmt = duck.prepare(&sql).unwrap();
-        let ids: Vec<String> = stmt
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .map(|x| x.unwrap())
-            .collect();
-        train_ids.extend_from_slice(&ids);
+        if let Ok(mut stmt) = duck.prepare(&sql) {
+            let ids: Vec<String> = stmt
+                .query_map(
+                    params_from_iter(
+                        non_empty_filters
+                            .iter()
+                            .flat_map(|(_, values)| values.iter()),
+                    ),
+                    |row| row.get(0),
+                )
+                .unwrap()
+                .map(|x| x.unwrap())
+                .collect();
+            train_ids.extend_from_slice(&ids);
+        }
     }
     train_ids.into_iter().unique().collect()
 }
@@ -1238,14 +1255,6 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
                     } else {
                         0..=0
                     };
-                    // let vals: Vec<f64> = window
-                    //     .map(|sub_idx| {
-                    //         let idx = orig_idx as i32 + sub_idx;
-                    //         metric.values[idx as usize][1]
-                    //     })
-                    //     .sorted_by(|a, b| a.partial_cmp(b).unwrap())
-                    //     .collect();
-                    // let mean_val = vals[vals.len() / 2];
                     let sum: f64 = window
                         .clone()
                         .map(|sub_idx| {
@@ -1254,11 +1263,7 @@ fn resample(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
                         })
                         .sum();
                     let mean_val = sum / window.count() as f64;
-                    [
-                        metric.values[orig_idx][0],
-                        mean_val,
-                        // metric.values[orig_idx][2],
-                    ]
+                    [metric.values[orig_idx][0], mean_val]
                 })
                 .collect();
             metric.resampled = fvalues;
@@ -1298,9 +1303,7 @@ impl eframe::App for GuiRuns {
                 self.db_train_runs_sender_slot = Some(db_train_runs_package);
             }
         }
-        // let t = Instant::now();
         if Instant::now() > self.plot_timer {
-            // self.runs2.metrics = Some(get_metrics_duck(&self.duckdb, &self.runs2.active_runs));
             self.plot_timer = Instant::now() + std::time::Duration::from_secs(2);
             self.tx_active_runs
                 .send(self.runs2.active_runs.clone())
@@ -1324,21 +1327,17 @@ impl eframe::App for GuiRuns {
                     )
                 })
                 .collect();
-            // println!("{:?}", self.runs2.artifacts);
         }
         if let Ok(new_run_params) = self.rx_run_params.try_recv() {
             self.runs2.run_params = new_run_params;
+            self.update_filtered_runs();
         }
         while let Ok(new_runs) = self.db_reciever.try_recv() {
             for train_id in new_runs.keys() {
                 if !self.runs.runs.contains_key(train_id) {
                     let t = Instant::now();
                     let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
-                    // println!("get_train_ids_from_filter {}", t.elapsed().as_millis());
-                    // println!("[app] recieved new runs, sending to compute...");
                     self.db_train_runs_sender_slot = Some(new_active);
-                    // self.db_train_runs_sender.try_send(new_active);
-                    // .expect("Failed to send train runs to db thread");
                     break;
                 }
             }
@@ -1346,13 +1345,7 @@ impl eframe::App for GuiRuns {
             if self.data_status == DataStatus::Waiting {
                 self.data_status = DataStatus::FirstDataArrived;
             }
-            // self.recompute();
         }
-        // return;
-
-        // let t = Instant::now();
-        // let run_params = get_run_params(&self.duckdb);
-        // println!("get_run_params {}", t.elapsed().as_millis());
 
         let t = Instant::now();
 
@@ -1381,42 +1374,27 @@ impl eframe::App for GuiRuns {
             .active_runs
             .iter()
             .map(|run_id| {
-                // let train_id = run.params.get("train_id").unwrap();
                 let ensemble_id = label_from_active_inspect_params(
                     run_id.clone(),
                     &self.runs2.run_params,
                     &self.gui_params,
-                ); // run.params.get("ensemble_id").unwrap();
-                (
-                    // train_id.clone(),
-                    run_id.clone(),
-                    *ensemble_colors.get(&ensemble_id).unwrap(),
-                )
+                );
+                (run_id.clone(), *ensemble_colors.get(&ensemble_id).unwrap())
             })
             .collect();
-        // println!("colors {}", t.elapsed().as_millis());
 
-        // let param_values = get_parameter_values(&self.runs, true);
         if std::time::Instant::now() > self.gui_params.next_param_update {
             self.gui_params.next_param_update =
                 std::time::Instant::now() + std::time::Duration::from_secs(10);
-            // self.gui_params.param_values = get_parameter_values(&self.runs, true);
             let t = Instant::now();
 
-            // self.runs2.runs = get_runs_duck(&self.duckdb);
             self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
-            // println!("get runs and param values {}", t.elapsed().as_millis());
-
-            // self.gui_params.filtered_values = get_parameter_values(&self.runs, false);
         }
 
         egui::SidePanel::left("Controls")
             .resizable(true)
-            // .default_width(200.0)
             .min_width(10.0)
             .show(ctx, |ui| {
-                // ui.separator();
-                // for param_filter in &mut self.gui_params.filters.param_filters {
                 let t = Instant::now();
 
                 if ui.small_button("+").clicked() {
@@ -1443,46 +1421,28 @@ impl eframe::App for GuiRuns {
                             remove_idx = Some(i);
                         }
                         self.render_time_selector(ui, &mut temp_param_filters[i]);
-                        self.render_params2(&mut temp_param_filters[i], ui);
-                        // changed |= self.render_parameters(
-                        //     ui,
-                        //     self.gui_params.param_values.clone(),
-                        //     self.gui_params.filtered_values.clone(),
-                        //     &mut temp_param_filters[i],
-                        //     ctx,
-                        // );
+                        self.render_params2(&mut temp_param_filters[i], ui, &run_ensemble_color);
                     });
                     changed |= temp_param_filters[i] != self.gui_params.filters.param_filters[i];
                 }
                 self.gui_params.filters.param_filters = temp_param_filters;
                 if changed {
-                    // println!("changed!");
-                    // get_train_ids_from_filter_duck(
-                    //     &self.duckdb,
-                    //     &self.runs2.runs,
-                    //     &self.gui_params,
-                    // );
                     self.update_filtered_runs();
                     for (idx, param_filter) in
                         self.gui_params.filters.param_filters.iter().enumerate()
                     {
-                        // println!("filter {}", idx);
                         for (k, v) in param_filter.filter.iter() {
                             if !v.is_empty() {
                                 println!("{}: {:?}", k, v);
                             }
                         }
-                        // for param_filter.filter
                     }
                     self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
-                    // self.gui_params_sender_slot =
-                    // Some((self.gui_params.clone(), self.runs.runs.clone()));
                 }
                 if let Some(remove_idx) = remove_idx {
                     self.gui_params.filters.param_filters.remove(remove_idx);
                     self.update_filtered_runs();
                 }
-                // println!("render controls {}", t.elapsed().as_millis());
             });
         let t = Instant::now();
 
@@ -1502,8 +1462,8 @@ impl eframe::App for GuiRuns {
                 self.render_metrics(ui, &metric_names);
                 ui.separator();
                 self.render_artifact_selector(ui);
+                ui.separator();
             });
-        // println!("render_artifact_selector {}", t.elapsed().as_millis());
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
@@ -1514,7 +1474,6 @@ impl eframe::App for GuiRuns {
                     if ui.button("Batch").clicked() {
                         self.gui_params.x_axis = XAxis::Batch;
                     }
-                    // self.render_time_selector(ui);
                     while let Ok(batch_status) = self.rx_batch_status.try_recv() {
                         self.batch_status = batch_status;
                     }
@@ -1539,16 +1498,12 @@ impl eframe::App for GuiRuns {
                     self.table_active = collapsing.fully_open();
                     let t = Instant::now();
                     self.render_artifacts(ui, &run_ensemble_color);
-                    // println!("render_artifacts {}", t.elapsed().as_millis());
-                    // self.render_plots(ui, metric_names, &run_ensemble_color);
 
                     self.render_plots2(ui, &run_ensemble_color);
                 });
         });
         self.initialized = true;
         ctx.request_repaint();
-        // ctx.repaint_causes()
-        // println!("update {}", t_update.elapsed().as_millis());
     }
 }
 
@@ -1586,7 +1541,7 @@ fn label_from_active_inspect_params(
                 train_id,
                 name: "ensemble_id".into(),
             })
-            .unwrap()
+            .unwrap_or(&"none000".to_string())
             .clone()[0..6]
             .to_string()
     } else {
@@ -3330,18 +3285,12 @@ impl GuiRuns {
         });
     }
 
-    fn render_params2(&mut self, param_filter: &mut RunsFilter, ui: &mut egui::Ui) {
-        // let runs = get_runs_duck(&self.duckdb);
-        // let runs = &self.runs2.runs;
-        // let variables = self
-        //     .runs2
-        //     .runs
-        // let variables = runs
-        //     .column("variable")
-        //     .unwrap()
-        //     .unique()
-        //     .unwrap()
-        //     .sort(false);
+    fn render_params2(
+        &mut self,
+        param_filter: &mut RunsFilter,
+        ui: &mut egui::Ui,
+        run_ensemble_color: &HashMap<String, egui::Color32>,
+    ) {
         let v = self
             .gui_params
             .param_values
@@ -3349,14 +3298,6 @@ impl GuiRuns {
             .unique()
             .sorted()
             .collect_vec();
-        // println!("{:?}", v);
-        // panic!();
-
-        // let v: Vec<_> = variables
-        //     // .iter()
-        //     .map(|x| x.get_str().unwrap().to_string())
-        //     .collect();
-        // // println!("{:?}", v);
 
         let tree = v
             .into_iter()
@@ -3371,7 +3312,41 @@ impl GuiRuns {
             })
             .collect_vec();
 
-        // self.gui_params.filters.inspect_params
+        let mut diff_counts = HashMap::new();
+        let counts: Vec<_> = self
+            .gui_params
+            .filtered_values
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.len()))
+            .collect();
+        let mut counts: Vec<_> = counts.into_iter().sorted_by_key(|(k, v)| *k).collect();
+        diff_counts.extend(counts.clone().into_iter());
+        let mut num_groups = counts.len();
+        while num_groups > 1 {
+            let groups = counts.into_iter().group_by(|(param_name, count)| {
+                if let Some((left, right)) = param_name.rsplit_once(".") {
+                    left
+                } else {
+                    param_name
+                }
+            });
+            let level = groups
+                .into_iter()
+                .map(|(param_name, group)| {
+                    (
+                        param_name,
+                        group.into_iter().map(|(_, count)| count).max().unwrap_or(0),
+                    )
+                })
+                .collect_vec();
+            diff_counts.extend(level.clone().into_iter());
+            num_groups = level.len();
+            if !level.iter().any(|x| x.0.contains(".")) {
+                num_groups = 1;
+            }
+            counts = level;
+        }
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             render_param_tree(
                 &mut self.gui_params.filters.inspect_params,
@@ -3381,10 +3356,10 @@ impl GuiRuns {
                 &self.runs2.run_params,
                 tree,
                 ui,
+                run_ensemble_color,
+                &diff_counts,
             );
         });
-        // ui.add(egui::CollapsingHeader::new("test").show()
-        // dbg!(runs.group_by([col("variable")]))
     }
 
     fn render_plots2(
@@ -3425,7 +3400,6 @@ impl GuiRuns {
         let plot_height = ui.available_width() / 4.1;
 
         let plots = metric_names
-            // .iter()
             .map(|name| {
                 (
                     name.clone(),
@@ -3437,10 +3411,6 @@ impl GuiRuns {
             })
             .collect_vec();
 
-        // let lazy_df = self.runs2.metrics.clone().lazy();
-        // let mut plot_val_map = self.update_plot_map(lazy_df);
-
-        // for (metric_name, plot) in plots {
         ui.horizontal_wrapped(|ui| {
             for (metric_name_and_axis, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone())
             {
@@ -3449,15 +3419,18 @@ impl GuiRuns {
                         ui.label(metric_name_and_axis.0.clone());
                         let plot_res = plot.show(ui, |plot_ui| {
                             for train_id in self.runs2.active_runs.iter().sorted() {
-                                // let run = self.runs2.runs.get()
-                                // self.runs2.runs.get_row()
                                 if let Some(xy) = self.runs2.plot_map.get(&PlotMapKey {
                                     train_id: train_id.clone(),
                                     variable: metric_name_and_axis.0.clone(),
                                     xaxis: metric_name_and_axis.1.clone(),
                                 }) {
+                                    let xy = xy
+                                        .clone()
+                                        .iter()
+                                        .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
+                                        .collect::<Vec<_>>();
                                     plot_ui.line(
-                                        Line::new(PlotPoints::from(xy.clone()))
+                                        Line::new(PlotPoints::from(xy))
                                             .stroke(Stroke::new(
                                                 1.0,
                                                 *run_ensemble_color
@@ -3958,6 +3931,8 @@ fn render_param_tree(
     // runs: &DataFrame,
     tree: Vec<Tree>,
     ui: &mut egui::Ui,
+    run_ensemble_color: &HashMap<String, egui::Color32>,
+    diff_counts: &HashMap<&str, usize>,
 ) {
     let groups = tree.into_iter().group_by(|el| match el {
         Tree::Node { cat, full_cat, .. } => Group::Category(cat.clone(), full_cat.clone()),
@@ -3969,17 +3944,15 @@ fn render_param_tree(
             Group::Leaf => {
                 for node in group {
                     if let Tree::Leaf(name, path) = node {
-                        // ui.button(name);
                         let opened = !param_filter.filter.get(&path).unwrap().is_empty();
-                        // .filter
-                        // .iter()
-                        // .any(|(key, vals)| key.starts_with(&path) && !vals.is_empty());
+                        let label =
+                            format!("{}({})", name, diff_counts.get(path.as_str()).unwrap_or(&0));
                         let header_text = if inspect_filters.contains(&path) {
-                            egui::RichText::new(name)
+                            egui::RichText::new(label)
                                 .underline()
                                 .color(egui::Color32::GREEN)
                         } else {
-                            egui::RichText::new(name)
+                            egui::RichText::new(label)
                         };
                         fn circle_icon(
                             ui: &mut egui::Ui,
@@ -3998,42 +3971,26 @@ fn render_param_tree(
                             .icon(circle_icon)
                             .default_open(opened)
                             .show(ui, |ui| {
-                                // ui.collapsing(name, |ui| {
-                                // let values = runs
-                                //     .filter(
-                                //         &runs
-                                //             .column("variable")
-                                //             .unwrap()
-                                //             .equal(path.as_str())
-                                //             .unwrap(),
-                                //     )
-                                //     .unwrap();
-                                // let values = values.columns(["value_int", "value_text"]).unwrap();
-
-                                // let mut multival = values[0]
-                                //     .iter()
-                                //     .map(|x| match x {
-                                //         AnyValue::Int32(val) => val,
-                                //         _ => 0,
-                                //     })
-                                //     .zip(values[1].iter().map(|x| x.get_str().unwrap().to_string()))
-                                //     .unique()
-                                //     .collect_vec();
-
                                 let multival = run_params
                                     .iter()
                                     .filter(|(k, v)| k.name == path)
-                                    .map(|(k, v)| v)
-                                    .unique()
-                                    .map(|v| {
+                                    .map(|(k, v)| (v, k.train_id.clone()))
+                                    .sorted_by_key(|x| x.0)
+                                    .group_by(|x| x.0)
+                                    .into_iter()
+                                    // .unique()
+                                    .map(|(v, group)| {
                                         if let Ok(val_int) = v.parse::<i32>() {
-                                            (val_int, v)
+                                            (
+                                                val_int,
+                                                v,
+                                                group.map(|x| x.1).sorted().collect::<Vec<_>>(),
+                                            )
                                         } else {
-                                            (0, v)
+                                            (0, v, group.map(|x| x.1).sorted().collect::<Vec<_>>())
                                         }
                                     })
                                     .sorted();
-                                // multival.sort();
                                 ui.horizontal_wrapped(|ui| {
                                     if ui
                                         .selectable_label(inspect_filters.contains(&path), "label")
@@ -4045,7 +4002,7 @@ fn render_param_tree(
                                             inspect_filters.remove(&path);
                                         }
                                     }
-                                    for (_val_int, val_str) in multival.into_iter() {
+                                    for (_val_int, val_str, train_ids) in multival.into_iter() {
                                         let has_val = param_filter
                                             .filter
                                             .get(&path)
@@ -4056,23 +4013,46 @@ fn render_param_tree(
                                             .unwrap_or(&HashSet::new())
                                             .contains(val_str);
                                         // ui.label(val_str);
-                                        let border_color = if in_filter {
+                                        let border_color = if has_val {
                                             egui::Color32::LIGHT_GREEN
                                         } else {
                                             ui.ctx().style().visuals.widgets.inactive.bg_fill
                                         };
-                                        let bg_color = if has_val {
-                                            egui::Color32::LIGHT_BLUE
-                                        } else {
-                                            ui.ctx().style().visuals.widgets.inactive.bg_fill
-                                        };
+                                        // let bg_color = if has_val {
+                                        //     // egui::Color32::LIGHT_BLUE
+                                        //     ui.style().visuals.code_bg_color
+                                        // } else {
+                                        //     ui.ctx().style().visuals.widgets.inactive.bg_fill
+                                        // };
                                         let button = ui.add(
                                             egui::Button::new(val_str)
-                                                .stroke(egui::Stroke::new(1.0, border_color))
-                                                .fill(bg_color),
+                                                .stroke(egui::Stroke::new(1.0, border_color)), // .fill(bg_color),
                                         );
-                                        // ui.selectable_label(has_val, )
-                                        // ui.add(egui::SelectableLabel::new(&val_str).)
+                                        let (_, color_rect) =
+                                            button.rect.split_top_bottom_at_fraction(0.9);
+                                        let colors = train_ids
+                                            .into_iter()
+                                            .filter_map(|train_id| {
+                                                run_ensemble_color.get(&train_id)
+                                            })
+                                            .collect_vec();
+                                        if colors.len() > 0 {
+                                            let start_x = color_rect.left();
+                                            let dx = (color_rect.right() - color_rect.left())
+                                                / colors.len() as f32;
+                                            for (idx, color) in colors.into_iter().enumerate() {
+                                                let x_range = (start_x + dx * idx as f32)
+                                                    ..=(start_x + dx * (idx as f32 + 1.0));
+                                                let y_range =
+                                                    color_rect.top()..=color_rect.bottom();
+                                                ui.painter().rect_filled(
+                                                    egui::Rect::from_x_y_ranges(x_range, y_range),
+                                                    0.0,
+                                                    *color,
+                                                );
+                                            }
+                                        }
+
                                         if button.clicked() {
                                             if has_val {
                                                 param_filter
@@ -4089,6 +4069,7 @@ fn render_param_tree(
                                                 dbg!(&path, val_str);
                                             }
                                         }
+                                        if button.hovered() {}
                                     }
                                 });
                             });
@@ -4107,7 +4088,28 @@ fn render_param_tree(
                     .filter
                     .iter()
                     .any(|(key, vals)| key.starts_with(&full_cat) && !vals.is_empty());
-                egui::CollapsingHeader::new(cat)
+                let has_val = param_filter
+                    .filter
+                    .iter()
+                    .any(|(param, values)| param.starts_with(&full_cat) && !values.is_empty());
+                let cat_color = if inspect_filters
+                    .iter()
+                    .any(|path| path.starts_with(&full_cat))
+                {
+                    egui::Color32::GREEN
+                } else {
+                    ui.style().visuals.text_color()
+                };
+                let mut cat_text = egui::RichText::new(format!(
+                    "{} ({})",
+                    cat,
+                    diff_counts.get(full_cat.as_str()).unwrap_or(&0usize)
+                ))
+                .color(cat_color);
+                if has_val {
+                    cat_text = cat_text.underline();
+                }
+                egui::CollapsingHeader::new(cat_text)
                     .default_open(opened)
                     .show(ui, |ui| {
                         // ui.collapsing(cat, |ui| {
@@ -4143,6 +4145,8 @@ fn render_param_tree(
                             // runs,
                             subtree,
                             ui,
+                            run_ensemble_color,
+                            diff_counts,
                         );
                     });
                 // ui.label(cat);
@@ -5010,94 +5014,73 @@ WHERE name = 'threads';
         .expect("install postgres failed");
     conn.execute("LOAD postgres;", [])
         .expect("load postgres failed");
-    conn.execute(
+    conn.execute("ATTACH 'local.db' as local;", [])
+        .expect("attach to psql failed");
+    if env::var("DATABASE_URL").is_ok() {
+        conn.execute(
         "ATTACH 'dbname=equiv user=postgres password=herdeherde host=127.0.0.1 port=5431' as db (TYPE POSTGRES, READ_ONLY);",
         [],
     ).expect("attach to psql failed");
-    conn.execute("ATTACH 'local.db' as local;", [])
-        .expect("attach to psql failed");
-    sync_runs_duck(&duckdb_pool);
-    let db_thread_pool = duckdb_pool.clone();
-    std::thread::spawn(move || {
-        let mut train_runs = Vec::new();
-        let mut limit = 1000;
-        loop {
-            // println!("syncing runs {}", train_runs.len());
-            sync_runs_duck(&db_thread_pool);
-            // sleep(std::time::Duration::from_millis(100));
-            let start = Instant::now();
-            if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
-                train_runs = new_train_ids;
-                limit = 1000;
-                println!("{:?}", train_runs);
-            }
-            let t = Instant::now();
-            let updated = sync_metrics_duck(&db_thread_pool, &train_runs, &mut limit);
-            if updated {
-                println!("sync elapsed {}", t.elapsed().as_millis());
-            }
-            // println!("sync loop {}", start.elapsed().as_millis());
-            // if start.elapsed().as_millis() < 10
-        }
-    });
-
-    let plot_map_thread_pool = duckdb_pool.clone();
-    std::thread::spawn(move || {
-        // let mut train_runs = Vec::new();
-        // let mut active_runs = Vec::new();
-        loop {
-            if let Ok(new_active_runs) = rx_active_runs.try_recv() {
-                println!("updating...");
-                // active_runs = new_active_runs;
+        sync_runs_duck(&duckdb_pool);
+        let db_thread_pool = duckdb_pool.clone();
+        std::thread::spawn(move || {
+            let mut train_runs = Vec::new();
+            let mut limit = 1000;
+            loop {
+                sync_runs_duck(&db_thread_pool);
+                let start = Instant::now();
+                if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
+                    train_runs = new_train_ids;
+                    limit = 1000;
+                    println!("{:?}", train_runs);
+                }
                 let t = Instant::now();
-                let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
-                // println!("update plot map {}", t.elapsed().as_millis());
-                let artifacts = get_artifacts_duck(&plot_map_thread_pool, &new_active_runs);
-                tx_plot_map.send((artifacts, plot_map)).unwrap();
+                let updated = sync_metrics_duck(&db_thread_pool, &train_runs, &mut limit);
+                if updated {
+                    println!("sync elapsed {}", t.elapsed().as_millis());
+                }
             }
-            sleep(std::time::Duration::from_millis(10));
+        });
+        rt_handle.spawn(async move {
+            let database_url = env::var("DATABASE_URL")
+                .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
+            let pool = PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+                .expect("Can't connect to database");
+            println!("Artifact loop starting...");
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
+                    handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
+                }
+            }
+        });
+    }
+    let plot_map_thread_pool = duckdb_pool.clone();
+    std::thread::spawn(move || loop {
+        if let Ok(new_active_runs) = rx_active_runs.try_recv() {
+            println!("updating...");
+            let t = Instant::now();
+            let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
+            let artifacts = if env::var("DATABASE_URL").is_ok() {
+                get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
+            } else {
+                HashMap::new()
+            };
+            tx_plot_map.send((artifacts, plot_map)).unwrap();
         }
+        sleep(std::time::Duration::from_millis(100));
     });
 
     let run_params_thread_pool = duckdb_pool.clone();
-    std::thread::spawn(move || {
-        loop {
-            // if let Ok(new_active_runs) = rx_active_runs.try_recv() {
-            //     println!("updating...");
-            //     // active_runs = new_active_runs;
-            //     let t = Instant::now();
-            //     let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
-            //     println!("update plot map {}", t.elapsed().as_millis());
-            //     tx_plot_map.send(plot_map).unwrap();
-            // }
-            let params = get_run_params(&run_params_thread_pool);
-            tx_run_params.send(params).expect("send run params");
-            sleep(std::time::Duration::from_millis(100));
-        }
+    std::thread::spawn(move || loop {
+        let params = get_run_params(&run_params_thread_pool);
+        tx_run_params.send(params).expect("send run params");
+        sleep(std::time::Duration::from_millis(100));
     });
 
-    rt_handle.spawn(async move {
-        let database_url = env::var("DATABASE_URL")
-            .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&database_url)
-            .await
-            .expect("Can't connect to database");
-        println!("Artifact loop starting...");
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
-                handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
-            }
-        }
-    });
-    // });
-
-    // let options = eframe::NativeOptions {
-    //     viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 800.0]),
-    //     ..Default::default()
-    // };
     let options = eframe::NativeOptions {
         default_theme: eframe::Theme::Light,
         // initial_window_size: Some(egui::vec2(320.0, 240.0)),
