@@ -5,25 +5,31 @@ use duckdb::polars::frame::DataFrame;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
 use eframe::{egui, App};
 use egui::{epaint, Stroke, TextBuffer};
+use egui_file::FileDialog;
 use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
 use polars::lazy::dsl::{col, lit};
+// use profiling::tracy_client;
+use core::time;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::{Borrow, BorrowMut};
 use std::error::Error;
-use std::fs::File;
+use std::ffi::OsStr;
+use std::fs::{create_dir_all, File};
 use std::io::{Read, Write};
 use std::num::NonZeroU64;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use wgpu::core::command::render_ffi::wgpu_render_pass_set_index_buffer;
+use tracing::{instrument, Instrument};
+// use wgpu::core::command::render_ffi::wgpu_render_pass_set_index_buffer;
 use wgpu::util::DeviceExt;
 // use sqlx::types::JsonValue
 use glsl_layout::Uniform;
@@ -107,7 +113,7 @@ struct Runs2 {
     // runs: DataFrame,
     // metrics: Option<DataFrame>,
     run_params: HashMap<RunParamKey, String>,
-    plot_map: HashMap<PlotMapKey, Vec<[f64; 2]>>,
+    plot_map: HashMap<PlotMapKey, Vec<[f32; 2]>>,
     artifacts: HashMap<ArtifactKey, ArtifactId>,
     artifacts_by_run: HashMap<String, Vec<ArtifactId>>,
     active_runs: Vec<String>,
@@ -166,7 +172,10 @@ struct GuiParams {
     npy_plot_size: f64,
     render_format: wgpu::TextureFormat,
     param_values: HashMap<String, HashSet<String>>,
+    // param_values_handle: JoinHandle<HashMap<String, HashSet<String>>>,
     filtered_values: HashMap<String, HashSet<String>>,
+    hovered_run: Option<String>,
+    selected_run: Option<String>,
     next_param_update: std::time::Instant,
 }
 
@@ -416,6 +425,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                     module: &spectrograph_vert,
                     entry_point: "main",
                     buffers: &[],
+                    compilation_options: Default::default(), // ..Default::default()
                 },
                 primitive: PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -431,6 +441,7 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
                         blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::COLOR,
                     })],
+                    compilation_options: Default::default(),
                 }),
                 multiview: None,
             });
@@ -1075,7 +1086,7 @@ struct GuiRuns {
     plot_timer: Instant,
     rx_plot_map: Receiver<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<[f64; 2]>>,
+        HashMap<PlotMapKey, Vec<[f32; 2]>>,
     )>,
     tx_active_runs: SyncSender<Vec<String>>,
     // dirty: bool,
@@ -1096,6 +1107,11 @@ struct GuiRuns {
     table_active: bool,
     artifact_handlers: HashMap<ArtifactHandlerType, ArtifactHandler>,
     artifact_dispatch: HashMap<ArtifactType, ArtifactHandlerType>,
+    param_values_handle: Option<JoinHandle<HashMap<String, HashSet<String>>>>,
+    active_runs_handle: Option<JoinHandle<Vec<String>>>,
+    filter_save_name: String,
+    filter_load_dialog: Option<FileDialog>,
+    table_filter: String,
     args: Args, // texture: Option<egui::TextureHandle>,
 }
 
@@ -1103,6 +1119,7 @@ fn recompute(runs: &mut HashMap<String, Run>, gui_params: &GuiParams) {
     resample(runs, gui_params);
 }
 
+#[instrument(skip_all)]
 fn get_train_ids_from_filter_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     gui_params: &GuiParams,
@@ -1387,8 +1404,21 @@ impl eframe::App for GuiRuns {
             self.gui_params.next_param_update =
                 std::time::Instant::now() + std::time::Duration::from_secs(10);
             let t = Instant::now();
-
-            self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
+            // self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
+            let pool = self.duckdb.clone();
+            self.param_values_handle =
+                Some(tokio::spawn(
+                    async move { get_parameter_values_duck(&pool) },
+                ));
+        }
+        if let Some(handle) = self.param_values_handle.take() {
+            if handle.is_finished() {
+                self.gui_params.param_values =
+                    tokio::runtime::Handle::current().block_on(handle).unwrap();
+                println!("handle finished");
+            } else {
+                self.param_values_handle = Some(handle);
+            }
         }
 
         egui::SidePanel::left("Controls")
@@ -1402,6 +1432,41 @@ impl eframe::App for GuiRuns {
                         .filters
                         .param_filters
                         .push(RunsFilter::new());
+                }
+                ui.text_edit_singleline(&mut self.filter_save_name);
+                if ui.small_button("save").clicked() {
+                    let path = Path::new("filters/");
+                    create_dir_all(path);
+                    let serialized =
+                        ron::to_string(&self.gui_params.filters).expect("Failed to serialize");
+
+                    let mut file =
+                        File::create(path.join(format!("{}.ron", self.filter_save_name))).unwrap();
+                    file.write_all(serialized.as_bytes()).unwrap();
+                }
+                if ui.small_button("load").clicked() {
+                    let filter = Box::new({
+                        let ext = Some(OsStr::new("ron"));
+                        move |path: &Path| -> bool { path.extension() == ext }
+                    });
+                    let mut dialog = FileDialog::open_file(Some(Path::new("filters/").into()))
+                        .show_files_filter(filter);
+                    dialog.open();
+                    self.filter_load_dialog = Some(dialog);
+                }
+                if let Some(dialog) = &mut self.filter_load_dialog {
+                    if dialog.show(ui.ctx()).selected() {
+                        if let Some(file) = dialog.path() {
+                            // self.opened_file = Some(file.to_path_buf());
+                            if let Ok(mut file) = File::open(file) {
+                                let mut content = String::new();
+                                if let Ok(_) = file.read_to_string(&mut content) {
+                                    self.gui_params.filters =
+                                        ron::from_str(&content).expect("Failed to deserialize");
+                                }
+                            }
+                        }
+                    }
                 }
                 for param_filter in &mut self.gui_params.filters.param_filters {
                     for param_name in self.gui_params.param_values.keys() {
@@ -1466,6 +1531,7 @@ impl eframe::App for GuiRuns {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            // ui.style_mut().debug.show_expand_height = true;
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Time").clicked() {
@@ -1644,72 +1710,83 @@ fn show_artifacts(
                         // .sorted_by_key(|(name, _)| name)
                         {
                             ui.group(|ui| {
-                                ui.label(egui::RichText::new(artifact_name).size(20.0));
-                                ui.end_row();
-                                // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                                for (artifact_id, array) in array_group {
-                                    ui.end_row();
-                                    if ui.button("reload").clicked() {
-                                        to_remove.push(artifact_id.clone());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(egui::RichText::new(artifact_name).size(20.0));
+                                    // ui.end_row();
+                                    // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                    for (artifact_id, array) in array_group {
+                                        ui.end_row();
+                                        if ui.button("reload").clicked() {
+                                            to_remove.push(artifact_id.clone());
+                                        }
+                                        // ui.end_row();
+                                        // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                        match &array.array {
+                                            NPYArray::Loading(binary_artifact) => {
+                                                render_artifact_download_progress(
+                                                    &binary_artifact,
+                                                    ui,
+                                                );
+                                            }
+                                            NPYArray::Loaded(npyarray) => {
+                                                // ui.allocate_ui()
+                                                // if ui.button("reload").clicked() {
+                                                // to_be_reloaded = Some(artifact_id);
+                                                // array.array
+                                                // }
+                                                ui.allocate_ui(
+                                                    egui::Vec2::from([plot_width, plot_height]),
+                                                    |ui| match array.array_type {
+                                                        NPYArrayType::HealPix => {
+                                                            render_npy_artifact_hp(
+                                                                ui,
+                                                                // runs,
+                                                                artifact_id,
+                                                                gui_params,
+                                                                run_ensemble_color,
+                                                                run_params,
+                                                                views,
+                                                                &npyarray,
+                                                                textures,
+                                                                plot_width,
+                                                                npy_axis_id,
+                                                                hover_lon,
+                                                                hover_lat,
+                                                            );
+                                                            // ui.painter().rect(
+                                                            //     ui.cursor(),
+                                                            //     0.0,
+                                                            //     egui::Color32::RED,
+                                                            //     (0.0, egui::Color32::TRANSPARENT),
+                                                            // );
+                                                        }
+                                                        NPYArrayType::DriscollHealy => {
+                                                            render_npy_artifact_driscoll_healy(
+                                                                ui,
+                                                                // runs,
+                                                                artifact_id,
+                                                                gui_params,
+                                                                run_ensemble_color,
+                                                                run_params,
+                                                                views,
+                                                                &npyarray,
+                                                                textures,
+                                                                plot_width,
+                                                                npy_axis_id,
+                                                            )
+                                                        }
+                                                        NPYArrayType::Tabular => todo!(),
+                                                    },
+                                                );
+                                            }
+                                            NPYArray::Error(err) => {
+                                                ui.label(err);
+                                                // ui.colored_label(egui::Color32::RED, err);
+                                                // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
+                                            }
+                                        }
                                     }
-                                    ui.end_row();
-                                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                                    match &array.array {
-                                        NPYArray::Loading(binary_artifact) => {
-                                            render_artifact_download_progress(&binary_artifact, ui);
-                                        }
-                                        NPYArray::Loaded(npyarray) => {
-                                            // ui.allocate_ui()
-                                            // if ui.button("reload").clicked() {
-                                            // to_be_reloaded = Some(artifact_id);
-                                            // array.array
-                                            // }
-                                            ui.allocate_ui(
-                                                egui::Vec2::from([plot_width, plot_height + 200.0]),
-                                                |ui| match array.array_type {
-                                                    NPYArrayType::HealPix => {
-                                                        render_npy_artifact_hp(
-                                                            ui,
-                                                            // runs,
-                                                            artifact_id,
-                                                            gui_params,
-                                                            run_ensemble_color,
-                                                            run_params,
-                                                            views,
-                                                            &npyarray,
-                                                            textures,
-                                                            plot_width,
-                                                            npy_axis_id,
-                                                            hover_lon,
-                                                            hover_lat,
-                                                        )
-                                                    }
-                                                    NPYArrayType::DriscollHealy => {
-                                                        render_npy_artifact_driscoll_healy(
-                                                            ui,
-                                                            // runs,
-                                                            artifact_id,
-                                                            gui_params,
-                                                            run_ensemble_color,
-                                                            run_params,
-                                                            views,
-                                                            &npyarray,
-                                                            textures,
-                                                            plot_width,
-                                                            npy_axis_id,
-                                                        )
-                                                    }
-                                                    NPYArrayType::Tabular => todo!(),
-                                                },
-                                            );
-                                        }
-                                        NPYArray::Error(err) => {
-                                            ui.label(err);
-                                            // ui.colored_label(egui::Color32::RED, err);
-                                            // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
-                                        }
-                                    }
-                                }
+                                });
                             });
                         }
                     });
@@ -2187,6 +2264,8 @@ fn render_npy_artifact_hp(
             });
             let v = sample_hp_array(array, view, *hover_lon, *hover_lat);
             ui.label(format!("{}", v));
+            // ui.painter().debug_rect(ui., , )
+            // ui.debug_paint_cursor();
         });
     });
 }
@@ -2556,10 +2635,11 @@ enum Group {
     Category(String, String),
 }
 
+#[instrument(skip_all)]
 fn update_plot_map(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
-) -> HashMap<PlotMapKey, Vec<[f64; 2]>> {
+) -> HashMap<PlotMapKey, Vec<[f32; 2]>> {
     // self.runs2.plot_map.clear();
     let mut plot_map = HashMap::new();
     if active_runs.len() == 0 {
@@ -2624,7 +2704,8 @@ fn update_plot_map(
                 .to_vec()
                 .into_iter()
                 .flatten()
-                .collect::<Vec<f64>>(),
+                .map(|x| x as f32)
+                .collect::<Vec<f32>>(),
             _ => {
                 panic!()
             }
@@ -2637,7 +2718,8 @@ fn update_plot_map(
                 .to_vec()
                 .into_iter()
                 .flatten()
-                .collect::<Vec<f64>>(),
+                .map(|x| x as f32)
+                .collect::<Vec<f32>>(),
             _ => {
                 panic!()
             }
@@ -3200,11 +3282,21 @@ impl GuiRuns {
         ui: &mut egui::Ui,
         run_ensemble_color: &HashMap<String, egui::Color32>,
     ) {
+        ui.text_edit_singleline(&mut self.table_filter);
         let param_keys = self
             .runs2
             .run_params
             .keys()
             .map(|key| key.name.clone())
+            .filter(|name| {
+                !self
+                    .gui_params
+                    .filtered_values
+                    .get(name)
+                    .unwrap_or(&HashSet::new())
+                    .is_empty()
+                    && (name.contains(&self.table_filter) || self.table_filter.is_empty())
+            })
             .unique()
             .sorted_by_key(|param_name| {
                 if self.gui_params.filters.inspect_params.contains(param_name) {
@@ -3237,10 +3329,21 @@ impl GuiRuns {
                     }
                 })
                 .body(|mut table| {
-                    for run_id in &self.runs2.active_runs {
+                    for run_id in self.runs2.active_runs.iter().sorted() {
                         // let run = self.runs.runs.get(run_id).unwrap();
                         let mut clipboard = None;
                         table.row(20.0, |mut row| {
+                            let hovered = if let Some(hovered) = &self.gui_params.hovered_run {
+                                *hovered == *run_id
+                            } else {
+                                false
+                            };
+                            let selected = if let Some(selected) = &self.gui_params.selected_run {
+                                *selected == *run_id
+                            } else {
+                                false
+                            };
+                            row.set_selected(hovered || selected);
                             row.col(|ui| {
                                 let (rect, _) = ui.allocate_exact_size(
                                     egui::vec2(10.0, 10.0),
@@ -3264,7 +3367,7 @@ impl GuiRuns {
                                         if let Ok(val_f32) = val.parse::<f32>() {
                                             ui.label(format!("{:.2}", val_f32));
                                         } else {
-                                            ui.add(egui::Label::new(val).wrap(false));
+                                            ui.add(egui::Label::new(val).truncate());
                                             // ui.label(val);
                                         }
                                     }
@@ -3366,23 +3469,7 @@ impl GuiRuns {
         &mut self,
         ui: &mut egui::Ui,
         run_ensemble_color: &HashMap<String, egui::Color32>,
-        // run_params: &HashMap<(String, String), String>,
     ) {
-        // let metrics = self.runs2.metrics.take();
-        // if let Some(metrics) = metrics {
-        //     if metrics.shape().0 == 0 {
-        //         return;
-        // }
-        // let metric_names = metrics
-        //     .column("variable")
-        //     .unwrap()
-        //     .unique()
-        //     .unwrap()
-        //     .iter()
-        //     .map(|x| x.get_str().unwrap().to_string())
-        //     .collect_vec();
-        // let filtered_metric_names: Vec<String> = metric_names.into_iter().collect();
-
         let metric_names = self
             .runs2
             .plot_map
@@ -3393,8 +3480,6 @@ impl GuiRuns {
                 self.gui_params.filters.metric_filters.contains(name)
                     || self.gui_params.filters.metric_filters.is_empty()
             });
-
-        // let metric_names: Vec<String> = Vec::new();
 
         let plot_width = ui.available_width() / 2.1;
         let plot_height = ui.available_width() / 4.1;
@@ -3427,12 +3512,23 @@ impl GuiRuns {
                                     let xy = xy
                                         .clone()
                                         .iter()
-                                        .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
+                                        // .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
+                                        .map(|[x, y]| [*x as f64, *y as f64])
                                         .collect::<Vec<_>>();
+                                    let stroke_width =
+                                        if let Some(selected_run) = &self.gui_params.selected_run {
+                                            if selected_run == train_id {
+                                                2.0
+                                            } else {
+                                                1.0
+                                            }
+                                        } else {
+                                            1.0
+                                        };
                                     plot_ui.line(
-                                        Line::new(PlotPoints::from(xy))
+                                        Line::new(PlotPoints::from(xy.clone()))
                                             .stroke(Stroke::new(
-                                                1.0,
+                                                stroke_width,
                                                 *run_ensemble_color
                                                     .get(train_id)
                                                     .unwrap_or(&egui::Color32::BLACK),
@@ -3444,20 +3540,43 @@ impl GuiRuns {
                                             ))
                                             .id(train_id.clone().into()),
                                     );
+                                    plot_ui.points(
+                                        Points::new(PlotPoints::from(xy))
+                                            .shape(egui_plot::MarkerShape::Circle)
+                                            .color(
+                                                *run_ensemble_color
+                                                    .get(train_id)
+                                                    .unwrap_or(&egui::Color32::BLACK),
+                                            ),
+                                    );
                                 }
                             }
                         });
-
-                        if plot_res.response.clicked() {
-                            if let Some(hovered_id) = plot_res.hovered_plot_item {
-                                for train_id in &self.runs2.active_runs.clone() {
-                                    if egui::Id::from(train_id.clone()) == hovered_id {
-                                        self.runs2.active_runs = vec![train_id.clone()];
+                        if let Some(hovered_id) = plot_res.hovered_plot_item {
+                            for train_id in &self.runs2.active_runs.clone() {
+                                if egui::Id::from(train_id.clone()) == hovered_id {
+                                    // self.runs2.active_runs = vec![train_id.clone()];
+                                    self.gui_params.hovered_run = Some(train_id.clone());
+                                    if plot_res.response.clicked() {
+                                        self.gui_params.selected_run = Some(train_id.clone());
                                     }
-                                    // self.runs2.active_runs = vec![hovered_id]
                                 }
                             }
                         }
+                        if plot_res.response.hovered() && plot_res.hovered_plot_item.is_none() {
+                            self.gui_params.hovered_run = None;
+                        }
+
+                        // if plot_res.response.clicked() {
+                        //     if let Some(hovered_id) = plot_res.hovered_plot_item {
+                        //         for train_id in &self.runs2.active_runs.clone() {
+                        //             if egui::Id::from(train_id.clone()) == hovered_id {
+                        //                 self.runs2.active_runs = vec![train_id.clone()];
+                        //             }
+                        //             // self.runs2.active_runs = vec![hovered_id]
+                        //         }
+                        //     }
+                        // }
                     });
                 });
             }
@@ -3551,7 +3670,7 @@ impl GuiRuns {
                         .x_axis_formatter(match x_axis {
                             XAxis::Time => {
                                 |grid_mark: egui_plot::GridMark,
-                                 _n_chars,
+                                 // _n_chars,
                                  range: &RangeInclusive<f64>| {
                                     let ts = NaiveDateTime::from_timestamp_opt(
                                         grid_mark.value as i64,
@@ -3570,7 +3689,7 @@ impl GuiRuns {
                             }
                             XAxis::Batch => {
                                 |grid_mark: egui_plot::GridMark,
-                                 _n_chars,
+                                 // _n_chars,
                                  _range: &RangeInclusive<f64>| {
                                     format!("{}", grid_mark.value as i64).to_string()
                                 }
@@ -3878,7 +3997,22 @@ impl GuiRuns {
 
     fn update_filtered_runs(&mut self) {
         // self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
-        self.runs2.active_runs = get_train_ids_from_filter_duck(&self.duckdb, &self.gui_params);
+        // self.runs2.active_runs = get_train_ids_from_filter_duck(&self.duckdb, &self.gui_params);
+        let pool = self.duckdb.clone();
+        let gui_params = self.gui_params.clone();
+        if self.active_runs_handle.is_none() {
+            self.active_runs_handle = Some(tokio::spawn(async move {
+                get_train_ids_from_filter_duck(&pool, &gui_params)
+            }));
+        }
+        if let Some(handle) = self.active_runs_handle.take() {
+            if handle.is_finished() {
+                self.runs2.active_runs =
+                    tokio::runtime::Handle::current().block_on(handle).unwrap();
+            } else {
+                self.active_runs_handle = Some(handle);
+            }
+        }
         for (param_key, v) in self
             .runs2
             .run_params
@@ -3900,26 +4034,26 @@ impl GuiRuns {
                 .unwrap()
                 .insert(v.clone());
         }
-        self.runs.active_runs_time_ordered = self
-            .runs
-            .active_runs
-            .iter()
-            .cloned()
-            .map(|train_id| {
-                (
-                    train_id.clone(),
-                    self.runs.runs.get(&train_id).unwrap().created_at,
-                )
-            })
-            .sorted_by_key(|(_train_id, created_at)| *created_at)
-            .collect();
-        self.runs.runs_time_ordered = self
-            .runs
-            .runs
-            .iter()
-            .map(|(run_id, run)| (run_id.clone(), run.created_at))
-            .sorted_by_key(|(_train_id, created_at)| *created_at)
-            .collect();
+        // self.runs.active_runs_time_ordered = self
+        //     .runs
+        //     .active_runs
+        //     .iter()
+        //     .cloned()
+        //     .map(|train_id| {
+        //         (
+        //             train_id.clone(),
+        //             self.runs.runs.get(&train_id).unwrap().created_at,
+        //         )
+        //     })
+        //     .sorted_by_key(|(_train_id, created_at)| *created_at)
+        //     .collect();
+        // self.runs.runs_time_ordered = self
+        //     .runs
+        //     .runs
+        //     .iter()
+        //     .map(|(run_id, run)| (run_id.clone(), run.created_at))
+        //     .sorted_by_key(|(_train_id, created_at)| *created_at)
+        //     .collect();
     }
 }
 
@@ -4155,6 +4289,7 @@ fn render_param_tree(
     }
 }
 
+#[instrument(skip_all)]
 fn get_parameter_values_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
 ) -> HashMap<String, HashSet<String>> {
@@ -4611,6 +4746,7 @@ fn repeat_vars(count: usize) -> String {
     s
 }
 
+#[instrument(skip(pool))]
 fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude::DataFrame {
     // println!("get_runs_duck");
     let conn = pool.get().unwrap();
@@ -4676,6 +4812,7 @@ fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<RunPara
 
 // }
 
+#[instrument(skip(pool))]
 fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
@@ -4696,6 +4833,7 @@ fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     conn.execute(&query, []).expect("sync runs failed");
 }
 
+#[instrument(skip_all)]
 fn get_metrics_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
@@ -4744,10 +4882,10 @@ fn get_metrics_duck(
          JOIN bucket_size bs
          ON t.train_id = bs.train_id AND t.variable = bs.variable
          -- WHERE xaxis='batch'
-             WHERE t.train_id IN ({})
+         WHERE t.train_id IN ({})
          GROUP BY t.train_id, t.variable, t.xaxis, bucket
          ORDER BY t.train_id, t.variable, t.xaxis, x)
-         SELECT 
+         SELECT
              train_id, variable, xaxis, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
             FROM bucket_table
             GROUP BY train_id, variable, xaxis
@@ -4762,6 +4900,7 @@ fn get_metrics_duck(
     large_df.unwrap_or(DataFrame::empty())
 }
 
+#[instrument(skip_all)]
 fn sync_metrics_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
@@ -4970,6 +5109,11 @@ enum ArtifactTransfer {
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+    )
+    .expect("setup tracy layer");
     // use tracy_client::Client;
     // let _profile_guard = Client::start();
     // console_subscriber::init();
@@ -4984,7 +5128,7 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_active_runs, rx_active_runs) = mpsc::sync_channel::<Vec<String>>(1);
     let (tx_plot_map, rx_plot_map) = mpsc::sync_channel::<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<[f64; 2]>>,
+        HashMap<PlotMapKey, Vec<[f32; 2]>>,
     )>(1);
     let (tx_run_params, rx_run_params) = mpsc::sync_channel::<HashMap<RunParamKey, String>>(1);
     // let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_new_train_runs_to_db));
@@ -5027,6 +5171,7 @@ WHERE name = 'threads';
             let mut train_runs = Vec::new();
             let mut limit = 1000;
             loop {
+                let start = Instant::now();
                 sync_runs_duck(&db_thread_pool);
                 let start = Instant::now();
                 if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
@@ -5039,9 +5184,13 @@ WHERE name = 'threads';
                 if updated {
                     println!("sync elapsed {}", t.elapsed().as_millis());
                 }
+                if start.elapsed().as_millis() < 1000 {
+                    sleep(time::Duration::from_millis(1000) - start.elapsed());
+                }
             }
         });
-        rt_handle.spawn(async move {
+        use tracing::Instrument;
+        let future = async move {
             let database_url = env::var("DATABASE_URL")
                 .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
             let pool = PgPoolOptions::new()
@@ -5056,13 +5205,14 @@ WHERE name = 'threads';
                     handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
                 }
             }
-        });
+        };
+        rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
     }
     let plot_map_thread_pool = duckdb_pool.clone();
     std::thread::spawn(move || loop {
+        let start = Instant::now();
         if let Ok(new_active_runs) = rx_active_runs.try_recv() {
             println!("updating...");
-            let t = Instant::now();
             let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
             let artifacts = if env::var("DATABASE_URL").is_ok() {
                 get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
@@ -5070,15 +5220,21 @@ WHERE name = 'threads';
                 HashMap::new()
             };
             tx_plot_map.send((artifacts, plot_map)).unwrap();
+            if start.elapsed().as_millis() < 1000 {
+                sleep(time::Duration::from_millis(1000) - start.elapsed());
+            }
         }
-        sleep(std::time::Duration::from_millis(100));
+        // sleep(std::time::Duration::from_millis(100));
     });
 
     let run_params_thread_pool = duckdb_pool.clone();
     std::thread::spawn(move || loop {
+        let start = Instant::now();
         let params = get_run_params(&run_params_thread_pool);
         tx_run_params.send(params).expect("send run params");
-        sleep(std::time::Duration::from_millis(100));
+        if start.elapsed().as_millis() < 1000 {
+            sleep(time::Duration::from_millis(1000) - start.elapsed());
+        }
     });
 
     let options = eframe::NativeOptions {
@@ -5207,6 +5363,8 @@ WHERE name = 'threads';
                         inspect_params: HashSet::new(),
                         artifact_filters: HashSet::new(),
                     }),
+                    hovered_run: None,
+                    selected_run: None,
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
@@ -5257,6 +5415,11 @@ WHERE name = 'threads';
                 gui_params_sender_slot: None,
                 plot_timer: Instant::now() + std::time::Duration::from_secs(2),
                 rx_run_params,
+                param_values_handle: None,
+                active_runs_handle: None,
+                filter_save_name: String::new(),
+                filter_load_dialog: None,
+                table_filter: String::new(),
             };
             gui_runs.update_filtered_runs();
             gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs2.active_runs.clone());
@@ -5264,7 +5427,7 @@ WHERE name = 'threads';
                 Some((gui_runs.gui_params.clone(), gui_runs.runs.runs.clone()));
             // gui_runs.update_plot_map();
 
-            Box::<GuiRuns>::new(gui_runs)
+            Ok(Box::<GuiRuns>::new(gui_runs))
         }),
     )
     .unwrap();
@@ -5272,6 +5435,8 @@ WHERE name = 'threads';
     Ok(())
 }
 
+// #[profiling::function]
+#[instrument]
 async fn handle_artifact_request(
     artifact_id: i32,
     pool: &sqlx::Pool<sqlx::Postgres>,
