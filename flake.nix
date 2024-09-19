@@ -12,12 +12,14 @@
     # outputs = { self, nixpkgs, ... }:
     let
       disableCudaEnvFlag = builtins.getEnv "DISABLE_CUDA";
-      system = "x86_64-linux";
+      # system = "x86_64-linux";
+      system = "aarch64-darwin";
+      # system = builtins.currentSystem;
       pkgs = (import nixpkgs {
         inherit system;
         config = {
           allowUnfree = true;
-          cudaSupport = disableCudaEnvFlag != "1";
+          # cudaSupport = disableCudaEnvFlag != "1";
         };
       });
       rustToolchain = fenix.packages."${system}".stable;
@@ -250,7 +252,7 @@
         ipython
         black
         flake8
-        wandb
+        # wandb
         snakeviz
         pandas
         matplotlib
@@ -269,22 +271,22 @@
       shaderc
       gitui
       lazygit
-      linuxPackages_latest.perf
+      # linuxPackages_latest.perf
         glfw3
         glm
-        xorg.libX11
-        xorg.libpthreadstubs
-        xorg.libXau
-        xorg.libXdmcp
-        xorg.libXrandr
-        xorg.libXinerama
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libxcb
-        xorg.xkbevd
-        xorg.xkbutils
-        xclip
-        libxkbcommon
+        # xorg.libX11
+        # xorg.libpthreadstubs
+        # xorg.libXau
+        # xorg.libXdmcp
+        # xorg.libXrandr
+        # xorg.libXinerama
+        # xorg.libXcursor
+        # xorg.libXi
+        # xorg.libxcb
+        # xorg.xkbevd
+        # xorg.xkbutils
+        # xclip
+        # libxkbcommon
         libGL
         libGLU
 
@@ -299,7 +301,7 @@
         ])
         fenix.packages."${system}".rust-analyzer
         nil
-        julia
+        # julia
         (postgresql_15.withPackages(p: [p.timescaledb]))
         ruff
         helixmaster
@@ -325,21 +327,21 @@
             plotly
           ];
         })
-        (rstudioWrapper.override {
-          packages = with rPackages; [
-            ggplot2
-            dplyr
-            patchwork
-            reticulate
-            Hmisc
-            RPostgreSQL
-            plotly
-            esquisse
-            matlab
-            ggExtra
-            ggpubr
-          ];
-        })
+        # (rstudioWrapper.override {
+        #   packages = with rPackages; [
+        #     ggplot2
+        #     dplyr
+        #     patchwork
+        #     reticulate
+        #     Hmisc
+        #     RPostgreSQL
+        #     plotly
+        #     esquisse
+        #     matlab
+        #     ggExtra
+        #     ggpubr
+        #   ];
+        # })
         # cudatoolkit
         # python
         pythonWithPackages

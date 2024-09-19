@@ -12,8 +12,8 @@ clap = "4.4.11"
 colorous = "1.0.12"
 dotenvy = "0.15.7"
 # eframe = "*"
-wgpu = { version = "0.19.0", features = ["spirv"] }
-eframe = { version = "0.26.2", features = ["wgpu", 
+wgpu = { version = "0.20.0", features = ["spirv"] }
+eframe = { version = "0.28.1", features = ["wgpu", 
      # "accesskit",
     "default_fonts",
     "wayland",
@@ -23,9 +23,9 @@ eframe = { version = "0.26.2", features = ["wgpu",
     "x11",
 ], default-features = false}
 winit = { version = "*", features = ["default"]}
-egui = "0.26.2"
-egui_extras = {version="0.26.2", features=["all_loaders"]}
-egui_plot = "0.26.2"
+egui = "0.28.1"
+egui_extras = {version="0.28.1", features=["all_loaders"]}
+egui_plot = "0.28.1"
 flamegraph = "0.6.4"
 image = {version="*", features=["png"]}
 itertools = "0.12.0"
@@ -35,7 +35,7 @@ npyz = "0.8.2"
 serde_json = "*"
 sqlx = { version="0.7.3" , features = [ "runtime-tokio", "postgres", "chrono" ]}
 sqlx-cli = "0.7.3"
-tokio = { version = "1.34.0", features = ["rt", "macros"]}
+tokio = { version = "1.34.0", features = ["rt-multi-thread", "macros"]}
 glsl-layout = "0.5.0"
 capnp = "0.19.3"
 flatbuffers = "23.5.26"
@@ -49,5 +49,9 @@ serde = {version="1.0.209", features=["derive"]}
 ron = "0.8.1"
 
 # profiling = {version = "*", features=["profile-with-tracy"]}
+tracing = "0.1.40"
+tracing-tracy = "0.11.1"
+tracing-subscriber = "0.3.18"
+egui_file = "0.18.0"
 # console-subscriber = "0.2.0"
 # tracy-client = "0.16.4"
