@@ -1412,7 +1412,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b28bfe653d79bd16c77f659305b195b82bb5ce0c0eb2a4846b82ddbd77586813"
 dependencies = [
  "bitflags 2.6.0",
- "libloading 0.7.4",
+ "libloading 0.8.5",
  "winapi",
 ]
 
@@ -1670,6 +1670,15 @@ dependencies = [
  "web-time 0.2.4",
  "webbrowser",
  "winit 0.29.15",
+]
+
+[[package]]
+name = "egui_code_editor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bd4d6760a30bb64fe382f85db5b7c66b63dc52d7777213ddad1112d9d0f28ae"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -6830,6 +6839,7 @@ dependencies = [
  "duckdb",
  "eframe",
  "egui",
+ "egui_code_editor",
  "egui_extras",
  "egui_file",
  "egui_plot",
@@ -6846,6 +6856,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "sqlformat",
  "sqlx",
  "sqlx-cli",
  "tokio",

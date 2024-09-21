@@ -5,12 +5,14 @@ use duckdb::polars::frame::DataFrame;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor};
 use eframe::{egui, App};
 use egui::{epaint, Stroke, TextBuffer};
+use egui_code_editor::{self, highlighting::Token, CodeEditor, ColorTheme, Syntax};
 use egui_file::FileDialog;
 use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
 use polars::lazy::dsl::{col, lit};
+use sqlformat::{format, FormatOptions};
 // use profiling::tracy_client;
 use core::time;
 use serde::{Deserialize, Serialize};
@@ -122,7 +124,7 @@ struct Runs2 {
 #[derive(Default, Debug, Clone)]
 struct Runs {
     runs: HashMap<String, Run>,
-    active_runs: Vec<String>,
+    // active_runs: Vec<String>,
     active_runs_time_ordered: Vec<(String, chrono::NaiveDateTime)>,
     runs_time_ordered: Vec<(String, chrono::NaiveDateTime)>,
 }
@@ -735,6 +737,7 @@ enum ArtifactHandler {
     },
 }
 
+#[instrument(skip_all)]
 fn add_artifact(
     handler: &mut ArtifactHandler,
     artifact_id: &ArtifactId,
@@ -1112,6 +1115,9 @@ struct GuiRuns {
     filter_save_name: String,
     filter_load_dialog: Option<FileDialog>,
     table_filter: String,
+    custom_plot: String,
+    custom_plot_last_err: Option<String>,
+    custom_plot_data: Option<DataFrame>,
     args: Args, // texture: Option<egui::TextureHandle>,
 }
 
@@ -1302,6 +1308,8 @@ impl eframe::App for GuiRuns {
         if !self.initialized {
             ctx.set_zoom_factor(1.0);
         }
+        self.handle_filtered_runs();
+        self.handle_param_values();
         if let Some(gui_params_package) = self.gui_params_sender_slot.take() {
             if self
                 .gui_params_sender
@@ -1349,20 +1357,20 @@ impl eframe::App for GuiRuns {
             self.runs2.run_params = new_run_params;
             self.update_filtered_runs();
         }
-        while let Ok(new_runs) = self.db_reciever.try_recv() {
-            for train_id in new_runs.keys() {
-                if !self.runs.runs.contains_key(train_id) {
-                    let t = Instant::now();
-                    let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
-                    self.db_train_runs_sender_slot = Some(new_active);
-                    break;
-                }
-            }
-            self.gui_params_sender_slot = Some((self.gui_params.clone(), new_runs));
-            if self.data_status == DataStatus::Waiting {
-                self.data_status = DataStatus::FirstDataArrived;
-            }
-        }
+        // while let Ok(new_runs) = self.db_reciever.try_recv() {
+        //     for train_id in new_runs.keys() {
+        //         if !self.runs.runs.contains_key(train_id) {
+        //             let t = Instant::now();
+        //             let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
+        //             self.db_train_runs_sender_slot = Some(new_active);
+        //             break;
+        //         }
+        //     }
+        //     self.gui_params_sender_slot = Some((self.gui_params.clone(), new_runs));
+        //     if self.data_status == DataStatus::Waiting {
+        //         self.data_status = DataStatus::FirstDataArrived;
+        //     }
+        // }
 
         let t = Instant::now();
 
@@ -1410,15 +1418,6 @@ impl eframe::App for GuiRuns {
                 Some(tokio::spawn(
                     async move { get_parameter_values_duck(&pool) },
                 ));
-        }
-        if let Some(handle) = self.param_values_handle.take() {
-            if handle.is_finished() {
-                self.gui_params.param_values =
-                    tokio::runtime::Handle::current().block_on(handle).unwrap();
-                println!("handle finished");
-            } else {
-                self.param_values_handle = Some(handle);
-            }
         }
 
         egui::SidePanel::left("Controls")
@@ -1485,7 +1484,7 @@ impl eframe::App for GuiRuns {
                         if ui.small_button("disable").clicked() {
                             remove_idx = Some(i);
                         }
-                        self.render_time_selector(ui, &mut temp_param_filters[i]);
+                        // self.render_time_selector(ui, &mut temp_param_filters[i]);
                         self.render_params2(&mut temp_param_filters[i], ui, &run_ensemble_color);
                     });
                     changed |= temp_param_filters[i] != self.gui_params.filters.param_filters[i];
@@ -1502,6 +1501,10 @@ impl eframe::App for GuiRuns {
                             }
                         }
                     }
+                    println!(
+                        "!!!!!!!!!!! Setting active runs slot {:?}",
+                        self.runs2.active_runs
+                    );
                     self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
                 }
                 if let Some(remove_idx) = remove_idx {
@@ -1565,6 +1568,7 @@ impl eframe::App for GuiRuns {
                     let t = Instant::now();
                     self.render_artifacts(ui, &run_ensemble_color);
 
+                    self.render_custom_plot(ui);
                     self.render_plots2(ui, &run_ensemble_color);
                 });
         });
@@ -1867,7 +1871,8 @@ fn show_artifacts(
         //     }
         // }
         ArtifactHandler::ImageArtifact { binaries } => {
-            let max_size = egui::Vec2::new(ui.available_width() / 2.1, ui.available_height() / 2.1);
+            // egui::Resize
+            let max_size = egui::Vec2::new(ui.available_width() * 0.9, ui.available_height() * 0.9);
             let available_artifact_names: Vec<&String> =
                 binaries.keys().map(|id| &id.name).collect();
             ui.horizontal_wrapped(|ui| {
@@ -1907,6 +1912,14 @@ fn show_artifacts(
                                     // if let Some(binary) = binaries.get(&artifact_id) {
                                     match binary_artifact {
                                         BinaryArtifact::Loaded(binary_data) => {
+                                            // println!("len {}", binary_data.len());
+                                            // let mut file = File::create("test.png").unwrap();
+                                            // file.write_all(&binary_data).unwrap();
+                                            // file.flush();
+                                            // panic!();
+                                            let span =
+                                                tracing::span!(tracing::Level::INFO, "add image");
+                                            let _guard = span.enter();
                                             ui.add(
                                                 egui::Image::from_bytes(
                                                     format!(
@@ -3465,6 +3478,113 @@ impl GuiRuns {
         });
     }
 
+    fn render_custom_plot(&mut self, ui: &mut egui::Ui) {
+        // ui.text_edit_multiline(&mut self.custom_plot);
+        let res = CodeEditor::default()
+            .id_source("sql_code")
+            .with_rows(15)
+            .with_fontsize(14.0)
+            .with_theme(ColorTheme::SONOKAI)
+            .with_syntax(Syntax::sql())
+            .with_numlines(true)
+            .show(ui, &mut self.custom_plot);
+        if res.response.has_focus() {
+            if ui.input(|input| input.key_pressed(egui::Key::S) && input.modifiers.command) {
+                self.custom_plot = sqlformat::format(
+                    &self.custom_plot,
+                    &sqlformat::QueryParams::None,
+                    FormatOptions::default(),
+                );
+            }
+        }
+
+        if ui.button("format").clicked() {
+            self.custom_plot = sqlformat::format(
+                &self.custom_plot,
+                &sqlformat::QueryParams::None,
+                FormatOptions::default(),
+            );
+        }
+        if ui.button("run").clicked()
+            || (res.response.has_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command))
+        {
+            let conn = self.duckdb.get().unwrap();
+            conn.execute_batch("DROP TABLE IF EXISTS params;  CREATE TABLE params AS pivot local.runs on variable using any_value(value_text) group by train_id").unwrap();
+            match conn.prepare(&self.custom_plot) {
+                Ok(mut stmt) => {
+                    let polars = stmt.query_polars([]).unwrap();
+                    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
+                    self.custom_plot_data = Some(large_df.unwrap_or(DataFrame::empty()));
+                    self.custom_plot_last_err = None;
+                }
+                Err(err) => {
+                    self.custom_plot_last_err = Some(err.to_string());
+                    // ui.label(err.to_string());
+                }
+            }
+        }
+        if let Some(err) = &self.custom_plot_last_err {
+            ui.label(err);
+        }
+
+        if let Some(df) = &self.custom_plot_data {
+            let df = df.drop_nulls::<String>(None).unwrap();
+            let columns = df.get_column_names();
+            if columns.len() == 2 {
+                let c1 = columns[0];
+                let c2 = columns[1];
+                let x = df.column(c1).unwrap().cast(&DataType::Float64).unwrap();
+                let x = x.f64().unwrap().into_no_null_iter();
+                let y = df.column(c2).unwrap().cast(&DataType::Float64).unwrap();
+                let y = y.f64().unwrap().into_no_null_iter();
+                let xy = x.zip(y).map(|(x, y)| [x as f64, y as f64]).collect_vec();
+                Plot::new("custom").show(ui, |plot_ui| {
+                    plot_ui.points(
+                        Points::new(PlotPoints::from(xy))
+                            .shape(egui_plot::MarkerShape::Circle)
+                            .radius(2.0),
+                    );
+                });
+            }
+            if columns.len() == 3 {
+                let c1 = columns[0];
+                let c2 = columns[1];
+                let c3 = columns[2];
+                let x = df.column(c1).unwrap().cast(&DataType::Float64).unwrap();
+                let x = x.f64().unwrap().into_no_null_iter();
+                let y = df.column(c2).unwrap().cast(&DataType::Float64).unwrap();
+                let y = y.f64().unwrap().into_no_null_iter();
+                let group = df.column(c3).expect("getting group column").rechunk();
+                let group = group.iter().map(|x| x.to_string());
+                // println!("here");
+                Plot::new("custom")
+                    .legend(Legend::default())
+                    .x_axis_label(c1)
+                    .y_axis_label(c2)
+                    .show(ui, |plot_ui| {
+                        x.zip(y)
+                            .zip(group)
+                            .sorted_by_key(|(_, name)| name.clone())
+                            .group_by(|(_, group)| group.to_string())
+                            .into_iter()
+                            .for_each(|(name, group)| {
+                                let xy = group
+                                    .map(|((x, y), group)| [x as f64, y as f64])
+                                    .collect_vec();
+
+                                plot_ui.points(
+                                    Points::new(PlotPoints::from(xy))
+                                        .name(name)
+                                        .shape(egui_plot::MarkerShape::Circle)
+                                        .radius(2.0),
+                                );
+                            })
+                    });
+            }
+        }
+    }
+
     fn render_plots2(
         &mut self,
         ui: &mut egui::Ui,
@@ -3586,202 +3706,202 @@ impl GuiRuns {
         // }
     }
 
-    fn render_plots(
-        &mut self,
-        ui: &mut egui::Ui,
-        metric_names: Vec<String>,
-        run_ensemble_color: &HashMap<String, egui::Color32>,
-    ) {
-        let xaxis_ids: HashMap<_, _> = self
-            .runs
-            .runs
-            .values()
-            .map(|run| run.metrics.values().map(|metric| metric.xaxis.clone()))
-            .flatten()
-            .unique()
-            .sorted()
-            .map(|xaxis| (xaxis.clone(), ui.id().with(xaxis)))
-            .collect();
+    // fn render_plots(
+    //     &mut self,
+    //     ui: &mut egui::Ui,
+    //     metric_names: Vec<String>,
+    //     run_ensemble_color: &HashMap<String, egui::Color32>,
+    // ) {
+    //     let xaxis_ids: HashMap<_, _> = self
+    //         .runs
+    //         .runs
+    //         .values()
+    //         .map(|run| run.metrics.values().map(|metric| metric.xaxis.clone()))
+    //         .flatten()
+    //         .unique()
+    //         .sorted()
+    //         .map(|xaxis| (xaxis.clone(), ui.id().with(xaxis)))
+    //         .collect();
 
-        let metric_name_axis_id: HashMap<_, _> = self
-            .runs
-            .runs
-            .values()
-            .map(|run| {
-                run.metrics.iter().map(|(metric_name, metric)| {
-                    (metric_name, xaxis_ids.get(&metric.xaxis).unwrap())
-                })
-            })
-            .flatten()
-            .unique()
-            .collect();
+    //     let metric_name_axis_id: HashMap<_, _> = self
+    //         .runs
+    //         .runs
+    //         .values()
+    //         .map(|run| {
+    //             run.metrics.iter().map(|(metric_name, metric)| {
+    //                 (metric_name, xaxis_ids.get(&metric.xaxis).unwrap())
+    //             })
+    //         })
+    //         .flatten()
+    //         .unique()
+    //         .collect();
 
-        // let link_group_id = ui.id().with("linked_demo");
-        let filtered_metric_names: Vec<String> = metric_names
-            .into_iter()
-            .filter(|name| {
-                self.gui_params.filters.metric_filters.contains(name)
-                    || self.gui_params.filters.metric_filters.is_empty()
-            })
-            .collect();
-        let plot_width = if filtered_metric_names.len() <= 2 {
-            ui.available_width() / 2.1
-        } else {
-            ui.available_width() / 2.1
-        };
-        let plot_height = if filtered_metric_names.len() <= 2 {
-            ui.available_width() / 4.1
-        } else {
-            ui.available_width() / 4.1
-        };
-        let x_axis = self.gui_params.x_axis.clone();
-        let formatter = match x_axis {
-            XAxis::Time => |_name: &str, value: &PlotPoint| {
-                let ts = NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
-                let xstr = ts.format("%y/%m/%d - %H:%M").to_string();
-                format!("time: {}\ny: {}", xstr, value.y)
-            },
-            XAxis::Batch => {
-                |_name: &str, value: &PlotPoint| format!("x:{:.3}\ny:{:.3}", value.x, value.y)
-            }
-        };
-        let plots: HashMap<_, _> = filtered_metric_names
-            .into_iter()
-            .map(|metric_name| {
-                (
-                    metric_name.clone(),
-                    Plot::new(&metric_name)
-                        // .auto_bounds()
-                        .legend(Legend::default())
-                        .width(plot_width)
-                        .height(plot_height)
-                        // .label_formatter(match x_axis {
-                        //     XAxis::Time => |name, value: &PlotPoint| {
-                        //         let ts =
-                        //             NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
-                        //         let xstr = ts.format("%y/%m/%d-%Hh-%Mm").to_string();
-                        //         format!("time: {}\ny: {}", xstr, value.y)
-                        //     },
-                        //     XAxis::Batch => |name, value: &PlotPoint| {
-                        //         format!("x:{:.3}\ny:{:.3}", value.x, value.y)
-                        //     },
-                        // })
-                        .label_formatter(formatter)
-                        .x_axis_formatter(match x_axis {
-                            XAxis::Time => {
-                                |grid_mark: egui_plot::GridMark,
-                                 // _n_chars,
-                                 range: &RangeInclusive<f64>| {
-                                    let ts = NaiveDateTime::from_timestamp_opt(
-                                        grid_mark.value as i64,
-                                        0,
-                                    )
-                                    .unwrap();
-                                    let delta = range.end() - range.start();
-                                    if delta > (5 * 24 * 60 * 60) as f64 {
-                                        ts.format("%m/%d").to_string()
-                                    } else if delta > (5 * 60 * 60) as f64 {
-                                        ts.format("%d-%Hh").to_string()
-                                    } else {
-                                        ts.format("%Hh:%Mm").to_string()
-                                    }
-                                }
-                            }
-                            XAxis::Batch => {
-                                |grid_mark: egui_plot::GridMark,
-                                 // _n_chars,
-                                 _range: &RangeInclusive<f64>| {
-                                    format!("{}", grid_mark.value as i64).to_string()
-                                }
-                            }
-                        })
-                        .link_axis(
-                            **metric_name_axis_id.get(&metric_name).unwrap(),
-                            true,
-                            false,
-                        )
-                        .link_cursor(**metric_name_axis_id.get(&metric_name).unwrap(), true, true),
-                )
-            })
-            .collect();
-        // egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone()) {
-                ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.label(&metric_name);
-                        plot.show(ui, |plot_ui| {
-                            if self.gui_params.n_average > 1 {
-                                for (run_id, run) in
-                                    self.runs.active_runs.iter().sorted().map(|train_id| {
-                                        (train_id, self.runs.runs.get(train_id).unwrap())
-                                    })
-                                {
-                                    if let Some(metric) = run.metrics.get(&metric_name) {
-                                        // let label = self.label_from_active_inspect_params(run);
-                                        if metric.values.len() == 1 {
-                                            plot_ui.points(
-                                                egui_plot::Points::new(PlotPoints::from(
-                                                    metric.values.clone(),
-                                                ))
-                                                .shape(egui_plot::MarkerShape::Circle)
-                                                .radius(5.0),
-                                            );
-                                        }
-                                        plot_ui.line(
-                                            Line::new(PlotPoints::from(metric.values.clone()))
-                                                // .name(&label)
-                                                .stroke(Stroke::new(
-                                                    1.0,
-                                                    run_ensemble_color
-                                                        .get(run_id)
-                                                        .unwrap()
-                                                        .gamma_multiply(0.4),
-                                                )),
-                                        );
-                                    }
-                                }
-                            }
-                            for (run_id, run) in
-                                self.runs.active_runs.iter().sorted().map(|train_id| {
-                                    (train_id, self.runs.runs.get(train_id).unwrap())
-                                })
-                            {
-                                if let Some(metric) = run.metrics.get(&metric_name) {
-                                    let label = "test".into();
-                                    //label_from_active_inspect_params(run, &self.gui_params);
-                                    let running = metric.last_value
-                                        > chrono::Utc::now()
-                                            .naive_utc()
-                                            .checked_sub_signed(chrono::Duration::minutes(5))
-                                            .unwrap();
-                                    let label = if running {
-                                        format!("{} (r)", label)
-                                    } else {
-                                        label
-                                    };
-                                    plot_ui.line(
-                                        Line::new(PlotPoints::from(metric.resampled.clone()))
-                                            .name(&label)
-                                            .stroke(Stroke::new(
-                                                2.0 * if running { 2.0 } else { 1.0 },
-                                                *run_ensemble_color.get(run_id).unwrap(),
-                                            )),
-                                    );
-                                }
-                            }
-                        })
-                    });
-                    // });
-                });
-            }
-        });
-        // });
-        if self.data_status == DataStatus::FirstDataProcessed {
-            // plot_ui.set_auto_bounds(egui::Vec2b::new(true, true));
-            self.data_status = DataStatus::FirstDataPlotted;
-        }
-    }
+    //     // let link_group_id = ui.id().with("linked_demo");
+    //     let filtered_metric_names: Vec<String> = metric_names
+    //         .into_iter()
+    //         .filter(|name| {
+    //             self.gui_params.filters.metric_filters.contains(name)
+    //                 || self.gui_params.filters.metric_filters.is_empty()
+    //         })
+    //         .collect();
+    //     let plot_width = if filtered_metric_names.len() <= 2 {
+    //         ui.available_width() / 2.1
+    //     } else {
+    //         ui.available_width() / 2.1
+    //     };
+    //     let plot_height = if filtered_metric_names.len() <= 2 {
+    //         ui.available_width() / 4.1
+    //     } else {
+    //         ui.available_width() / 4.1
+    //     };
+    //     let x_axis = self.gui_params.x_axis.clone();
+    //     let formatter = match x_axis {
+    //         XAxis::Time => |_name: &str, value: &PlotPoint| {
+    //             let ts = NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
+    //             let xstr = ts.format("%y/%m/%d - %H:%M").to_string();
+    //             format!("time: {}\ny: {}", xstr, value.y)
+    //         },
+    //         XAxis::Batch => {
+    //             |_name: &str, value: &PlotPoint| format!("x:{:.3}\ny:{:.3}", value.x, value.y)
+    //         }
+    //     };
+    //     let plots: HashMap<_, _> = filtered_metric_names
+    //         .into_iter()
+    //         .map(|metric_name| {
+    //             (
+    //                 metric_name.clone(),
+    //                 Plot::new(&metric_name)
+    //                     // .auto_bounds()
+    //                     .legend(Legend::default())
+    //                     .width(plot_width)
+    //                     .height(plot_height)
+    //                     // .label_formatter(match x_axis {
+    //                     //     XAxis::Time => |name, value: &PlotPoint| {
+    //                     //         let ts =
+    //                     //             NaiveDateTime::from_timestamp_opt(value.x as i64, 0).unwrap();
+    //                     //         let xstr = ts.format("%y/%m/%d-%Hh-%Mm").to_string();
+    //                     //         format!("time: {}\ny: {}", xstr, value.y)
+    //                     //     },
+    //                     //     XAxis::Batch => |name, value: &PlotPoint| {
+    //                     //         format!("x:{:.3}\ny:{:.3}", value.x, value.y)
+    //                     //     },
+    //                     // })
+    //                     .label_formatter(formatter)
+    //                     .x_axis_formatter(match x_axis {
+    //                         XAxis::Time => {
+    //                             |grid_mark: egui_plot::GridMark,
+    //                              // _n_chars,
+    //                              range: &RangeInclusive<f64>| {
+    //                                 let ts = NaiveDateTime::from_timestamp_opt(
+    //                                     grid_mark.value as i64,
+    //                                     0,
+    //                                 )
+    //                                 .unwrap();
+    //                                 let delta = range.end() - range.start();
+    //                                 if delta > (5 * 24 * 60 * 60) as f64 {
+    //                                     ts.format("%m/%d").to_string()
+    //                                 } else if delta > (5 * 60 * 60) as f64 {
+    //                                     ts.format("%d-%Hh").to_string()
+    //                                 } else {
+    //                                     ts.format("%Hh:%Mm").to_string()
+    //                                 }
+    //                             }
+    //                         }
+    //                         XAxis::Batch => {
+    //                             |grid_mark: egui_plot::GridMark,
+    //                              // _n_chars,
+    //                              _range: &RangeInclusive<f64>| {
+    //                                 format!("{}", grid_mark.value as i64).to_string()
+    //                             }
+    //                         }
+    //                     })
+    //                     .link_axis(
+    //                         **metric_name_axis_id.get(&metric_name).unwrap(),
+    //                         true,
+    //                         false,
+    //                     )
+    //                     .link_cursor(**metric_name_axis_id.get(&metric_name).unwrap(), true, true),
+    //             )
+    //         })
+    //         .collect();
+    //     // egui::ScrollArea::vertical().show(ui, |ui| {
+    //     ui.horizontal_wrapped(|ui| {
+    //         for (metric_name, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone()) {
+    //             ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
+    //                 ui.vertical_centered(|ui| {
+    //                     ui.label(&metric_name);
+    //                     plot.show(ui, |plot_ui| {
+    //                         if self.gui_params.n_average > 1 {
+    //                             for (run_id, run) in
+    //                                 self.runs.active_runs.iter().sorted().map(|train_id| {
+    //                                     (train_id, self.runs.runs.get(train_id).unwrap())
+    //                                 })
+    //                             {
+    //                                 if let Some(metric) = run.metrics.get(&metric_name) {
+    //                                     // let label = self.label_from_active_inspect_params(run);
+    //                                     if metric.values.len() == 1 {
+    //                                         plot_ui.points(
+    //                                             egui_plot::Points::new(PlotPoints::from(
+    //                                                 metric.values.clone(),
+    //                                             ))
+    //                                             .shape(egui_plot::MarkerShape::Circle)
+    //                                             .radius(5.0),
+    //                                         );
+    //                                     }
+    //                                     plot_ui.line(
+    //                                         Line::new(PlotPoints::from(metric.values.clone()))
+    //                                             // .name(&label)
+    //                                             .stroke(Stroke::new(
+    //                                                 1.0,
+    //                                                 run_ensemble_color
+    //                                                     .get(run_id)
+    //                                                     .unwrap()
+    //                                                     .gamma_multiply(0.4),
+    //                                             )),
+    //                                     );
+    //                                 }
+    //                             }
+    //                         }
+    //                         for (run_id, run) in
+    //                             self.runs.active_runs.iter().sorted().map(|train_id| {
+    //                                 (train_id, self.runs.runs.get(train_id).unwrap())
+    //                             })
+    //                         {
+    //                             if let Some(metric) = run.metrics.get(&metric_name) {
+    //                                 let label = "test".into();
+    //                                 //label_from_active_inspect_params(run, &self.gui_params);
+    //                                 let running = metric.last_value
+    //                                     > chrono::Utc::now()
+    //                                         .naive_utc()
+    //                                         .checked_sub_signed(chrono::Duration::minutes(5))
+    //                                         .unwrap();
+    //                                 let label = if running {
+    //                                     format!("{} (r)", label)
+    //                                 } else {
+    //                                     label
+    //                                 };
+    //                                 plot_ui.line(
+    //                                     Line::new(PlotPoints::from(metric.resampled.clone()))
+    //                                         .name(&label)
+    //                                         .stroke(Stroke::new(
+    //                                             2.0 * if running { 2.0 } else { 1.0 },
+    //                                             *run_ensemble_color.get(run_id).unwrap(),
+    //                                         )),
+    //                                 );
+    //                             }
+    //                         }
+    //                     })
+    //                 });
+    //                 // });
+    //             });
+    //         }
+    //     });
+    //     // });
+    //     if self.data_status == DataStatus::FirstDataProcessed {
+    //         // plot_ui.set_auto_bounds(egui::Vec2b::new(true, true));
+    //         self.data_status = DataStatus::FirstDataPlotted;
+    //     }
+    // }
 
     fn render_metrics(&mut self, ui: &mut egui::Ui, metric_names: &Vec<String>) {
         ui.collapsing("metrics", |ui| {
@@ -3804,7 +3924,7 @@ impl GuiRuns {
                             }
                             // self.dirty = true;
                             self.update_filtered_runs();
-                            self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
+                            self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
                             self.gui_params_sender_slot =
                                 Some((self.gui_params.clone(), self.runs.runs.clone()));
                         }
@@ -3968,47 +4088,40 @@ impl GuiRuns {
         }
     }
 
-    fn render_time_selector(&mut self, ui: &mut egui::Ui, param_filter: &mut RunsFilter) {
-        if self.runs.runs_time_ordered.len() > 1 {
-            ui.vertical(|ui| {
-                // ui.spacing_mut().slider_width = ui.available_width(); // - 300.0;
-                ui.label("Cut-off time");
-                let time_slider = egui::Slider::new(
-                    &mut param_filter.time_filter_idx,
-                    0..=self.runs.runs.len() - 1,
-                )
-                .custom_formatter(|fval, _| {
-                    let idx = fval as usize;
-                    let created_at = self.runs.runs_time_ordered[idx].1;
-                    created_at.to_string()
-                });
-                if ui.add(time_slider).changed() {
-                    // self.dirty = true;
-                    param_filter.time_filter =
-                        Some(self.runs.runs_time_ordered[param_filter.time_filter_idx].1);
-                    self.update_filtered_runs();
-                    self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
-                    self.gui_params_sender_slot =
-                        Some((self.gui_params.clone(), self.runs.runs.clone()));
-                }
-            });
-        }
-    }
+    // fn render_time_selector(&mut self, ui: &mut egui::Ui, param_filter: &mut RunsFilter) {
+    //     if self.runs.runs_time_ordered.len() > 1 {
+    //         ui.vertical(|ui| {
+    //             // ui.spacing_mut().slider_width = ui.available_width(); // - 300.0;
+    //             ui.label("Cut-off time");
+    //             let time_slider = egui::Slider::new(
+    //                 &mut param_filter.time_filter_idx,
+    //                 0..=self.runs.runs.len() - 1,
+    //             )
+    //             .custom_formatter(|fval, _| {
+    //                 let idx = fval as usize;
+    //                 let created_at = self.runs.runs_time_ordered[idx].1;
+    //                 created_at.to_string()
+    //             });
+    //             if ui.add(time_slider).changed() {
+    //                 // self.dirty = true;
+    //                 param_filter.time_filter =
+    //                     Some(self.runs.runs_time_ordered[param_filter.time_filter_idx].1);
+    //                 self.update_filtered_runs();
+    //                 self.db_train_runs_sender_slot = Some(self.runs.active_runs.clone());
+    //                 self.gui_params_sender_slot =
+    //                     Some((self.gui_params.clone(), self.runs.runs.clone()));
+    //             }
+    //         });
+    //     }
+    // }
 
-    fn update_filtered_runs(&mut self) {
-        // self.runs.active_runs = get_train_ids_from_filter(&self.runs.runs, &self.gui_params);
-        // self.runs2.active_runs = get_train_ids_from_filter_duck(&self.duckdb, &self.gui_params);
-        let pool = self.duckdb.clone();
-        let gui_params = self.gui_params.clone();
-        if self.active_runs_handle.is_none() {
-            self.active_runs_handle = Some(tokio::spawn(async move {
-                get_train_ids_from_filter_duck(&pool, &gui_params)
-            }));
-        }
+    fn handle_filtered_runs(&mut self) {
         if let Some(handle) = self.active_runs_handle.take() {
             if handle.is_finished() {
                 self.runs2.active_runs =
                     tokio::runtime::Handle::current().block_on(handle).unwrap();
+                self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
+                println!("updated active runs to {:?}", self.runs2.active_runs);
             } else {
                 self.active_runs_handle = Some(handle);
             }
@@ -4034,26 +4147,29 @@ impl GuiRuns {
                 .unwrap()
                 .insert(v.clone());
         }
-        // self.runs.active_runs_time_ordered = self
-        //     .runs
-        //     .active_runs
-        //     .iter()
-        //     .cloned()
-        //     .map(|train_id| {
-        //         (
-        //             train_id.clone(),
-        //             self.runs.runs.get(&train_id).unwrap().created_at,
-        //         )
-        //     })
-        //     .sorted_by_key(|(_train_id, created_at)| *created_at)
-        //     .collect();
-        // self.runs.runs_time_ordered = self
-        //     .runs
-        //     .runs
-        //     .iter()
-        //     .map(|(run_id, run)| (run_id.clone(), run.created_at))
-        //     .sorted_by_key(|(_train_id, created_at)| *created_at)
-        //     .collect();
+    }
+    fn update_filtered_runs(&mut self) {
+        let pool = self.duckdb.clone();
+        let gui_params = self.gui_params.clone();
+        self.handle_filtered_runs();
+        if self.active_runs_handle.is_some() {
+            self.active_runs_handle.take().unwrap().abort();
+        }
+        self.active_runs_handle = Some(tokio::spawn(async move {
+            get_train_ids_from_filter_duck(&pool, &gui_params)
+        }));
+    }
+
+    fn handle_param_values(&mut self) {
+        if let Some(handle) = self.param_values_handle.take() {
+            if handle.is_finished() {
+                self.gui_params.param_values =
+                    tokio::runtime::Handle::current().block_on(handle).unwrap();
+                println!("handle finished");
+            } else {
+                self.param_values_handle = Some(handle);
+            }
+        }
     }
 }
 
@@ -4316,34 +4432,34 @@ fn get_parameter_values_duck(
     return HashMap::from_iter(rows);
 }
 
-fn get_parameter_values(
-    runs: &Runs, // active_runs: &Vec<String>,
-    all: bool,
-) -> HashMap<String, HashSet<String>> {
-    let train_ids: Vec<String> = if all {
-        runs.runs.keys().cloned().collect()
-    } else {
-        runs.active_runs.clone()
-    };
-    let mut param_values: HashMap<String, HashSet<String>> = train_ids
-        .iter()
-        .map(|train_id| runs.runs.get(train_id).unwrap())
-        .map(|run| run.params.keys().cloned())
-        .flatten()
-        .unique()
-        .map(|param_name| (param_name, HashSet::with_capacity(train_ids.len())))
-        .collect();
-    for run in train_ids
-        .iter()
-        .map(|train_id| runs.runs.get(train_id).unwrap())
-    {
-        for (k, v) in &run.params {
-            let values = param_values.get_mut(k).unwrap();
-            values.insert(v.clone());
-        }
-    }
-    param_values
-}
+// fn get_parameter_values(
+//     runs: &Runs, // active_runs: &Vec<String>,
+//     all: bool,
+// ) -> HashMap<String, HashSet<String>> {
+//     let train_ids: Vec<String> = if all {
+//         runs.runs.keys().cloned().collect()
+//     } else {
+//         runs.active_runs.clone()
+//     };
+//     let mut param_values: HashMap<String, HashSet<String>> = train_ids
+//         .iter()
+//         .map(|train_id| runs.runs.get(train_id).unwrap())
+//         .map(|run| run.params.keys().cloned())
+//         .flatten()
+//         .unique()
+//         .map(|param_name| (param_name, HashSet::with_capacity(train_ids.len())))
+//         .collect();
+//     for run in train_ids
+//         .iter()
+//         .map(|train_id| runs.runs.get(train_id).unwrap())
+//     {
+//         for (k, v) in &run.params {
+//             let values = param_values.get_mut(k).unwrap();
+//             values.insert(v.clone());
+//         }
+//     }
+//     param_values
+// }
 
 async fn get_state_new(
     pool: &sqlx::postgres::PgPool,
@@ -4591,7 +4707,14 @@ fn get_artifacts_duck(
     let polars = stmt
         .query_polars(duckdb::params_from_iter(active_runs))
         .expect("duck artifacts");
-    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
+    let polars = polars.collect_vec();
+    if polars.len() == 0 {
+        return HashMap::new();
+    }
+    let large_df = polars
+        .into_iter()
+        .reduce(|acc, e| acc.vstack(&e).unwrap())
+        .unwrap();
     large_df.sort(vec!["train_id"], false, true).unwrap();
 
     let train_ids = large_df.column("train_id").unwrap().rechunk();
@@ -4909,6 +5032,7 @@ fn sync_metrics_duck(
     ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
     let mut updated = false;
+    println!("syncing {:?}", active_runs);
     for train_id in active_runs {
         println!("getting max id for {}", train_id);
         let max_id: i32 = conn
@@ -5177,7 +5301,7 @@ WHERE name = 'threads';
                 if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
                     train_runs = new_train_ids;
                     limit = 1000;
-                    println!("{:?}", train_runs);
+                    println!("[db] got new train runs {:?}", train_runs);
                 }
                 let t = Instant::now();
                 let updated = sync_metrics_duck(&db_thread_pool, &train_runs, &mut limit);
@@ -5420,6 +5544,9 @@ WHERE name = 'threads';
                 filter_save_name: String::new(),
                 filter_load_dialog: None,
                 table_filter: String::new(),
+                custom_plot: String::new(),
+                custom_plot_last_err: None,
+                custom_plot_data: None,
             };
             gui_runs.update_filtered_runs();
             gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs2.active_runs.clone());
