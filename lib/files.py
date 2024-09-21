@@ -28,6 +28,29 @@ def write_config_human(config, path):
         f.write(json.dumps(serialize_human(config), indent=2))
 
 
+def copy_tracked_and_untracked_to_destination(dest_path):
+    if not git.is_git_repo():
+        print("Skipping, no git repo")
+        return
+    repo = git.git_repo()
+
+    dest_path = Path(dest_path)
+    dest_path.mkdir(parents=True, exist_ok=True)  # Ensure destination exists
+
+    # Collect all tracked and untracked files
+    all_files = {item.a_path for item in repo.index.diff(None)}
+    all_files.update(repo.untracked_files)
+
+    # Iterate over all files, tracked and untracked
+    for file_path in all_files:
+        if Path(file_path).is_file():  # Check if it's a file
+            dest_file_path = dest_path / file_path
+            dest_file_path.parent.mkdir(
+                parents=True, exist_ok=True
+            )  # Ensure parent directory exists
+            shutil.copy2(file_path, dest_file_path)  # Copy the file
+
+
 def copy_tracked_tree_to_destination(dest_path):
     if not git.is_git_repo():
         print("[copy_working_tree_to_destination] Skipping, no git repo")
@@ -63,7 +86,7 @@ def prepare_results(name: str, config: object) -> Path:
     try:
         with FileLock(get_results_lock_path(name), 5):
             result_path = create_result_path(name, config)
-            copy_tracked_tree_to_destination(result_path / "code")
+            copy_tracked_and_untracked_to_destination(result_path / "code")
             write_config_human(config, result_path / "config.json")
             return result_path
     except Timeout:

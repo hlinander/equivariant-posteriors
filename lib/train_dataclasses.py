@@ -6,6 +6,7 @@ from typing import Callable
 from typing import Union
 from typing import Set
 from typing import Dict
+from pathlib import Path
 
 from lib.metric import Metric
 from lib.timing_metric import Timing
@@ -30,6 +31,7 @@ class TrainEpochState:
     host_memory_stats: object = None
     psql_query_cache: Set = field(default_factory=lambda: set())
     psql_starting_xs: Dict[str, float] = None
+    code_path: Path = None
 
 
 @dataclass
@@ -133,8 +135,9 @@ def is_distributed():
 def get_num_workers():
     if os.getenv("EP_DEBUG") is not None:
         return 0
-    elif cpus_on_node := os.getenv("SLURM_CPUS_ON_NODE") is not None:
+    elif (cpus_on_node := os.getenv("SLURM_CPUS_ON_NODE")) is not None:
         try:
+            print(f"Using {cpus_on_node} workers [SLURM_CPUS_ON_NODE]")
             return int(cpus_on_node)
         except ValueError:
             print(

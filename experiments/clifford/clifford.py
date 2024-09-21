@@ -264,7 +264,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
         epochs=200,
         save_nth_epoch=1,
         validate_nth_epoch=5,
-        visualize_terminal=True,
+        visualize_terminal=False,
     )
     return train_run
 
@@ -294,7 +294,7 @@ if __name__ == "__main__":
         create_config,
         dict(
             clifford_depth=[1, 2],
-            clifford_width=[256, 128, 64],
+            clifford_width=[200, 100, 60],
             ensemble_id=[0],
         ),
         # dict(
@@ -367,6 +367,6 @@ if __name__ == "__main__":
             fig.suptitle("80 iteration constraint resolve")
             path = result_path / "clifford_test.png"
             fig.savefig(path)
-            add_artifact(config, "clifford_rope_test", path)
+            add_artifact(config, "clifford_rope_test.png", path)
             break
             # raise Exception("exit")

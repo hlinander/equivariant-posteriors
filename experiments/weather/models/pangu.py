@@ -8,7 +8,9 @@ from lib.serialize_human import serialize_human
 # from experiments.weather.WeatherLearn.weatherlearn.models.pangu import (
 # Pangu as WeatherLearnPangu,
 # )
-from experiments.weather.weatherlearn.models import Pangu as WeatherLearnPangu
+from experiments.weather.weatherlearn.models.pangu.pangu import (
+    Pangu as WeatherLearnPangu,
+)
 
 
 from experiments.weather.data import DataSpecHP, DataHP, DataHPConfig

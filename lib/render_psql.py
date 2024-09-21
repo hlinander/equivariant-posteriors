@@ -328,6 +328,15 @@ def _render_psql_unchecked(train_run: TrainRun, train_epoch_state: TrainEpochSta
         # start_time = time.time()
         train_epoch_state.timing_metric.start("psql_queries_params")
         insert_or_update_train_run(conn, train_run)
+
+        # Insert code path (if available)
+        insert_param(
+            conn,
+            train_run_dict["train_id"],
+            train_run_dict["ensemble_id"],
+            "code_path",
+            train_epoch_state.code_path,
+        )
         train_epoch_state.timing_metric.stop("psql_queries_params")
         train_epoch_state.timing_metric.start("psql_queries_epoch")
         with conn.pipeline():

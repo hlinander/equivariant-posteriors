@@ -4,6 +4,7 @@ import torch
 import logging
 import time
 from typing import Dict
+from typing import Optional
 
 from filelock import FileLock
 from lib.metric import MetricSample, Metric
@@ -29,6 +30,7 @@ from lib.train_visualization import visualize_progress
 from lib.train_visualization import visualize_progress_batches
 
 from lib.paths import get_checkpoint_path, get_lock_path
+from lib.files import prepare_results
 import lib.ddp as ddp
 
 
@@ -193,7 +195,7 @@ def create_dataloader(
     return dataloader
 
 
-def create_initial_state(train_run: TrainRun, device_id):
+def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_id):
     train_config = train_run.train_config
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
@@ -267,6 +269,7 @@ def create_initial_state(train_run: TrainRun, device_id):
         next_visualization=0.0,
         next_visualizer=0,
         timing_metric=Timing(),
+        code_path=code_path,
     )
 
 
@@ -275,7 +278,7 @@ def load_or_create_state(train_run: TrainRun, device_id):
         train_run=train_run,
         device_id=device_id,
     )
-
+    code_path = prepare_results("code", train_run)
     state = None
     try:
         state = deserialize(config)
@@ -287,6 +290,7 @@ def load_or_create_state(train_run: TrainRun, device_id):
     if state is None:
         state = create_initial_state(
             train_run=config.train_run,
+            code_path=code_path,
             device_id=config.device_id,
         )
 

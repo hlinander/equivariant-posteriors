@@ -26,3 +26,4 @@ rust/vis/target
 rust/vis/flamegraph.svg
 rust/vis/perf.data
 rust/vis/perf.data.old
+sh/
