@@ -1114,10 +1114,12 @@ struct GuiRuns {
     active_runs_handle: Option<JoinHandle<Vec<String>>>,
     filter_save_name: String,
     filter_load_dialog: Option<FileDialog>,
+    filter_name_filter: String,
     table_filter: String,
     custom_plot: String,
     custom_plot_last_err: Option<String>,
     custom_plot_data: Option<DataFrame>,
+    custom_plot_handle: Option<JoinHandle<Result<DataFrame>>>,
     args: Args, // texture: Option<egui::TextureHandle>,
 }
 
@@ -1433,6 +1435,7 @@ impl eframe::App for GuiRuns {
                         .push(RunsFilter::new());
                 }
                 ui.text_edit_singleline(&mut self.filter_save_name);
+                ui.text_edit_singleline(&mut self.filter_name_filter);
                 if ui.small_button("save").clicked() {
                     let path = Path::new("filters/");
                     create_dir_all(path);
@@ -1501,10 +1504,6 @@ impl eframe::App for GuiRuns {
                             }
                         }
                     }
-                    println!(
-                        "!!!!!!!!!!! Setting active runs slot {:?}",
-                        self.runs2.active_runs
-                    );
                     self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
                 }
                 if let Some(remove_idx) = remove_idx {
@@ -2642,6 +2641,18 @@ enum Tree {
     Leaf(String, String),
 }
 
+fn contains_str(list_tree: &Vec<Tree>, substr: &str) -> bool {
+    list_tree.iter().any(|x| match x {
+        Tree::Node {
+            cat: _,
+            rest: _,
+            path,
+            full_cat: _,
+        } => path.contains(substr),
+        Tree::Leaf(_, path) => path.contains(substr),
+    })
+}
+
 #[derive(PartialEq)]
 enum Group {
     Leaf,
@@ -3474,6 +3485,7 @@ impl GuiRuns {
                 ui,
                 run_ensemble_color,
                 &diff_counts,
+                &self.filter_name_filter,
             );
         });
     }
@@ -3510,18 +3522,39 @@ impl GuiRuns {
                 && ui.input(|input| input.key_pressed(egui::Key::Enter) && input.modifiers.command))
         {
             let conn = self.duckdb.get().unwrap();
-            conn.execute_batch("DROP TABLE IF EXISTS params;  CREATE TABLE params AS pivot local.runs on variable using any_value(value_text) group by train_id").unwrap();
-            match conn.prepare(&self.custom_plot) {
-                Ok(mut stmt) => {
-                    let polars = stmt.query_polars([]).unwrap();
-                    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
-                    self.custom_plot_data = Some(large_df.unwrap_or(DataFrame::empty()));
-                    self.custom_plot_last_err = None;
+            let query = self.custom_plot.clone();
+            self.custom_plot_handle = Some(tokio::spawn(async move {
+                conn.execute_batch("DROP TABLE IF EXISTS params;  CREATE TABLE params AS pivot local.runs on variable using any_value(value_text) group by train_id").unwrap();
+                match conn.prepare(&query) {
+                    Ok(mut stmt) => {
+                        let polars = stmt.query_polars([]).unwrap();
+                        let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
+                        let large_df = large_df.unwrap_or(DataFrame::empty());
+                        Ok(large_df)
+                    }
+                    Err(err) => {
+                        Err(err)
+                        // self.custom_plot_last_err = Some(err.to_string());
+                        // ui.label(err.to_string());
+                    }
                 }
-                Err(err) => {
-                    self.custom_plot_last_err = Some(err.to_string());
-                    // ui.label(err.to_string());
+            }));
+        }
+        if let Some(handle) = self.custom_plot_handle.take() {
+            if handle.is_finished() {
+                let large_df = tokio::runtime::Handle::current().block_on(handle).unwrap();
+                match large_df {
+                    Ok(large_df) => {
+                        self.custom_plot_data = Some(large_df);
+                        self.custom_plot_last_err = None;
+                    }
+                    Err(err) => {
+                        self.custom_plot_last_err = Some(err.to_string());
+                    }
                 }
+            } else {
+                ui.spinner();
+                self.custom_plot_handle = Some(handle);
             }
         }
         if let Some(err) = &self.custom_plot_last_err {
@@ -4183,6 +4216,7 @@ fn render_param_tree(
     ui: &mut egui::Ui,
     run_ensemble_color: &HashMap<String, egui::Color32>,
     diff_counts: &HashMap<&str, usize>,
+    filter_name_filter: &String,
 ) {
     let groups = tree.into_iter().group_by(|el| match el {
         Tree::Node { cat, full_cat, .. } => Group::Category(cat.clone(), full_cat.clone()),
@@ -4194,7 +4228,15 @@ fn render_param_tree(
             Group::Leaf => {
                 for node in group {
                     if let Tree::Leaf(name, path) = node {
+                        if !path.contains(filter_name_filter) {
+                            continue;
+                        }
                         let opened = !param_filter.filter.get(&path).unwrap().is_empty();
+                        let force_open = if !filter_name_filter.is_empty() {
+                            Some(path.contains(filter_name_filter))
+                        } else {
+                            None
+                        };
                         let label =
                             format!("{}({})", name, diff_counts.get(path.as_str()).unwrap_or(&0));
                         let header_text = if inspect_filters.contains(&path) {
@@ -4220,6 +4262,7 @@ fn render_param_tree(
                         let header_response = egui::CollapsingHeader::new(header_text)
                             .icon(circle_icon)
                             .default_open(opened)
+                            .open(force_open)
                             .show(ui, |ui| {
                                 let multival = run_params
                                     .iter()
@@ -4338,6 +4381,11 @@ fn render_param_tree(
                     .filter
                     .iter()
                     .any(|(key, vals)| key.starts_with(&full_cat) && !vals.is_empty());
+                let force_open = if !filter_name_filter.is_empty() {
+                    Some(contains_str(&group, &filter_name_filter))
+                } else {
+                    None
+                };
                 let has_val = param_filter
                     .filter
                     .iter()
@@ -4361,8 +4409,8 @@ fn render_param_tree(
                 }
                 egui::CollapsingHeader::new(cat_text)
                     .default_open(opened)
+                    .open(force_open)
                     .show(ui, |ui| {
-                        // ui.collapsing(cat, |ui| {
                         let subtree = group
                             .iter()
                             .map(|el| {
@@ -4397,6 +4445,7 @@ fn render_param_tree(
                             ui,
                             run_ensemble_color,
                             diff_counts,
+                            filter_name_filter,
                         );
                     });
                 // ui.label(cat);
@@ -5547,6 +5596,8 @@ WHERE name = 'threads';
                 custom_plot: String::new(),
                 custom_plot_last_err: None,
                 custom_plot_data: None,
+                custom_plot_handle: None,
+                filter_name_filter: String::new(),
             };
             gui_runs.update_filtered_runs();
             gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs2.active_runs.clone());
