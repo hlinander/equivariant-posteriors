@@ -6,10 +6,8 @@ import numpy as np
 # import healpix as hp
 import chealpix as chp
 
-from experiments.weather.models.hp_windowing import window_partition
 
-
-def get_attn_mask_from_mask(mask, window_size):
+def get_attn_mask_from_mask(mask, window_size, window_partition):
     """Translates mask of shape (N) with different int values to attention mask of shape (nW,
     window_size, window_size) with values in {0,-100} suitable for attention module"""
 
@@ -31,7 +29,7 @@ def get_attn_mask_from_mask(mask, window_size):
 
 
 class NoShift:
-    def get_mask(self):
+    def get_mask(self, window_partition):
         return None
 
     def shift(self, x):
@@ -48,7 +46,7 @@ class NestRollShift:
         self.window_size = window_size
         self.window_size_d, self.window_size_hp = window_size
 
-    def get_mask(self):
+    def get_mask(self, window_partition):
         # calculate attention mask for SW-MSA
         D, N = self.input_resolution
         img_mask = torch.zeros(D, N)
@@ -72,7 +70,9 @@ class NestRollShift:
             img_mask[d_slice, hp_slice] = cnt
             cnt += 1
 
-        attn_mask = get_attn_mask_from_mask(img_mask, self.window_size)
+        attn_mask = get_attn_mask_from_mask(
+            img_mask, self.window_size, window_partition
+        )
         return attn_mask
 
     def shift(self, x):
@@ -414,10 +414,10 @@ class RingShift:
     def _get_inverse_index_map(self, idcs):
         return torch.sort(idcs)[1]
 
-    def get_mask(self, get_attn_mask=True):
+    def get_mask(self, window_partition, get_attn_mask=True):
         mask = self.mask
         if get_attn_mask:
-            return get_attn_mask_from_mask(mask, self.ws)
+            return get_attn_mask_from_mask(mask, self.ws, window_partition)
         else:
             return mask
 
