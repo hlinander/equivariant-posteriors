@@ -273,7 +273,7 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
     )
 
 
-def load_or_create_state(train_run: TrainRun, device_id):
+def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
     config = DeserializeConfig(
         train_run=train_run,
         device_id=device_id,
