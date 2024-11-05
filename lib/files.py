@@ -44,6 +44,9 @@ def copy_tracked_and_untracked_to_destination(dest_path):
     # Iterate over all files, tracked and untracked
     for file_path in all_files:
         if Path(file_path).is_file():  # Check if it's a file
+            if Path(file_path).stat().st_size > 1000000:
+                print(f"Skipping large file {file_path}")
+                continue
             dest_file_path = dest_path / file_path
             dest_file_path.parent.mkdir(
                 parents=True, exist_ok=True
