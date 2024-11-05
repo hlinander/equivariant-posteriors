@@ -734,6 +734,7 @@ enum ArtifactHandler {
     ImageArtifact {
         // images: HashMap<ArtifactId, String>,
         binaries: HashMap<ArtifactId, BinaryArtifact>,
+        image_size: f32,
     },
 }
 
@@ -761,7 +762,10 @@ fn add_artifact(
         //     tx_path_mutex,
         //     rx_artifact_mutex,
         // ),
-        ArtifactHandler::ImageArtifact { binaries } => match binaries.get_mut(&artifact_id) {
+        ArtifactHandler::ImageArtifact {
+            binaries,
+            image_size,
+        } => match binaries.get_mut(&artifact_id) {
             Some(binary_artifact) => {
                 poll_artifact_download(binary_artifact);
             }
@@ -1558,8 +1562,10 @@ impl eframe::App for GuiRuns {
 
             ui.separator();
             egui::ScrollArea::vertical()
+                .max_width(f32::INFINITY)
                 .id_source("central_space")
                 .show(ui, |ui| {
+                    ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                     let collapsing = ui.collapsing("Tabular", |ui| {
                         self.render_table(ui, &run_ensemble_color);
                     });
@@ -1567,7 +1573,9 @@ impl eframe::App for GuiRuns {
                     let t = Instant::now();
                     self.render_artifacts(ui, &run_ensemble_color);
 
-                    self.render_custom_plot(ui);
+                    ui.collapsing("Custom plot", |ui| {
+                        self.render_custom_plot(ui);
+                    });
                     self.render_plots2(ui, &run_ensemble_color);
                 });
         });
@@ -1869,12 +1877,28 @@ fn show_artifacts(
         //         });
         //     }
         // }
-        ArtifactHandler::ImageArtifact { binaries } => {
+        ArtifactHandler::ImageArtifact {
+            binaries,
+            image_size,
+        } => {
             // egui::Resize
-            let max_size = egui::Vec2::new(ui.available_width() * 0.9, ui.available_height() * 0.9);
+            ui.add(egui::Slider::new(image_size, 0.0..=1.0).text("image size"));
+            let max_size = egui::Vec2::new(
+                ui.available_width() * *image_size,
+                ui.available_height() * *image_size,
+            );
             let available_artifact_names: Vec<&String> =
                 binaries.keys().map(|id| &id.name).collect();
             ui.horizontal_wrapped(|ui| {
+                // ui.painter().rect(
+                //     egui::Rect::from_min_size(
+                //         ui.cursor().min,
+                //         [ui.available_size_before_wrap().x, 10.0].into(),
+                //     ),
+                //     0.0,
+                //     egui::Color32::RED,
+                //     (0.0, egui::Color32::TRANSPARENT),
+                // );
                 // ui.set_max_width(ui.available_width());
                 // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                 for (_artifact_name, filtered_arrays) in gui_params
@@ -1892,6 +1916,14 @@ fn show_artifacts(
                     })
                 {
                     for (artifact_id, binary_artifact) in filtered_arrays {
+                        // let (r, _) = ui.allocate_exact_size(max_size, egui::Sense::hover());
+                        // ui.painter().rect(
+                        // r,
+                        // 0.0,
+                        // egui::Color32::RED,
+                        // egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
+                        // );
+                        // continue;
                         ui.allocate_ui(max_size, |ui| {
                             ui.push_id(artifact_id, |ui| {
                                 ui.vertical(|ui| {
@@ -1905,7 +1937,11 @@ fn show_artifacts(
                                             .get(&artifact_id.train_id)
                                             .unwrap()
                                             .clone(),
-                                        format!("{}: {}", artifact_id.name, label),
+                                        egui::RichText::new(format!(
+                                            "{}: {}",
+                                            artifact_id.name, label
+                                        ))
+                                        .size(14.0 * *image_size),
                                     );
                                     // ui.allocate_space(max_size);
                                     // if let Some(binary) = binaries.get(&artifact_id) {
@@ -1927,7 +1963,7 @@ fn show_artifacts(
                                                     ),
                                                     binary_data.clone(),
                                                 )
-                                                .fit_to_exact_size(max_size),
+                                                .fit_to_exact_size(max_size * 0.9),
                                             );
                                         }
                                         BinaryArtifact::Loading((_, status)) => {
@@ -2742,7 +2778,7 @@ fn update_plot_map(
                 .to_vec()
                 .into_iter()
                 .flatten()
-                .map(|x| x as f32)
+                .map(|x| x.log10() as f32)
                 .collect::<Vec<f32>>(),
             _ => {
                 panic!()
@@ -5564,6 +5600,7 @@ WHERE name = 'threads';
                         ArtifactHandler::ImageArtifact {
                             // images: HashMap::new(),
                             binaries: HashMap::new(),
+                            image_size: 0.9,
                         },
                     ),
                 ]),
