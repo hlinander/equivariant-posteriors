@@ -16,9 +16,10 @@ class MLPClassConfig:
 @dataclass(frozen=True)
 class MLPConfig:
     widths: List[int]
+    activation: str
 
     def serialize_human(self):
-        return self.__dict__
+        return self.__dict__.copy()
 
 
 class MLPClass(torch.nn.Module):
@@ -63,6 +64,18 @@ class MLPClass(torch.nn.Module):
         return dict(logits=tout, predictions=torch.softmax(tout.detach(), dim=-1))
 
 
+def get_activation(activation_name: str):
+    dispatch = dict(
+        relu=torch.nn.functional.relu,
+        gelu=torch.nn.functional.gelu,
+        tanh=torch.nn.functional.tanh,
+    )
+    if activation_name in dispatch:
+        return dispatch[activation_name]
+    else:
+        raise Exception(f"Activation function {activation_name} not available")
+
+
 class MLP(torch.nn.Module):
     def __init__(self, config: MLPConfig, data_spec: DataSpec):
         super().__init__()
@@ -90,16 +103,31 @@ class MLP(torch.nn.Module):
         last_out_dim = in_out[-1][1]
         torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / last_out_dim))
         torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
+        self.activation = get_activation(config.activation)
 
     def forward(self, batch):
         x = batch["input"]
         y = x.reshape(x.shape[0], -1)
         y = self.mlp_in(y)
-        y = torch.nn.functional.relu(y)
+        y = self.activation(y)
 
         for idx, mlp in enumerate(self.mlps):
             y = mlp(y)
-            y = torch.nn.functional.relu(y)
+            y = self.activation(y)
+
+        y = self.mlp_out(y)
+        y = y.reshape(x.shape[0], *self.data_spec.output_shape)
+        tout = y
+        return dict(logits=tout, predictions=tout.detach())
+
+    def forward_tensor(self, x):
+        y = x.reshape(x.shape[0], -1)
+        y = self.mlp_in(y)
+        y = self.activation(y)
+
+        for idx, mlp in enumerate(self.mlps):
+            y = mlp(y)
+            y = self.activation(y)
 
         y = self.mlp_out(y)
         y = y.reshape(x.shape[0], *self.data_spec.output_shape)

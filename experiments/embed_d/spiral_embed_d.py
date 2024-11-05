@@ -48,6 +48,7 @@ def create_config(embed_d, ensemble_id):
         loss=loss,
         batch_size=500,
         ensemble_id=ensemble_id,
+        _version=1,
     )
     train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
@@ -62,7 +63,7 @@ def create_config(embed_d, ensemble_id):
 
 
 def create_values():
-    return dict(embed_d=[100, 1, 5, 20, 50, 100], ensemble_id=list(range(5)))
+    return dict(embed_d=[100, 50, 100], ensemble_id=list(range(5)))
 
 
 if __name__ == "__main__":

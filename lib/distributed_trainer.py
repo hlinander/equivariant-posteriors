@@ -29,9 +29,9 @@ def do_train_run(distributed_train_run, device_id):
             env["TOKENIZERS_PARALLELISM"] = "false"
             env["EP_TORCHRUN"] = "1"
             env["EP_UNLOCKED"] = "1"
-            env[
-                "EP_NUM_GPUS"
-            ] = f"{distributed_train_run.train_run.compute_config.num_gpus}"
+            env["EP_NUM_GPUS"] = (
+                f"{distributed_train_run.train_run.compute_config.num_gpus}"
+            )
             command = [
                 "torchrun",
                 "--nnodes",
@@ -89,7 +89,7 @@ def distributed_train(requested_configs: List[TrainRun] = None):
         if time.time() > last_aquired_training + 10 * 60:
             print("10 minutes since last aquired training, stopping...")
             break
-        time.sleep(1)
+        time.sleep(0.01)
 
 
 if __name__ == "__main__":

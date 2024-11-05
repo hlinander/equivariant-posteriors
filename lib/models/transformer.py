@@ -12,6 +12,8 @@ class TransformerConfig:
     batch_size: int
     num_layers: int
     num_heads: int
+    softmax: bool
+    activation: str = "gelu"
 
     def serialize_human(self):
         return self.__dict__
@@ -20,18 +22,20 @@ class TransformerConfig:
 class Transformer(torch.nn.Module):
     def __init__(self, config: TransformerConfig, data_spec: DataSpec):
         super().__init__()
+        self.config = config
         embed_d = config.embed_d
         self.embed = torch.nn.Linear(data_spec.input_shape[-1], embed_d, bias=True)
         lnorm = torch.nn.LayerNorm(embed_d, eps=1e-5)
 
         self.pos_embed = PositionalEncoding(config.embed_d, dropout=0.0)
         self.layer = torch.nn.TransformerDecoderLayer(
+            # activation=torch.nn.functional.tanh,
             d_model=embed_d,
             nhead=config.num_heads,
             dim_feedforward=config.mlp_dim,
             dropout=0.0,
             batch_first=True,
-            activation="gelu",
+            activation=self.config.activation,
         )
         self.transformer = torch.nn.TransformerDecoder(
             self.layer, num_layers=config.num_layers, norm=lnorm
@@ -52,10 +56,21 @@ class Transformer(torch.nn.Module):
         tout = self.transformer(embed, self.mem[: embed.shape[0]])
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
         output = self.debed(tout[:, 0, :])
-        return dict(logits=output, predictions=self.output_to_value(output))
+        return dict(logits=output, predictions=self.output_to_value_detached(output))
 
-    def output_to_value(self, output):
-        return torch.softmax(output, dim=-1)
+    def forward_tensor(self, x):
+        embed = self.embed(x) * math.sqrt(32)
+        embed = self.pos_embed(embed)
+        tout = self.transformer(embed, self.mem[: embed.shape[0]])
+        # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
+        output = self.debed(tout[:, 0, :])
+        return dict(logits=output, predictions=self.output_to_value_detached(output))
+
+    def output_to_value_detached(self, output):
+        if self.config.softmax:
+            return torch.softmax(output.detach(), dim=-1)
+        else:
+            return output.detach()
 
     # def forward_full(self, x):
     #     return self.output_to_value(self.forward(x))

@@ -10,7 +10,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
-from lib.data import DataSpiralsConfig
+from lib.data_registry import DataSpiralsConfig
 from lib.ablation import ablation
 
 

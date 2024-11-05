@@ -10,12 +10,7 @@ def create_regression_metric_list(loss):
         return loss(output["predictions"], batch["target"], reduction="none")
 
     return [
-        # lambda: Metric(
-        #     tm.functional.accuracy,
-        #     metric_kwargs=dict(task="multiclass", num_classes=n_classes),
-        # ),
         lambda: Metric(non_reducing_loss),
-        # lambda: Metric(calibration_error, metric_kwargs=dict(n_classes=n_classes)),
     ]
 
 

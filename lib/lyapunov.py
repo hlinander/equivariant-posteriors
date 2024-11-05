@@ -1,6 +1,21 @@
 import torch
 
 
+def lambda1fast(model: torch.nn.Module, x: torch.Tensor):
+    jacobians = torch.func.vmap(torch.func.jacrev(model))(x)
+    jacobians = jacobians.reshape(jacobians.shape[:1] + (-1,) + jacobians.shape[-1:])
+    # jacobians = jacobians.permute(2, 0, 1)
+    u, s, vh = torch.linalg.svd(jacobians)
+    # end.record()
+    # torch.cuda.synchronize()
+    # t_svd = start.elapsed_time(end)
+    # print(f"jac: {t_jacobian}, svd: {t_svd}")
+
+    # Return singular values (ordered by norm)
+    return torch.log(s[:, 0])
+    # breakpoint()
+
+
 def lambda1(model: torch.nn.Module, batch: torch.Tensor):
     # start = torch.cuda.Event(enable_timing=True)
     # end = torch.cuda.Event(enable_timing=True)
