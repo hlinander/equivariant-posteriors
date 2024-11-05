@@ -294,7 +294,11 @@ class SwinTransformerBlock(nn.Module):
         else:
             self.shifter = hp_shifting.NoShift()
 
-        attn_mask = self.shifter.get_mask(window_partition)
+        attn_mask = self.shifter.get_mask(
+            lambda x, window_size: window_partition(
+                x, window_size, device=next(self.parameters()).device
+            )
+        )
 
         self.register_buffer("attn_mask", attn_mask)
 
@@ -333,13 +337,15 @@ class SwinTransformerBlock(nn.Module):
 
         # partition windows
         x_windows = window_partition(
-            shifted_x, self.window_size
+            shifted_x, self.window_size, device=next(self.parameters()).device
         )  # nW*B, window_size, C
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size, C
 
         # merge windows
-        shifted_x = window_reverse(attn_windows, self.window_size, D, N)  # B N' C
+        shifted_x = window_reverse(
+            attn_windows, self.window_size, D, N, device=next(self.parameters()).device
+        )  # B N' C
 
         # reverse cyclic shift
         x = self.shifter.shift_back(shifted_x)

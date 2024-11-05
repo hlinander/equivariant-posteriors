@@ -14,8 +14,8 @@ from lib.metric import create_metric
 
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
-from experiments.weather.models.swin_hp_pangu_isolatitude import (
-    SwinHPPanguIsolatitudeConfig,
+from experiments.weather.models.swin_hp_pangu import (
+    SwinHPPanguConfig,
 )
 
 # from experiments.weather.models.swin_hp_pangu import SwinHPPangu
@@ -49,7 +49,7 @@ from experiments.weather.data import (
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
-NSIDE = 256
+NSIDE = 64
 
 
 def create_config(ensemble_id, epoch=200):
@@ -67,7 +67,7 @@ def create_config(ensemble_id, epoch=200):
 
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
-        model_config=SwinHPPanguIsolatitudeConfig(
+        model_config=SwinHPPanguConfig(
             base_pix=12,
             nside=NSIDE,
             dev_mode=False,
@@ -92,7 +92,9 @@ def create_config(ensemble_id, epoch=200):
             patch_size=16,  # int(16 * (NSIDE / 256)),
         ),
         train_data_config=DataHPConfig(nside=NSIDE),
-        val_data_config=None,  # DataHPConfig(nside=NSIDE), loss=reg_loss, optimizer=OptimizerConfig(
+        val_data_config=None,  # DataHPConfig(nside=NSIDE),
+        loss=reg_loss,
+        optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=3e-6, lr=5e-4),
             # kwargs=dict(weight_decay=3e-6, lr=5e-3),
@@ -101,7 +103,7 @@ def create_config(ensemble_id, epoch=200):
         ensemble_id=ensemble_id,
         # gradient_clipping=0.3,
         # _version=57,
-        _version=4,
+        _version=6,
         # _version=55,
     )
     train_eval = TrainEval(
@@ -119,7 +121,10 @@ def create_config(ensemble_id, epoch=200):
         keep_nth_epoch_checkpoints=10,
         validate_nth_epoch=20,
         visualize_terminal=False,
-        notes=dict(shift="fixed: ring shift uses shift_size instead of window/2"),
+        notes=dict(
+            shift="fixed: ring shift uses shift_size instead of window/2",
+            isolatitude="compare against nested window nside 64",
+        ),
     )
     return train_run
 
@@ -132,7 +137,6 @@ def create_config(ensemble_id, epoch=200):
 
 
 if __name__ == "__main__":
-    print("Start")
     device_id = ddp_setup()
 
     def oom_observer(device, alloc, device_alloc, device_free):
@@ -145,7 +149,6 @@ if __name__ == "__main__":
         # dump(snapshot, open("oom_snapshot.pickle", "wb"))
 
     torch._C._cuda_attach_out_of_memory_observer(oom_observer)
-    print("After mem attach")
 
     # register()
 

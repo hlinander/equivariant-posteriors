@@ -90,7 +90,7 @@ def test_pad_windows(nside):
     assert (new - data_pre).sum() == 0.0
 
 
-def window_reverse(windows, window_size, D, N):
+def window_reverse(windows, window_size, D, N, device):
     window_size_d, window_size_hp = window_size
     nside = healpix.npix2nside(N)
     C = windows.shape[-1]
@@ -99,7 +99,7 @@ def window_reverse(windows, window_size, D, N):
     interspersed = flattened_interspersed(nside, window_size_hp, hp_windows)
     padded_windows = pad_windows(window_size_hp, interspersed)
 
-    indices = torch.tensor(padded_windows)
+    indices = torch.tensor(padded_windows, device=device)
 
     Nw, W = indices.shape
 
@@ -111,13 +111,13 @@ def window_reverse(windows, window_size, D, N):
     # 0   1   2   3  4  5
     x = x.contiguous().view(B, D, Nw, W, C)
 
-    new = torch.zeros((B, D, N, C))
+    new = torch.zeros((B, D, N, C), device=device)
     new[:, :, indices, :] = x
 
     return new
 
 
-def window_partition(x: torch.Tensor, window_size):
+def window_partition(x: torch.Tensor, window_size, device):
     window_size_d, window_size_hp = window_size
 
     nside = healpix.npix2nside(x.shape[2])
@@ -125,7 +125,7 @@ def window_partition(x: torch.Tensor, window_size):
     interspersed = flattened_interspersed(nside, window_size_hp, hp_windows)
     padded_windows = pad_windows(window_size_hp, interspersed)
 
-    indices = torch.tensor(padded_windows)
+    indices = torch.tensor(padded_windows, device=device)
     windowed = x[:, :, indices, :]
 
     B, D, Nw, W, C = windowed.shape

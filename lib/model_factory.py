@@ -19,6 +19,12 @@ from experiments.weather.models.swin_hp_pangu_isolatitude import (
     SwinHPPanguIsolatitudeConfig,
 )
 from experiments.weather.models.swin_hp_pangu_isolatitude import SwinHPPanguIsolatitude
+from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
+    SwinHPPanguIsolatitudeConvConfig,
+)
+from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
+    SwinHPPanguIsolatitudeConv,
+)
 
 
 class _ModelFactory:
@@ -37,6 +43,9 @@ class _ModelFactory:
         self.models[LLaMA2GenerativeConfig.__name__] = LLaMA2Generative
         self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
         self.models[SwinHPPanguIsolatitudeConfig.__name__] = SwinHPPanguIsolatitude
+        self.models[
+            SwinHPPanguIsolatitudeConvConfig.__name__
+        ] = SwinHPPanguIsolatitudeConv
         self.models[PanguConfig.__name__] = Pangu
 
     def register(self, config_class, model_class):

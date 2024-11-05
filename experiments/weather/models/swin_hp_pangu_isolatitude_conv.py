@@ -18,10 +18,9 @@ import healpix as hp
 from lib.dataspec import DataSpec
 
 from experiments.weather.models import hp_shifting
-from experiments.weather.models.hp_windowing import (
+from experiments.weather.models.hp_windowing_isolatitude import (
     window_partition,
     window_reverse,
-    get_nest_win_idcs,
 )
 from experiments.weather.data import DataSpecHP
 from lib.serialize_human import serialize_human
@@ -258,6 +257,15 @@ class SwinTransformerBlock(nn.Module):
             act_layer=act_layer,
             drop=0,
         )
+        self.conv_kernel_size = 9
+        self.conv = torch.nn.Conv1d(
+            in_channels=dim,
+            out_channels=dim,
+            kernel_size=self.conv_kernel_size,
+            padding=(self.conv_kernel_size - 1) // 2,
+        )
+        self.conv_bn = torch.nn.BatchNorm1d(dim)
+        self.norm_conv = norm_layer(dim)
 
         # get nside parameter of current resolution
         nside = math.sqrt(input_resolution[1] // base_pix)
@@ -311,6 +319,14 @@ class SwinTransformerBlock(nn.Module):
         if not self.use_v2_norm_placement:
             x = self.norm1(x)
 
+        B, D, N, C = x.shape
+        # before_conv = x
+        x = x.reshape(-1, N, C)
+        x = x.permute(0, 2, 1)
+        x = self.conv(x)
+        x = x.permute(0, 2, 1)
+        x = x.reshape(B, D, N, C)
+
         # cyclic shift
         # breakpoint()
         # x[0, 0, 0:16, 0] = 15
@@ -338,16 +354,12 @@ class SwinTransformerBlock(nn.Module):
 
         # partition windows
         x_windows = window_partition(
-            # shifted_x, self.window_size
-            shifted_x,
-            self.window_size,
-            device=next(self.parameters()).device,
+            shifted_x, self.window_size, device=next(self.parameters()).device
         )  # nW*B, window_size, C
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size, C
 
         # merge windows
-        # shifted_x = window_reverse(attn_windows, self.window_size, D, N)  # B N' C
         shifted_x = window_reverse(
             attn_windows, self.window_size, D, N, device=next(self.parameters()).device
         )  # B N' C
@@ -361,6 +373,10 @@ class SwinTransformerBlock(nn.Module):
         #         "inverse_shifted_back_vis.npy",
         #         inverse_shift[0, 0, ...].detach().permute(1, 0),
         #     )
+
+        # x = self.norm_conv(x)
+        # x = before_conv + x
+        # x = torch.nn.functional.gelu(x)
 
         # breakpoint()
 
@@ -645,7 +661,7 @@ class PatchEmbed(nn.Module):
 
 
 @dataclass
-class SwinHPPanguConfig:
+class SwinHPPanguIsolatitudeConvConfig:
     base_pix: int = 12
     nside: int = 64
     patch_size: int = 16
@@ -676,7 +692,7 @@ class SwinHPPanguConfig:
         return serialize_human(self.__dict__)  # dict(validation=self.validation)
 
 
-class SwinHPPangu(nn.Module):
+class SwinHPPanguIsolatitudeConv(nn.Module):
     r"""Swin Transformer A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer
         using Shifted Windows` - https://arxiv.org/pdf/2103.14030
 
@@ -704,7 +720,9 @@ class SwinHPPangu(nn.Module):
 
     """
 
-    def __init__(self, config: SwinHPPanguConfig, data_spec: DataSpec, **kwargs):
+    def __init__(
+        self, config: SwinHPPanguIsolatitudeConvConfig, data_spec: DataSpec, **kwargs
+    ):
         super().__init__()
 
         self.config = config

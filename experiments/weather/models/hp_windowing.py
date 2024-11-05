@@ -1,7 +1,7 @@
 import torch
 
 
-def window_partition(x: torch.Tensor, window_size):
+def window_partition(x: torch.Tensor, window_size, device):
     """
     Args:
         x: (B, D, N, C)
@@ -28,7 +28,7 @@ def window_partition(x: torch.Tensor, window_size):
     return windows
 
 
-def window_reverse(windows, window_size, D, N):
+def window_reverse(windows, window_size, D, N, device):
     """
     Args:
         windows: (num_windows*B, window_size, C)

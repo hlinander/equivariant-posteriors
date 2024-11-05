@@ -103,7 +103,7 @@ def create_config(ensemble_id, epoch=200):
         ensemble_id=ensemble_id,
         # gradient_clipping=0.3,
         # _version=57,
-        _version=4,
+        _version=5,
         # _version=55,
     )
     train_eval = TrainEval(

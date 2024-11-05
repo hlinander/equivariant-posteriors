@@ -49,7 +49,7 @@ from experiments.weather.data import (
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
 
-NSIDE = 256
+NSIDE = 64
 
 
 def create_config(ensemble_id, epoch=200):
@@ -86,13 +86,15 @@ def create_config(ensemble_id, epoch=200):
             drop_path_rate=0,
             rel_pos_bias="none",
             # shift_size=8,  # int(16 * (NSIDE / 256)),
-            shift_size=4,  # int(16 * (NSIDE / 256)),
+            shift_size=64 + 8,  # int(16 * (NSIDE / 256)),
             shift_strategy="ring_shift",
             ape=False,
             patch_size=16,  # int(16 * (NSIDE / 256)),
         ),
         train_data_config=DataHPConfig(nside=NSIDE),
-        val_data_config=None,  # DataHPConfig(nside=NSIDE), loss=reg_loss, optimizer=OptimizerConfig(
+        val_data_config=None,  # DataHPConfig(nside=NSIDE),
+        loss=reg_loss,
+        optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=3e-6, lr=5e-4),
             # kwargs=dict(weight_decay=3e-6, lr=5e-3),
@@ -101,7 +103,7 @@ def create_config(ensemble_id, epoch=200):
         ensemble_id=ensemble_id,
         # gradient_clipping=0.3,
         # _version=57,
-        _version=4,
+        _version=5,
         # _version=55,
     )
     train_eval = TrainEval(
@@ -132,7 +134,6 @@ def create_config(ensemble_id, epoch=200):
 
 
 if __name__ == "__main__":
-    print("Start")
     device_id = ddp_setup()
 
     def oom_observer(device, alloc, device_alloc, device_free):
@@ -145,7 +146,6 @@ if __name__ == "__main__":
         # dump(snapshot, open("oom_snapshot.pickle", "wb"))
 
     torch._C._cuda_attach_out_of_memory_observer(oom_observer)
-    print("After mem attach")
 
     # register()
 
