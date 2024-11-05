@@ -1,5 +1,6 @@
 import os
 import torch
+import copy
 from dataclasses import dataclass, field
 from typing import List
 from typing import Callable
@@ -77,12 +78,16 @@ class TrainConfig:
             model=dict(
                 config=self.model_config.serialize_human(),
                 name=model_factory.get_factory().get_class(self.model_config).__name__,
-                post_model_create_hook=self.post_model_create_hook.__name__
-                if self.post_model_create_hook is not None
-                else None,
-                model_pre_train_hook=self.model_pre_train_hook.__name__
-                if self.model_pre_train_hook is not None
-                else None,
+                post_model_create_hook=(
+                    self.post_model_create_hook.__name__
+                    if self.post_model_create_hook is not None
+                    else None
+                ),
+                model_pre_train_hook=(
+                    self.model_pre_train_hook.__name__
+                    if self.model_pre_train_hook is not None
+                    else None
+                ),
             ),
             data=dict(
                 config=self.train_data_config.serialize_human(),
@@ -168,6 +173,11 @@ class TrainRun:
     keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
     notes: object = None
+
+    def custom_dict(self):
+        serialize_dict = copy.deepcopy(self.__dict__)
+        del serialize_dict["notes"]
+        return serialize_dict
 
     def serialize_human(self):
         return dict(
