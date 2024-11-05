@@ -1,4 +1,5 @@
 import os
+import math
 import plotext as plt
 import shutil
 import psutil
@@ -52,9 +53,15 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         plt.title(common_metrics[idx])
         plt.xlabel("batches")
         if len(train_means) > 0:
-            x = [batch * batch_factor for (batch, mean) in train_means]
-            y = [mean for (batch, mean) in train_means]
-            plt.plot(x, y, label=f"Train {common_metrics[idx]}")
+            x = [
+                batch * batch_factor
+                for (batch, mean) in train_means
+                if not math.isnan(mean)
+            ]
+            y = [mean for (batch, mean) in train_means if not math.isnan(mean)]
+            if len(x) > 0:
+                plt.yscale("log")
+                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
         # if len(val_means) > 0:
         # x = [epoch for (epoch, mean) in val_means]
         # y = [mean for (epoch, mean) in val_means]
@@ -167,13 +174,17 @@ def visualize_progress(state, train_run, last_postgres_result, device):
         plt.title(common_metrics[idx])
         plt.xlabel("epoch")
         if len(train_means) > 0:
-            x = [epoch for (epoch, mean) in train_means]
-            y = [mean for (epoch, mean) in train_means]
-            plt.plot(x, y, label=f"Train {common_metrics[idx]}")
+            x = [epoch for (epoch, mean) in train_means if not math.isnan(mean)]
+            y = [mean for (epoch, mean) in train_means if not math.isnan(mean)]
+            if len(x) > 0:
+                plt.yscale("log")
+                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
         if len(val_means) > 0:
-            x = [epoch for (epoch, mean) in val_means]
-            y = [mean for (epoch, mean) in val_means]
-            plt.plot(x, y, label=f"Val {common_metrics[idx]}")
+            x = [epoch for (epoch, mean) in val_means if not math.isnan(mean)]
+            y = [mean for (epoch, mean) in val_means if not math.isnan(mean)]
+            if len(x) > 0:
+                plt.yscale("log")
+                plt.plot(x, y, label=f"Val {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
