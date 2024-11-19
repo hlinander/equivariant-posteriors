@@ -55,8 +55,15 @@ class DataHPConfig:
             del serialize_dict["end_year"]
         return serialize_dict
 
+    def statistics_name(self):
+        keys = sorted(self.__dict__.keys())
+        keys.remove("cache")
+        keys.remove("normalized")
+        return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
+
     def cache_name(self):
         keys = sorted(self.__dict__.keys())
+        keys.remove("cache")
         return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
 
     def validation(self):
@@ -299,6 +306,9 @@ class DataHP(torch.utils.data.Dataset):
     def get_cache_dir(self):
         return env().paths.datasets / self.config.cache_name()
 
+    def get_statistics_path(self):
+        return env().paths.datasets / f"{self.config.statistics_name()}.npy"
+
     def get_old_cache_dir(self):
         if self.config.driscoll_healy:
             return (
@@ -373,7 +383,7 @@ class DataHP(torch.utils.data.Dataset):
 
 def deserialize_dataset_statistics(nside):
     ds = DataHP(DataHPConfig(nside=nside))
-    return np.load(ds.get_cache_dir() / "statistics.npy", allow_pickle=True)
+    return np.load(ds.get_statistics_path(), allow_pickle=True)
 
 
 def _fix_dataset_statistics(nside):
@@ -444,11 +454,15 @@ def _get_stats_at_idx(idx_and_nside_tuple):
     return mean_surface, mean_upper, mean_x2_surface, mean_x2_upper
 
 
-def serialize_dataset_statistics(nside):
+def serialize_dataset_statistics(nside, test_with_one_sample=False):
     ds = DataHP(DataHPConfig(nside=nside, cache=False, normalized=False))
 
-    n_samples = len(ds)
-    n_samples_left = len(ds)
+    if test_with_one_sample:
+        n_samples = 1
+        n_samples_left = 1
+    else:
+        n_samples = len(ds)
+        n_samples_left = len(ds)
 
     sample = ds[0]
     mean_surface = np.zeros_like(
@@ -508,5 +522,6 @@ def serialize_dataset_statistics(nside):
         std_upper=std_upper,
         n_samples=n_samples,
     )
-    np.save(ds.get_cache_dir() / "statistics.npy", statistics_dict)
-    print(f"Saved npy {ds.get_cache_dir() / 'statistics.npy'}")
+    ds.get_cache_dir().mkdir(parents=True, exist_ok=True)
+    np.save(ds.get_statistics_path(), statistics_dict)
+    print(f"Saved npy {ds.get_statistics_path()}")

@@ -2740,6 +2740,12 @@ fn update_plot_map(
     let xs = df.column("xs").unwrap().rechunk();
     let mut xs = xs.iter();
     let values = df.column("values").unwrap().rechunk();
+    // let y_mean = values.mean().unwrap();
+    // let y_std = match values.std_as_series(0).get(0).unwrap() {
+    // AnyValue::Float32(v) => v as f64,
+    // AnyValue::Float64(v) => v,
+    // _ => panic!(),
+    // };
     let mut values = values.iter();
     // let mut iters = df
     //     .columns(["train_id", "variable", "x", "value"])
@@ -2807,7 +2813,18 @@ fn update_plot_map(
             }
         }
         // println!("to xy");
-        let xy = x.into_iter().zip(y).map(|(x, y)| [x, y]).collect_vec();
+        let xy = x
+            .into_iter()
+            .zip(y)
+            .filter_map(|(x, y)| {
+                // let z = (y as f64 - y_mean) / y_std;
+                if y.abs() < 10000.0 {
+                    Some([x, y])
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
         plot_map.insert(
             PlotMapKey {
                 train_id: train_id.into(),
@@ -3670,8 +3687,10 @@ impl GuiRuns {
                     || self.gui_params.filters.metric_filters.is_empty()
             });
 
-        let plot_width = ui.available_width() / 2.1;
-        let plot_height = ui.available_width() / 4.1;
+        // let plot_width = ui.available_width() / 2.1;
+        // let plot_height = ui.available_width() / 4.1;
+        let plot_width = ui.available_width() / 1.1;
+        let plot_height = ui.available_width() / 2.1;
 
         let plots = metric_names
             .map(|name| {

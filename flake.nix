@@ -145,16 +145,52 @@
         propagatedBuildInputs = [ pkgs.python3Packages.numpy ];
         doCheck = false;
       };
-      cdsapi = pkgs.python3Packages.buildPythonPackage rec {
-        pname = "cdsapi";
-        version = "0.6.1";
+      multiurl = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "multiurl";
+        version = "0.3.1";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
+          sha256 = "sha256-xwAUN7WdVtTDENclw9z/+YyXxLZSiT2ImJhTgnRl1EI="; # TODO
+        };
+        propagatedBuildInputs = [ 
+        pkgs.python3Packages.requests
+        pkgs.python3Packages.tqdm
+        pkgs.python3Packages.pytz
+        pkgs.python3Packages.dateutils
+         ];
+        doCheck = false;
+      };
+      cads_api_client = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "cads_api_client";
+        version = "1.4.3";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          # sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
+          sha256 = "sha256-UjWep0OoS1l8xYlzD/S0FHB7zk5eInmDVSiy0Sc8Gbg=";
+        };
+        format="pyproject";
+        propagatedBuildInputs = [
+          pkgs.python3Packages.requests
+          pkgs.python3Packages.tqdm
+          pkgs.python3Packages.setuptools
+          pkgs.python3Packages.setuptools_scm
+          pkgs.python3Packages.attrs
+          multiurl
+        ];
+        doCheck = false;
+      };
+      cdsapi = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "cdsapi";
+        version = "0.7.3";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          # sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
+          sha256 = "sha256-iDoTdspJVFfrVf1Ujbu29bZPLkyICzWG3Te6kEHlHII=";
         };
         propagatedBuildInputs = [
           pkgs.python3Packages.requests
           pkgs.python3Packages.tqdm
+          cads_api_client
 
         ];
         doCheck = false;

@@ -23,10 +23,6 @@ def get_isolatitude_windows_hp(nside):
         south_eq_idxs.append([current_idx + i for i in range(4 * nside)])
         current_idx += 4 * nside
 
-    # nside 2, 0 -> 0
-
-    # nside 3, 0 -> 1
-    # nside 3, 1 -> 0
     for window in reversed(north_idxs):
         south_idxs.append([n_pixels - 1 - idx for idx in window])
 

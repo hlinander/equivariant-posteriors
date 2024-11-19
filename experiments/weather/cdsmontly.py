@@ -81,14 +81,16 @@ def add_timedelta(instance: ERA5SampleConfig, days=0, hours=0) -> ERA5SampleConf
 def get_era5_sample(sample_config: ERA5SampleConfig):
     ERA5_GRIB_DATA_PATH.mkdir(exist_ok=True, parents=True)
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
     if not sample_config.surface_path().is_file():
         print(f"[Does not exist] {sample_config.surface_path()}")
         print(f"Downloading {sample_config}")
         print(f"Target {ERA5_GRIB_DATA_PATH}")
-        get_surface_variables(
-            sample_config.surface_grib_path(), **sample_config.__dict__
-        )
+        if not sample_config.surface_grib_path().is_file():
+            get_surface_variables(
+                sample_config.surface_grib_path(), **sample_config.__dict__
+            )
         xr_grib = xr.load_dataset(sample_config.surface_grib_path())
         tmp_path = f"{sample_config.surface_path().absolute().as_posix()}_tmp"
         xr_grib.to_netcdf(tmp_path)
@@ -96,14 +98,16 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
         # np.save(sample_config.surface_path(), xr_grib.to_array().to_numpy())
 
     if not sample_config.upper_path().is_file():
-        get_upper_variables(sample_config.upper_grib_path(), **sample_config.__dict__)
+        if not sample_config.upper_grib_path().is_file():
+            get_upper_variables(
+                sample_config.upper_grib_path(), **sample_config.__dict__
+            )
         xr_grib = xr.load_dataset(sample_config.upper_grib_path())
         tmp_path = f"{sample_config.upper_path().absolute().as_posix()}_tmp"
         xr_grib.to_netcdf(tmp_path)
         shutil.move(tmp_path, sample_config.upper_path())
         # np.save(sample_config.upper_path(), xr_grib.to_array().to_numpy())
 
-    os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
     surface_ds = xr.open_dataset(
         sample_config.surface_path(), backend_kwargs=dict(lock=False)
     )
