@@ -97,11 +97,16 @@ def days_from_start_year(start_year: int, year: int, month: int, day: int) -> in
     return (specific_date - start_date).days
 
 
+def day_index_to_datetime(day_index: int, start_year: int, end_year: int):
+    start_date = datetime(start_year, 1, 1)
+    target_date = start_date + timedelta(days=day_index)
+    return target_date
+
+
 def day_index_to_era5_config(
     day_index: int, start_year: int, end_year: int
 ) -> cdstest.ERA5SampleConfig:
-    start_date = datetime(start_year, 1, 1)
-    target_date = start_date + timedelta(days=day_index)
+    target_date = day_index_to_datetime(day_index, start_year, end_year)
     return cdstest.ERA5SampleConfig(
         year=target_date.strftime("%Y"),
         month=target_date.strftime("%m"),
@@ -208,6 +213,97 @@ def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
         hp_surface, hp_upper = normalize_sample(stats.item(), hp_surface, hp_upper)
 
     return hp_surface, hp_upper
+
+
+def batch_to_weatherbench2(input_batch, output_batch, nside: int, normalized: bool):
+    xds = numpy_hp_to_e5(
+        output_batch["logits_surface"],
+        output_batch["logits_upper"],
+        times=input_batch["time"],
+        nside=nside,
+        normalized=normalized,
+    )
+    return xds
+
+
+def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
+    if normalized:
+        stats = deserialize_dataset_statistics(nside)
+        hp_surface, hp_upper = denormalize_sample(stats.item(), hp_surface, hp_upper)
+
+    def regrid_to_original(hp_data, dims):
+        xhp = xr.DataArray(hp_data, dims=dims)
+        lat = np.linspace(-90.0, 90.0, 180)
+        lon = np.linspace(0.0, 360.0, 360)
+        lat2, lon2 = np.meshgrid(lat, lon, indexing="ij")
+        idxs = healpix.ang2pix(nside, lon2, lat2, nest=True, lonlat=True)
+        idxhp = xr.DataArray(
+            idxs,
+            dims=["latitude", "longitude"],
+            coords={"latitude": lat, "longitude": lon},
+        )
+        return xhp.interp(z=idxhp)
+
+    surface = regrid_to_original(
+        np.expand_dims(hp_surface, 1),
+        dims=("time", "prediction_timedelta", "variable", "z"),
+    )
+    upper = regrid_to_original(
+        np.expand_dims(hp_upper, 1),
+        dims=("time", "prediction_timedelta", "variable", "level", "z"),
+    )
+
+    surface = surface.assign_coords(
+        {
+            "time": [np.datetime64(t) for t in times],
+            "prediction_timedelta": [np.timedelta64(timedelta(days=1))],
+        }
+    )
+    upper = upper.assign_coords(
+        {
+            "time": [np.datetime64(t) for t in times],
+            "prediction_timedelta": [np.timedelta64(timedelta(days=1))],
+            "level": np.array(
+                [
+                    1000,
+                    925,
+                    850,
+                    700,
+                    600,
+                    500,
+                    400,
+                    300,
+                    250,
+                    200,
+                    150,
+                    100,
+                    50,
+                ],
+                dtype=np.int32,
+            ),
+        }
+    )
+
+    surface_ds = surface.to_dataset("variable").rename_vars(
+        {
+            0: "mean_sea_level_pressure",
+            1: "10m_u_component_of_wind",
+            2: "10m_v_component_of_wind",
+            3: "2m_temperature",
+        }
+    )
+    upper_ds = upper.to_dataset("variable").rename_vars(
+        {
+            0: "geopotential",
+            1: "specific_humidity",
+            2: "temperature",
+            3: "u_component_of_wind",
+            4: "v_component_of_wind",
+        }
+    )
+    # e5xr = xr.Dataset({"surface": surface, "upper": upper})
+
+    return xr.merge([surface_ds, upper_ds]).drop_vars("z")  # surface, upper
 
 
 class DataHP(torch.utils.data.Dataset):
@@ -334,6 +430,14 @@ class DataHP(torch.utils.data.Dataset):
         )
         item_dict = dict(
             sample_id=idx,
+            time=np.datetime_as_string(
+                np.datetime64(
+                    day_index_to_datetime(
+                        idx, self.config.start_year, self.config.end_year
+                    )
+                )
+            ),
+            prediction_timedelta_hours=24,
         )
         if fs_cache_path.is_dir() and self.config.cache:
             # print("Loading from cache")

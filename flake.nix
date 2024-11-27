@@ -134,6 +134,38 @@
       #     license = licenses.mit;
       #   };
       # };
+      # https://github.com/google-research/weatherbench2
+      weatherbench2 = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "weatherbench2";
+        version = "0.2.0";
+        format = "setuptools";
+
+        # disabled = pythonOlder "3.8";
+
+        src = pkgs.fetchFromGitHub {
+          owner = "google-research";
+          repo = pname;
+          rev = "ae870189270ca46b96328a7328c877debf580ae8";
+          hash = "sha256-2k83KxjWFANPwZWgrKwNstwbJjgtSDNZGDF0sPu2OVY=";
+        };
+
+        propagatedBuildInputs = [
+        ];         
+
+        doCheck = false;
+
+        # meta = with pkgs.lib; {
+        #   description =
+        #     "Open-access datasets and evaluation metrics for natural language processing";
+        #   homepage = "https://github.com/huggingface/datasets";
+        #   changelog =
+        #     "https://github.com/huggingface/datasets/releases/tag/${version}";
+        #   license = licenses.asl20;
+        #   platforms = platforms.unix;
+        #   maintainers = with maintainers; [ ];
+        # };
+      };
+
 
       healpix = pkgs.python3Packages.buildPythonPackage rec {
         pname = "healpix";
@@ -255,6 +287,8 @@
 
       pythonPackages = with pkgs.python3Packages; [
         # pycapnp
+        zarr
+        weatherbench2
         flatbuffers
         psutil
         jupyter
@@ -339,7 +373,7 @@
         julia
         (postgresql_15.withPackages(p: [p.timescaledb]))
         ruff
-        helixmaster
+        # helixmaster
         nixfmt
         jq
         yazi

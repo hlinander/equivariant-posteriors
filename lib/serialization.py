@@ -171,10 +171,12 @@ class DeserializedModel:
 def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
     train_config = config.train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config)
+    print(f"Trying to load {checkpoint_path.absolute()}")
     if (
         not (checkpoint_path / "model").is_file()
         or not (checkpoint_path / "epoch").is_file()
     ):
+        print("No files")
         return None
     else:
         print(f"{checkpoint_path}")
