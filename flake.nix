@@ -287,6 +287,7 @@
 
       pythonPackages = with pkgs.python3Packages; [
         # pycapnp
+        # apache-beam
         zarr
         weatherbench2
         flatbuffers
