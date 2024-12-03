@@ -2,6 +2,8 @@
 import torch
 import numpy as np
 from pathlib import Path
+from filelock import FileLock, Timeout
+from lib.paths import get_lock_path
 
 # import onnxruntime as ort
 
@@ -11,6 +13,7 @@ from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import create_metric
+from lib.serialization import deserialize_model, DeserializeConfig
 
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
@@ -43,6 +46,19 @@ from experiments.weather.data import (
     Climatology,
     deserialize_dataset_statistics,
     denormalize_sample,
+)
+
+from experiments.weather.data import DataHP
+from experiments.weather.metrics import (
+    anomaly_correlation_coefficient_hp,
+    rmse_hp,
+    MeteorologicalData,
+)
+from lib.render_psql import (
+    connect_psql,
+    add_metric_epoch_values,
+    get_parameter,
+    insert_param,
 )
 
 # from experiments.weather.metrics import anomaly_correlation_coefficient, rmse
@@ -230,3 +246,86 @@ if __name__ == "__main__":
         save_and_register(f"{idx}_if_upper.npy", batch["input_upper"])
         save_and_register(f"{idx}_tf_upper.npy", target_upper)
         del output
+
+    train_run = ensemble_config.members[0]
+    ds_rmse = DataHP(train_run.train_config.train_data_config.validation())
+    dl_rmse = torch.utils.data.DataLoader(
+        ds_rmse,
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    ds_acc = Climatology(train_run.train_config.train_data_config.validation())
+    dl_acc = torch.utils.data.DataLoader(
+        ds_acc,
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    era5_meta = MeteorologicalData()
+
+    for epoch in range(0, 200, 10):
+        # continue
+        # if epoch < 100:
+        # continue
+        lock = FileLock(
+            get_lock_path(
+                train_config=train_run.train_config, lock_name=f"eval_{epoch}"
+            ),
+            0.1,
+        )
+        try:
+            lock.acquire(blocking=False)
+        except Timeout:
+            continue
+
+        try:
+            eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
+            if get_parameter(train_run, eval_report_version) is not None:
+                continue
+            print(f"[eval] Epoch {epoch}")
+            deser_config = DeserializeConfig(
+                train_run=create_ensemble_config(
+                    lambda eid: create_config(eid, epoch),
+                    1,
+                ).members[0],
+                device_id=device_id,
+            )
+            deser_model = deserialize_model(deser_config)
+            if deser_model is None:
+                continue
+            model = deser_model.model
+            model.eval()
+            print("[eval] rmse")
+            rmse_res = rmse_hp(model, dl_rmse, device_id)
+
+            with connect_psql() as conn:
+                for var_idx, var_data in enumerate(rmse_res.mean_surface):
+                    add_metric_epoch_values(
+                        conn,
+                        deser_config.train_run,
+                        f"rmse_surface_{era5_meta.surface.names[var_idx]}",
+                        var_data.item(),
+                    )
+
+            print("[eval] acc")
+            acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+            save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
+            save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
+            save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
+            save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
+
+            with connect_psql() as conn:
+                for var_idx, var_data in enumerate(acc.acc_surface):
+                    add_metric_epoch_values(
+                        conn,
+                        deser_config.train_run,
+                        f"acc_surface_{era5_meta.surface.names[var_idx]}",
+                        var_data.item(),
+                    )
+                train_run_serialized = train_run.serialize_human()
+                train_id = train_run_serialized["train_id"]
+                ensemble_id = train_run_serialized["ensemble_id"]
+                insert_param(conn, train_id, ensemble_id, eval_report_version, "done")
+        finally:
+            lock.release()
