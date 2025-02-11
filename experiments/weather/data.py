@@ -227,14 +227,19 @@ def batch_to_weatherbench2(input_batch, output_batch, nside: int, normalized: bo
 
 
 def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
+    if torch.isnan(hp_surface).any():
+        print("NaNs!")
+    if torch.isnan(hp_upper).any():
+        print("NaNs!")
+
     if normalized:
         stats = deserialize_dataset_statistics(nside)
         hp_surface, hp_upper = denormalize_sample(stats.item(), hp_surface, hp_upper)
 
     def regrid_to_original(hp_data, dims):
         xhp = xr.DataArray(hp_data, dims=dims)
-        lat = np.linspace(-90.0, 90.0, 180)
-        lon = np.linspace(0.0, 360.0, 360)
+        lat = np.linspace(-90.0, 90.0, 721, endpoint=True)
+        lon = np.linspace(0.0, 360.0, 1440, endpoint=False)
         lat2, lon2 = np.meshgrid(lat, lon, indexing="ij")
         idxs = healpix.ang2pix(nside, lon2, lat2, nest=True, lonlat=True)
         idxhp = xr.DataArray(
@@ -242,7 +247,7 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
             dims=["latitude", "longitude"],
             coords={"latitude": lat, "longitude": lon},
         )
-        return xhp.interp(z=idxhp)
+        return xhp.interp(z=idxhp, kwargs={"fill_value": "extrapolate"})
 
     surface = regrid_to_original(
         np.expand_dims(hp_surface, 1),
@@ -252,6 +257,11 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
         np.expand_dims(hp_upper, 1),
         dims=("time", "prediction_timedelta", "variable", "level", "z"),
     )
+
+    if surface.isnull().any():
+        print("surface NaN after regrid")
+    if upper.isnull().any():
+        print("upper NaN after regrid")
 
     surface = surface.assign_coords(
         {
@@ -302,8 +312,13 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
         }
     )
     # e5xr = xr.Dataset({"surface": surface, "upper": upper})
+    # Identify misaligned coordinates
 
-    return xr.merge([surface_ds, upper_ds]).drop_vars("z")  # surface, upper
+    final = xr.merge(
+        [surface_ds.drop_vars("z"), upper_ds.drop_vars("z")],
+    )  # surface, upper
+
+    return final
 
 
 class DataHP(torch.utils.data.Dataset):
