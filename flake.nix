@@ -1,9 +1,11 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/02f05fc";
   inputs.helix-pkg.url = "github:helix-editor/helix";
+  # inputs.helix-pkg.url = "github:helix-editor/helix?tag=25.01";
+
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
   inputs.fenix = {
     url = "github:nix-community/fenix";
     inputs.nixpkgs.follows = "nixpkgs";
@@ -18,6 +20,7 @@
         config = {
           allowUnfree = true;
           cudaSupport = disableCudaEnvFlag != "1";
+          # cudaCapabilities = ["8.0"];
         };
       });
       rustToolchain = fenix.packages."${system}".stable;
@@ -335,86 +338,86 @@
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
       devinputs = with pkgs; [
+      helixmaster
+      # helix
       duckdb
       flatbuffers
-          glslang
+      glslang
       shaderc
-      gitui
-      lazygit
+      # gitui
+      # lazygit
       linuxPackages_latest.perf
-        glfw3
-        glm
-        xorg.libX11
-        xorg.libpthreadstubs
-        xorg.libXau
-        xorg.libXdmcp
-        xorg.libXrandr
-        xorg.libXinerama
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libxcb
-        xorg.xkbevd
-        xorg.xkbutils
-        xclip
-        libxkbcommon
-        libGL
-        libGLU
+      glfw3
+      glm
+      xorg.libX11
+      xorg.libpthreadstubs
+      xorg.libXau
+      xorg.libXdmcp
+      xorg.libXrandr
+      xorg.libXinerama
+      xorg.libXcursor
+      xorg.libXi
+      xorg.libxcb
+      xorg.xkbevd
+      xorg.xkbutils
+      xclip
+      libxkbcommon
+      libGL
+      libGLU
 
-        pkg-config
-        openssl
-        (rustToolchain.withComponents [
-          "cargo"
-          "rustc"
-          "rust-src"
-          "rustfmt"
-          "clippy"
-        ])
-        fenix.packages."${system}".rust-analyzer
-        nil
-        julia
-        (postgresql_15.withPackages(p: [p.timescaledb]))
-        ruff
-        # helixmaster
-        nixfmt
-        jq
-        yazi
-        nerdfonts
-        poppler
-        fzf
-        (ueberzugpp.override {
-          enableWayland = false;
-          enableOpencv = false;
-        })
-        (rWrapper.override {
-          packages = with rPackages; [
-            ggplot2
-            dplyr
-            latex2exp
-            patchwork
-            reticulate
-            Hmisc
-            RPostgreSQL
-            plotly
-          ];
-        })
-        (rstudioWrapper.override {
-          packages = with rPackages; [
-            ggplot2
-            dplyr
-            patchwork
-            reticulate
-            Hmisc
-            RPostgreSQL
-            plotly
-            esquisse
-            matlab
-            ggExtra
-            ggpubr
-          ];
-        })
-        # cudatoolkit
-        # python
-        pythonWithPackages
+      pkg-config
+      openssl
+      (rustToolchain.withComponents [
+        "cargo"
+        "rustc"
+        "rust-src"
+        "rustfmt"
+        "clippy"
+      ])
+      fenix.packages."${system}".rust-analyzer
+      nil
+      julia
+      # (postgresql_15.withPackages(p: [p.timescaledb]))
+      postgresql_15
+      ruff
+      nixfmt
+      jq
+      poppler
+      fzf
+      (ueberzugpp.override {
+        enableWayland = false;
+        enableOpencv = false;
+      })
+      (rWrapper.override {
+        packages = with rPackages; [
+          ggplot2
+          dplyr
+          latex2exp
+          patchwork
+          reticulate
+          Hmisc
+          RPostgreSQL
+          plotly
+        ];
+      })
+      # (rstudioWrapper.override {
+      #   packages = with rPackages; [
+      #     ggplot2
+      #     dplyr
+      #     patchwork
+      #     reticulate
+      #     Hmisc
+      #     RPostgreSQL
+      #     plotly
+      #     esquisse
+      #     matlab
+      #     ggExtra
+      #     ggpubr
+      #   ];
+      # })
+      cudatoolkit
+      # python
+      pythonWithPackages
       ];
     in {
       packages.x86_64-linux.default = program;
@@ -425,7 +428,7 @@
           buildInputs = devinputs;
           nativeBuildInputs = [ pkgs.cudatoolkit ];
           shellHook = ''
-            export POSTGRES=${pkgs.postgresql}
+            export POSTGRES=${pkgs.postgresql_15}
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
             export EDITOR=hx
             export PYTHON=${pythonWithPackages}/bin/python
@@ -470,13 +473,16 @@
               pkgs.coreutils
               pkgs.findutils
               pkgs.gnugrep
-              program
-              devinputs
+              # program
+              # devinputs
             ];
             pathsToLink = [ "/bin" "/share" ];
           })
-          program
-          devinputs
+          # program
+          # devinputs
+          pkgs.postgresql_15
+          pythonWithPackages
+          pkgs.helix
           pkgs.gnugrep
           pkgs.findutils
           pkgs.vim
@@ -488,7 +494,7 @@
         # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
           #!${pkgs.stdenv.shell}
-          export POSTGRES=${pkgs.postgresql}
+          export POSTGRES=${pkgs.postgresql_15}
           export LOCALE_ARCHIVE=${pkgs.glibcLocales}/lib/locale/locale-archive
           exec /bin/sh $@'';
         runAsRoot =

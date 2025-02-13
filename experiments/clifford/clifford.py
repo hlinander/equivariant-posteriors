@@ -264,7 +264,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
         epochs=200,
         save_nth_epoch=1,
         validate_nth_epoch=5,
-        visualize_terminal=False,
+        visualize_terminal=True,
     )
     return train_run
 
