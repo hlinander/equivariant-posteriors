@@ -1420,10 +1420,9 @@ impl eframe::App for GuiRuns {
             let t = Instant::now();
             // self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
             let pool = self.duckdb.clone();
-            self.param_values_handle =
-                Some(tokio::spawn(
-                    async move { get_parameter_values_duck(&pool) },
-                ));
+            self.param_values_handle = Some(tokio::task::spawn_blocking(move || {
+                get_parameter_values_duck(&pool)
+            }));
         }
 
         egui::SidePanel::left("Controls")
@@ -3576,7 +3575,7 @@ impl GuiRuns {
         {
             let conn = self.duckdb.get().unwrap();
             let query = self.custom_plot.clone();
-            self.custom_plot_handle = Some(tokio::spawn(async move {
+            self.custom_plot_handle = Some(tokio::task::spawn_blocking(move || {
                 conn.execute_batch("DROP TABLE IF EXISTS params;  CREATE TABLE params AS pivot local.runs on variable using any_value(value_text) group by train_id").unwrap();
                 match conn.prepare(&query) {
                     Ok(mut stmt) => {
