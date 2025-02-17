@@ -16,6 +16,7 @@ from lib.compute_env import env
 
 from dataclasses import dataclass
 import healpix
+import chealpix
 import xarray as xr
 import experiments.weather.cdsmontly as cdstest
 
@@ -241,7 +242,8 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
         lat = np.linspace(-90.0, 90.0, 721, endpoint=True)
         lon = np.linspace(0.0, 360.0, 1440, endpoint=False)
         lat2, lon2 = np.meshgrid(lat, lon, indexing="ij")
-        idxs = healpix.ang2pix(nside, lon2, lat2, nest=True, lonlat=True)
+        idxs = healpix.ang2pix(nside, lon2, lat2, nest=False, lonlat=True)
+        idxs = chealpix.ring2nest(nside, idxs)
         idxhp = xr.DataArray(
             idxs,
             dims=["latitude", "longitude"],
