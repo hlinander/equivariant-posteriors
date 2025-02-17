@@ -1,3 +1,4 @@
+import sys
 import os
 import torch
 import copy
@@ -173,6 +174,7 @@ class TrainRun:
     keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
     notes: object = None
+    argv: str = " ".join(sys.argv)
 
     def custom_dict(self):
         serialize_dict = copy.deepcopy(self.__dict__)
@@ -190,6 +192,7 @@ class TrainRun:
             save_nth_epoch=self.save_nth_epoch,
             visualize_terminal=self.visualize_terminal,
             notes=self.notes,
+            argv=self.argv,
         )
 
 

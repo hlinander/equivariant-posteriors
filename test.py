@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import sys
 import torch
 import torchmetrics as tm
 
@@ -72,6 +73,8 @@ def main():
         save_nth_epoch=5,
         validate_nth_epoch=5,
     )
+    print(__file__)
+    print(" ".join(sys.argv))
     state = load_or_create_state(train_run, device_id)
     prepare_results("test", train_run.train_config)
     do_training(train_run, state, device_id)

@@ -112,6 +112,7 @@ def serialize(config: SerializeConfig):
         checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
     )
     write_status_file(config)
+    print("Serialized at ", checkpoint_path)
 
 
 def get_train_run_status(train_run: TrainRun):
