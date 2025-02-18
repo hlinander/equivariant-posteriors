@@ -19,14 +19,6 @@ def is_git_repo():
     return True
 
 
-def git_repo():
-    try:
-        repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
-        return repo
-    except git.exc.InvalidGitRepositoryError:
-        return None
-
-
 def get_rev_short():
     if not is_git_repo():
         return "no_git_repo"

@@ -13,6 +13,7 @@ from pathlib import Path
 from lib.metric import Metric
 from lib.timing_metric import Timing
 from lib.stable_hash import stable_hash
+from lib.git import get_rev
 import lib.serialize_human
 
 
@@ -175,6 +176,7 @@ class TrainRun:
     visualize_terminal: bool = True
     notes: object = None
     argv: str = " ".join(sys.argv)
+    git_rev: str = get_rev()
 
     def custom_dict(self):
         serialize_dict = copy.deepcopy(self.__dict__)
@@ -193,6 +195,7 @@ class TrainRun:
             visualize_terminal=self.visualize_terminal,
             notes=self.notes,
             argv=self.argv,
+            git_rev=self.git_rev,
         )
 
 
