@@ -176,21 +176,6 @@ if __name__ == "__main__":
     )
     symlink_checkpoint_files(ensemble, result_path)
 
-    # options = ort.SessionOptions()
-    # options.enable_cpu_mem_arena = False
-    # options.enable_mem_pattern = False
-    # options.enable_mem_reuse = False
-    # options.intra_op_num_threads = 16
-
-    # cuda_provider_options = {
-    # "arena_extend_strategy": "kSameAsRequested",
-    # }
-
-    # ort_session_3 = ort.InferenceSession(
-    #     "experiments/weather/pangu_models/pangu_weather_3.onnx",
-    #     sess_options=options,
-    #     providers=[("CUDAExecutionProvider", cuda_provider_options)],
-    # )
     def save_and_register(name, array):
         path = result_path / f"{name}.npy"
 

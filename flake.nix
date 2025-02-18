@@ -444,8 +444,11 @@
                 pkgs.xorg.libxcb
                 pkgs.libxkbcommon
                 pkgs.pipewire
+                pkgs.openssl
+                pkgs.duckdb
               ])
             }"
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.stdenv.cc.cc.lib}/lib64"
             export X11_X11_INCLUDE_PATH="${pkgs.xorg.libX11}/include"
             export X11_X11_LIB=${
               pkgs.lib.makeLibraryPath ([ pkgs.xorg.libX11 ])
