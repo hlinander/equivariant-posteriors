@@ -1,6 +1,6 @@
 #!/bin/sh
 set -x
-export PYTHONPATH=$(pwd)
+export PYTHONPATH=$(pwd):$PYTHONPATH
 export PYTHONBREAKPOINT=ipdb.set_trace
 export EP_TORCHRUN=1
 ulimit -n 64000

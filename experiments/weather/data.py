@@ -3,6 +3,7 @@ import json
 import torch
 import numpy as np
 import math
+from pathlib import Path
 from datetime import datetime, timedelta
 import shutil
 from multiprocessing import Pool
@@ -19,6 +20,7 @@ import healpix
 import chealpix
 import xarray as xr
 import experiments.weather.cdsmontly as cdstest
+import experiments.weather.masks.masks as masks
 
 
 def numpy_to_xds(np_array, xds_template):
@@ -192,22 +194,22 @@ class Climatology(torch.utils.data.Dataset):
         return item_dict
 
 
-def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
+def interpolate_dh_to_hp(nside, variable: xr.DataArray):
     npix = healpix.nside2npix(nside)
     hlong, hlat = healpix.pix2ang(nside, np.arange(0, npix, 1), lonlat=True, nest=True)
     hlong = np.mod(hlong, 360)
     xlong = xr.DataArray(hlong, dims="z")
     xlat = xr.DataArray(hlat, dims="z")
 
-    def interpolate(variable: xr.DataArray):
-        xhp = variable.interp(
-            latitude=xlat, longitude=xlong, kwargs={"fill_value": None}
-        )
-        hp_image = np.array(xhp.to_array().to_numpy(), dtype=np.float32)
-        return hp_image
+    xhp = variable.interp(latitude=xlat, longitude=xlong, kwargs={"fill_value": None})
+    hp_image = np.array(xhp.to_array().to_numpy(), dtype=np.float32)
+    return hp_image
 
-    hp_surface = interpolate(e5xr.surface)
-    hp_upper = interpolate(e5xr.upper)
+
+def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
+
+    hp_surface = interpolate_dh_to_hp(nside, e5xr.surface)
+    hp_upper = interpolate_dh_to_hp(nside, e5xr.upper)
 
     if normalized:
         stats = deserialize_dataset_statistics(nside)
@@ -326,6 +328,7 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
 class DataHP(torch.utils.data.Dataset):
     def __init__(self, data_config: DataHPConfig):
         self.config = data_config
+        # self.masks = masks.load_mask_hp(data_config.nside)
 
     @staticmethod
     def data_spec(config: DataHPConfig):
@@ -495,6 +498,8 @@ class DataHP(torch.utils.data.Dataset):
             # print("Write done")
 
             item_dict.update(data_dict)
+
+        item_dict["masks"] = masks.load_mask_hp(self.config.nside)
 
         return item_dict
 
