@@ -167,6 +167,17 @@ def get_slurm_id():
     return os.environ.get("SLURM_JOB_ID", "None")
 
 
+def get_modules():
+    import importlib.metadata
+
+    modules = []
+    for dist in sorted(
+        importlib.metadata.distributions(), key=lambda x: x.metadata["Name"].lower()
+    ):
+        modules.append(f"{dist.metadata['Name']}=={dist.version}")
+    return "\n".join(modules)
+
+
 @dataclass
 class TrainRun:
     compute_config: ComputeConfig
@@ -182,6 +193,7 @@ class TrainRun:
     argv: str = " ".join(sys.argv)
     git_rev: str = get_rev()
     slurm_jobid: str = get_slurm_id()
+    modules: str = get_modules()
 
     def custom_dict(self):
         serialize_dict = copy.deepcopy(self.__dict__)
@@ -202,6 +214,7 @@ class TrainRun:
             argv=self.argv,
             git_rev=self.git_rev,
             slurm_jobid=self.slurm_jobid,
+            modules=self.modules,
         )
 
 
