@@ -218,18 +218,23 @@ def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
     return hp_surface, hp_upper
 
 
-def batch_to_weatherbench2(input_batch, output_batch, nside: int, normalized: bool):
+def batch_to_weatherbench2(
+    input_batch, output_batch, nside: int, normalized: bool, lead_days: int = 1
+):
     xds = numpy_hp_to_e5(
         output_batch["logits_surface"],
         output_batch["logits_upper"],
         times=input_batch["time"],
         nside=nside,
         normalized=normalized,
+        lead_days=lead_days,
     )
     return xds
 
 
-def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
+def numpy_hp_to_e5(
+    hp_surface, hp_upper, times, nside: int, normalized: bool, lead_days: int = 1
+):
     if torch.isnan(hp_surface).any():
         print("NaNs!")
     if torch.isnan(hp_upper).any():
@@ -270,13 +275,13 @@ def numpy_hp_to_e5(hp_surface, hp_upper, times, nside: int, normalized: bool):
     surface = surface.assign_coords(
         {
             "time": [np.datetime64(t) for t in times],
-            "prediction_timedelta": [np.timedelta64(timedelta(days=1))],
+            "prediction_timedelta": [np.timedelta64(timedelta(days=lead_days))],
         }
     )
     upper = upper.assign_coords(
         {
             "time": [np.datetime64(t) for t in times],
-            "prediction_timedelta": [np.timedelta64(timedelta(days=1))],
+            "prediction_timedelta": [np.timedelta64(timedelta(days=lead_days))],
             "level": np.array(
                 [
                     1000,

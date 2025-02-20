@@ -617,8 +617,8 @@ class PatchEmbed(nn.Module):
         self.data_spec = data_spec
 
         self.num_hp_patches = hp.nside2npix(data_spec.nside) // config.patch_size
-        self.masks = torch.tensor(load_mask_hp(data_spec.nside))
-        self.register_buffer("masks", self.masks)
+        masks = torch.tensor(load_mask_hp(data_spec.nside))
+        self.register_buffer("masks", masks)
 
         self.proj_surface = nn.Conv1d(
             data_spec.n_surface + self.masks.shape[0],

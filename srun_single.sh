@@ -8,6 +8,9 @@ mkdir -p slurm_log
 cat <<EOM >$SCRIPT_FILE
 #!/bin/bash
 export SINGULARITYENV_CUDA_VISIBLE_DEVICES=\$CUDA_VISIBLE_DEVICES
+export SINGULARITYENV_SLURM_JOB_ID=\$SLURM_JOB_ID
+export SINGULARITYENV_SLURM_CPUS_ON_NODE=\$SLURM_CPUS_ON_NODE
+
 singularity exec --nv --cleanenv --no-home --env COLUMNS=200 --env LINES=60 --env SLURM_ARRAY_TASK_ID=\$SLURM_ARRAY_TASK_ID --env PYTHONNOUSERSITE=1 $WEATHER/containers/7mka1y8wv5nb3gan5y1aajdxgsdjswiz-singularity-image-equivariant-posteriors.sif sh $@
 EOM
 

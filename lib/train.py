@@ -47,7 +47,9 @@ def evaluate_metrics_on_data(
     )
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
-            batch = {k: v.to(device) for k, v in batch.items()}
+            batch = {
+                k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()
+            }
             output = model(batch)
 
             metric_sample = MetricSample(
@@ -80,7 +82,9 @@ def validate(
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
             # print(f"[Rank {ddp.get_rank()}] Validation batch")
-            batch = {k: v.to(device) for k, v in batch.items()}
+            batch = {
+                k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()
+            }
             # print(f"[Rank {ddp.get_rank()}] Validation batch device")
             output = model(batch)
             # print(f"[Rank {ddp.get_rank()}] Validation post model")
@@ -120,7 +124,7 @@ def train(
         train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += 1
 
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
         output = model(batch)
 
         loss_val = loss(output, batch)
