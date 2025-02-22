@@ -144,7 +144,7 @@ struct GuiParams {
     // param_values_handle: JoinHandle<HashMap<String, HashSet<String>>>,
     filtered_values: HashMap<String, HashSet<String>>,
     hovered_run: Option<String>,
-    selected_run: Option<String>,
+    selected_runs: Option<HashSet<String>>,
     next_param_update: std::time::Instant,
 }
 
@@ -1431,9 +1431,22 @@ impl eframe::App for GuiRuns {
                 .show(ui, |ui| {
                     ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
                     let collapsing = ui.collapsing("Tabular", |ui| {
-                        self.render_table(ui, &run_ensemble_color);
+                        self.render_table(
+                            ui,
+                            &run_ensemble_color,
+                            self.runs2.active_runs.clone(),
+                            false,
+                        );
                     });
                     self.table_active = collapsing.fully_open();
+                    if let Some(selected_runs) = &self.gui_params.selected_runs {
+                        self.render_table(
+                            ui,
+                            &run_ensemble_color,
+                            selected_runs.clone().into_iter().collect(),
+                            true,
+                        );
+                    }
                     let t = Instant::now();
                     self.render_artifacts(ui, &run_ensemble_color);
 
@@ -2812,6 +2825,8 @@ impl GuiRuns {
         &mut self,
         ui: &mut egui::Ui,
         run_ensemble_color: &HashMap<String, egui::Color32>,
+        runs: Vec<String>,
+        show_diff: bool,
     ) {
         ui.text_edit_singleline(&mut self.table_filter);
         let param_keys = self
@@ -2827,6 +2842,15 @@ impl GuiRuns {
                     .unwrap_or(&HashSet::new())
                     .is_empty()
                     && (name.contains(&self.table_filter) || self.table_filter.is_empty())
+                    && !runs.iter().all(|train_id| {
+                        self.runs2
+                            .run_params
+                            .get(&RunParamKey {
+                                train_id: train_id.clone(),
+                                name: name.clone(),
+                            })
+                            .is_none()
+                    })
             })
             .unique()
             .sorted_by_key(|param_name| {
@@ -2860,7 +2884,7 @@ impl GuiRuns {
                     }
                 })
                 .body(|mut table| {
-                    for run_id in self.runs2.active_runs.iter().sorted() {
+                    for run_id in runs.iter().sorted() {
                         // let run = self.runs.runs.get(run_id).unwrap();
                         let mut clipboard = None;
                         table.row(20.0, |mut row| {
@@ -2869,11 +2893,13 @@ impl GuiRuns {
                             } else {
                                 false
                             };
-                            let selected = if let Some(selected) = &self.gui_params.selected_run {
-                                *selected == *run_id
-                            } else {
-                                false
-                            };
+                            let selected =
+                                if let Some(selected_runs) = &self.gui_params.selected_runs {
+                                    // *selected == *run_id
+                                    selected_runs.contains(run_id)
+                                } else {
+                                    false
+                                };
                             row.set_selected(hovered || selected);
                             row.col(|ui| {
                                 let (rect, _) = ui.allocate_exact_size(
@@ -2896,6 +2922,26 @@ impl GuiRuns {
                                     })
                                     // .get(&(run_id.clone(), (*param_key).clone()))
                                     {
+                                        if show_diff
+                                            && !runs
+                                                .iter()
+                                                .map(|train_id| {
+                                                    self.runs2.run_params.get(&RunParamKey {
+                                                        train_id: train_id.clone(),
+                                                        name: param_key.clone(),
+                                                    })
+                                                })
+                                                .all_equal()
+                                        {
+                                            let (_, rect) = ui.allocate_space((5.0, 5.0).into());
+                                            ui.painter().rect(
+                                                rect,
+                                                0.0,
+                                                egui::Color32::RED,
+                                                egui::Stroke::NONE,
+                                                egui::StrokeKind::Middle,
+                                            );
+                                        }
                                         if let Ok(val_f32) = val.parse::<f32>() {
                                             ui.label(format!("{:.2}", val_f32));
                                         } else {
@@ -3178,16 +3224,17 @@ impl GuiRuns {
                                         // .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
                                         .map(|[x, y]| [*x as f64, *y as f64])
                                         .collect::<Vec<_>>();
-                                    let stroke_width =
-                                        if let Some(selected_run) = &self.gui_params.selected_run {
-                                            if selected_run == train_id {
-                                                2.0
-                                            } else {
-                                                1.0
-                                            }
+                                    let stroke_width = if let Some(selected_runs) =
+                                        &self.gui_params.selected_runs
+                                    {
+                                        if selected_runs.contains(train_id) {
+                                            2.0
                                         } else {
                                             1.0
-                                        };
+                                        }
+                                    } else {
+                                        1.0
+                                    };
                                     plot_ui.line(
                                         Line::new(PlotPoints::from(xy.clone()))
                                             .stroke(Stroke::new(
@@ -3221,7 +3268,15 @@ impl GuiRuns {
                                     // self.runs2.active_runs = vec![train_id.clone()];
                                     self.gui_params.hovered_run = Some(train_id.clone());
                                     if plot_res.response.clicked() {
-                                        self.gui_params.selected_run = Some(train_id.clone());
+                                        // self.gui_params.selected_run = Some(train_id.clone());
+                                        let set =
+                                            self.gui_params.selected_runs.get_or_insert([].into());
+                                        if set.contains(train_id) {
+                                            set.remove(train_id);
+                                        } else {
+                                            set.insert(train_id.clone());
+                                        }
+                                        // .insert(train_id.clone());
                                     }
                                 }
                             }
@@ -4514,6 +4569,8 @@ WHERE name = 'threads';
         .expect("load postgres failed");
     conn.execute("ATTACH 'local.db' as local;", [])
         .expect("attach to psql failed");
+    conn.execute("SET memory_limit = '1GB';", [])
+        .expect("attach to psql failed");
     if env::var("DATABASE_URL").is_ok() {
         conn.execute(
         "ATTACH 'dbname=equiv user=postgres password=herdeherde host=127.0.0.1 port=5431' as db (TYPE POSTGRES, READ_ONLY);",
@@ -4530,7 +4587,7 @@ WHERE name = 'threads';
                 let start = Instant::now();
                 if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
                     train_runs = new_train_ids;
-                    limit = 1000;
+                    // limit = 1000;
                     println!("[db] got new train runs {:?}", train_runs);
                 }
                 let t = Instant::now();
@@ -4574,11 +4631,10 @@ WHERE name = 'threads';
                 HashMap::new()
             };
             tx_plot_map.send((artifacts, plot_map)).unwrap();
-            if start.elapsed().as_millis() < 1000 {
-                sleep(time::Duration::from_millis(1000) - start.elapsed());
-            }
         }
-        // sleep(std::time::Duration::from_millis(100));
+        if start.elapsed().as_millis() < 1000 {
+            sleep(time::Duration::from_millis(1000) - start.elapsed());
+        }
     });
 
     let run_params_thread_pool = duckdb_pool.clone();
@@ -4718,7 +4774,7 @@ WHERE name = 'threads';
                         artifact_filters: HashSet::new(),
                     }),
                     hovered_run: None,
-                    selected_run: None,
+                    selected_runs: None,
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
