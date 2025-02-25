@@ -10,6 +10,7 @@ import torch
 
 from lib.paths import get_or_create_checkpoint_path
 from lib.stable_hash import stable_hash_small
+import lib.render_duck as duck
 
 
 def visualize_progress_batches(state, train_run, last_postgres_result, device):
@@ -36,36 +37,20 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
 
     for idx in range(n_metrics):
         train_metric = state.train_metrics[train_indices[idx]]
-        # val_metric = state.validation_metrics[val_indices[idx]]
 
-        batches = train_metric.mean_batches()
-        batch_factor = 1
-        if len(batches) > 1000:
-            batch_factor = len(batches) // 1000
-            batches = batches[::batch_factor]
-        train_means = list(enumerate(batches))
-        # train_means = [
-        # (epoch, mean) for (epoch, mean) in train_means if mean is not None
-        # ]
-        # val_means = list(enumerate(val_metric.mean_batches()))
-        # val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
+        batches = duck.select_train_step_metric_float(
+            state.model_id, train_metric.name()
+        )
+
         plt.subplot(1, 1).subplot(idx + 1, 1)
         plt.title(common_metrics[idx])
         plt.xlabel("batches")
-        if len(train_means) > 0:
-            x = [
-                batch * batch_factor
-                for (batch, mean) in train_means
-                if not math.isnan(mean)
-            ]
-            y = [mean for (batch, mean) in train_means if not math.isnan(mean)]
+        if len(batches) > 0:
+            x = [x for x, _ in batches]
+            y = [y for x, y in batches]
             if len(x) > 0:
                 plt.yscale("log")
                 plt.plot(x, y, label=f"Train {common_metrics[idx]}")
-        # if len(val_means) > 0:
-        # x = [epoch for (epoch, mean) in val_means]
-        # y = [mean for (epoch, mean) in val_means]
-        # plt.plot(x, y, label=f"Val {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)

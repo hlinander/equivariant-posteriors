@@ -28,6 +28,7 @@ def create_config(mlp_dim, ensemble_id):
             batch_size=256,
             num_layers=2,
             num_heads=1,
+            softmax=True,
         ),
         train_data_config=DataMNISTConfig(),
         val_data_config=DataMNISTConfig(validation=True),

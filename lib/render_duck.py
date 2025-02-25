@@ -1,0 +1,397 @@
+from typing import Optional
+import pandas
+import json
+import duckdb
+from typing import List
+from dataclasses import dataclass
+from lib.train_dataclasses import TrainRun, TrainEpochState, TrainConfig
+from lib.paths import (
+    get_or_create_checkpoint_path,
+)
+from lib.random_util import random_positive_i64
+from lib.stable_hash import stable_hash
+
+CONN = None
+SCHEMA_ENSURED = False
+
+
+INT = "int"
+FLOAT = "float"
+TEXT = "text"
+
+TYPES = [INT, FLOAT, TEXT]
+
+MODEL_PARAMETER = "model_parameter"
+TRAIN_STEP_METRIC = "train_step_metric"
+TRAIN_STATE = "train_state"
+CHECKPOINT_SAMPLE_METRIC = "checkpoint_sample_metric"
+CHECKPOINT_PARAMETER = "checkpoint_parameter"
+
+KINDS = [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC, TRAIN_STATE]
+
+MODELS_TABLE_NAME = "models"
+TRAIN_STEPS_TABLE_NAME = "train_steps"
+CHECKPOINTS_TABLE_NAME = "checkpoints"
+
+
+@dataclass
+class TypeDef:
+    name: str
+    sql_type: str
+    python_type: type
+
+
+TYPE_DEFS = [
+    TypeDef(INT, "BIGINT", int),
+    TypeDef(FLOAT, "FLOAT", float),
+    TypeDef(TEXT, "TEXT", str),
+]
+
+PYTHON_TYPE_TO_TYPE_DEF = {typedef.python_type: typedef for typedef in TYPE_DEFS}
+
+
+def table_name(kind, type_name):
+    return f"{kind}_{type_name}"
+
+
+ALL_TABLES = (
+    [MODELS_TABLE_NAME, TRAIN_STEPS_TABLE_NAME, CHECKPOINTS_TABLE_NAME]
+    + [table_name(TRAIN_STEP_METRIC, type_def.name) for type_def in TYPE_DEFS]
+    + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
+    + [table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name) for type_def in TYPE_DEFS]
+)
+
+
+def sql_create_table_model_parameter(type_def):
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table_name(MODEL_PARAMETER, type_def.name)} (
+            model_id BIGINT REFERENCES models(id),
+            name TEXT,
+            value {type_def.sql_type},
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+            UNIQUE (model_id, name)
+        )"""
+
+
+def insert_model_parameter(model_id, name, value):
+    value_type = type(value)
+    if value_type in PYTHON_TYPE_TO_TYPE_DEF:
+        type_def = PYTHON_TYPE_TO_TYPE_DEF[value_type]
+    else:
+        insert_model_parameter(model_id, name, str(value))
+        return
+
+    sql_insert_model_parameter = f"""
+        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, name, value) 
+        VALUES (?, ?, ?)
+    """
+    execute(sql_insert_model_parameter, (model_id, name, value))
+
+
+def sql_create_table_train_step_metric(type_def):
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table_name(TRAIN_STEP_METRIC, type_def.name)} (
+            model_id BIGINT,
+            run_id BIGINT,
+            name TEXT,
+            step INTEGER,
+            value {type_def.sql_type},
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+            FOREIGN KEY (model_id) REFERENCES models(id),
+            UNIQUE (model_id, run_id, name, step)
+        )"""
+
+
+def insert_train_step_metric(model_id, run_id, name, step, value):
+    value_type = type(value)
+    if value_type in PYTHON_TYPE_TO_TYPE_DEF:
+        type_def = PYTHON_TYPE_TO_TYPE_DEF[value_type]
+    else:
+        insert_train_step_metric(model_id, run_id, name, step, str(value))
+        return
+
+    # raise Exception(type_def)
+    sql_insert_train_step_metric = f"""
+        INSERT INTO {table_name(TRAIN_STEP_METRIC, type_def.name)} (model_id, run_id, name, step, value) 
+        VALUES (?, ?, ?, ?, ?)
+    """
+    execute(sql_insert_train_step_metric, (model_id, run_id, name, step, value))
+
+
+def select_train_step_metric_float(model_id, name):
+    sql_select = f"""
+        SELECT * FROM (
+        SELECT * FROM (SELECT step, value FROM {table_name(TRAIN_STEP_METRIC, PYTHON_TYPE_TO_TYPE_DEF[float].name)}
+        WHERE model_id=? AND name=? ORDER BY step)
+        USING SAMPLE 1000 ROWS)
+        ORDER BY step
+        """
+    return execute_and_fetch(sql_select, (model_id, name))
+
+
+def sql_create_table_checkpoint_sample_metric(type_def):
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (
+            model_id BIGINT,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            sample_ids INTEGER[],
+            mean {type_def.sql_type},
+            value_per_sample {type_def.sql_type}[],
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+            FOREIGN KEY (model_id, step) REFERENCES checkpoints(model_id, step)
+        )"""
+
+
+def insert_checkpoint_sample_metric(
+    model_id, step, name, dataset, sample_ids, mean, value_per_sample
+):
+    value_type = type(mean)
+    if value_type in PYTHON_TYPE_TO_TYPE_DEF:
+        type_def = PYTHON_TYPE_TO_TYPE_DEF[value_type]
+    else:
+        insert_checkpoint_sample_metric(
+            model_id, step, name, dataset, sample_ids, str(mean), str(value_per_sample)
+        )
+        return
+
+    sql_insert_train_step_metric = f"""
+        INSERT INTO {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    execute(
+        sql_insert_train_step_metric,
+        (model_id, step, name, dataset, sample_ids, mean, value_per_sample),
+    )
+
+
+def sql_create_table_models():
+    return f"""
+    CREATE TABLE IF NOT EXISTS {MODELS_TABLE_NAME} (
+        id BIGINT,
+        train_id TEXT,
+        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+        UNIQUE(id)
+    )"""
+
+
+def insert_model(train_config: TrainConfig):
+    ensure_duck(train_config)
+    model_id = random_positive_i64()
+    train_id = stable_hash(train_config)
+
+    sql_insert_model = """
+    INSERT INTO models (id, train_id) VALUES (?, ?)
+    """
+    execute(sql_insert_model, (model_id, train_id))
+    return model_id
+
+
+def sql_create_table_train_steps():
+    return f"""
+    CREATE TABLE IF NOT EXISTS {TRAIN_STEPS_TABLE_NAME} (
+        model_id BIGINT REFERENCES models(id),
+        run_id BIGINT,
+        step INTEGER,
+        dataset TEXT,
+        sample_ids INTEGER[],
+        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+        PRIMARY KEY (model_id, run_id, step, dataset)
+    )
+    """
+
+
+def insert_train_step(
+    model_id: int, run_id: int, step: int, dataset: str, sample_ids: List[int]
+):
+    sql_insert_train_step = """
+        INSERT INTO train_steps (model_id, run_id, step, dataset, sample_ids)
+        VALUES (?, ?, ?, ?, ?)
+    """
+    # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
+    execute(
+        sql_insert_train_step,
+        [model_id, run_id, step, dataset, sample_ids],
+    )
+
+
+def sql_create_table_checkpoints():
+    return f"""
+    CREATE TABLE IF NOT EXISTS {CHECKPOINTS_TABLE_NAME} (
+        model_id BIGINT ,
+        step INTEGER ,
+        path TEXT,
+        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+        FOREIGN KEY (model_id) REFERENCES models(id),
+        PRIMARY KEY (model_id, step)
+    )
+    """
+
+
+def insert_checkpoint(model_id: int, step: int, path: str):
+    sql_insert_train_step = f"""
+        INSERT INTO {CHECKPOINTS_TABLE_NAME} (model_id, step, path)
+        VALUES (?, ?, ?)
+        ON CONFLICT (model_id, step)
+        DO UPDATE SET path=EXCLUDED.path
+    """
+    # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
+    execute(
+        sql_insert_train_step,
+        [model_id, step, path],
+    )
+
+
+def sql_create_table_sync():
+    return """
+    CREATE TABLE IF NOT EXISTS sync (
+        table_name TEXT,
+        synced_time TIMESTAMP WITHOUT TIME ZONE,
+        PRIMARY KEY (table_name)
+    )
+    """
+
+
+def sync(train_config: Optional[TrainConfig] = None):
+    import time
+
+    start = time.time()
+    ensure_duck(train_config)
+    execute("INSTALL postgres")
+    execute("LOAD postgres")
+    execute(
+        "ATTACH IF NOT EXISTS 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5431' as pg (TYPE POSTGRES)"
+    )
+    _ensure_schema(execute_pg)
+    for table_name in ALL_TABLES:
+        execute_pg(
+            f"""
+            ALTER TABLE {table_name}
+                ADD COLUMN IF NOT EXISTS id_serial SERIAL;
+           """
+        )
+
+    for table_name in ALL_TABLES:
+        last_sync_time = execute_and_fetch(
+            "SELECT synced_time FROM sync WHERE table_name=?", (table_name,)
+        )
+        if len(last_sync_time) == 0:
+            synced_timestamp = execute_and_fetch(
+                f"SELECT MIN(created_at) - INTERVAL 1 DAY as min_time FROM {table_name}"
+            )
+            if len(synced_timestamp) == 1 and synced_timestamp[0] != (None,):
+                synced_timestamp = synced_timestamp[0][0]
+            else:
+                synced_timestamp = None
+        else:
+            synced_timestamp = last_sync_time[0][0]
+
+        next_synced_timestamp = execute_and_fetch(
+            f"SELECT MAX(created_at) as max_time FROM {table_name}"
+        )
+        if len(next_synced_timestamp) == 1 and next_synced_timestamp[0] != (None,):
+            next_synced_timestamp = next_synced_timestamp[0][0]
+
+        if synced_timestamp is not None:
+            try:
+                execute(
+                    f"""
+                    INSERT INTO pg.{table_name} BY NAME SELECT * FROM {table_name}
+                    WHERE created_at > '{synced_timestamp.isoformat()}'
+                    AND created_at <= '{next_synced_timestamp.isoformat()}';
+                    INSERT INTO sync (synced_time, table_name)
+                    VALUES ('{next_synced_timestamp.isoformat()}', '{table_name}')
+                    ON CONFLICT (table_name)
+                    DO UPDATE SET synced_time='{next_synced_timestamp.isoformat()}'
+                    """,
+                )
+            except duckdb.duckdb.Error as e:
+                print(e)
+
+    print("Sync time", time.time() - start)
+
+
+def execute_pg(sql, params=None):
+    try:
+        return CONN.execute(f"CALL postgres_execute('pg', '{sql}')")
+    except Exception as e:
+        # print(sql)
+        raise e
+
+
+def execute(sql, params=None):
+    try:
+        return CONN.execute(sql, params)
+    except Exception as e:
+        # print(sql)
+        raise e
+
+
+def execute_many(sql, params=None):
+    try:
+        return CONN.executemany(sql, params)
+    except Exception as e:
+        # print(sql)
+        raise e
+
+
+def execute_and_fetch(sql, params=None):
+    try:
+        return CONN.execute(sql, params).fetchall()
+    except Exception as e:
+        # print(sql)
+        raise e
+
+
+def _ensure_schema(executor=execute):
+    executor(sql_create_table_models())
+    executor(sql_create_table_train_steps())
+    executor(sql_create_table_checkpoints())
+    executor(sql_create_table_sync())
+
+    for type_def in TYPE_DEFS:
+        executor(sql_create_table_model_parameter(type_def))
+        executor(sql_create_table_checkpoint_sample_metric(type_def))
+        executor(sql_create_table_train_step_metric(type_def))
+
+
+def ensure_duck(train_config: Optional[TrainConfig], in_memory=False):
+    global CONN
+    global SCHEMA_ENSURED
+
+    if train_config is None or in_memory:
+        db_path = ":memory:"
+    else:
+        db_path = get_or_create_checkpoint_path(train_config) / "duck.db"
+    if CONN is None:
+        CONN = duckdb.connect(db_path)
+
+    if not SCHEMA_ENSURED:
+        _ensure_schema()
+
+
+def dict_to_normalized_json(input_dict):
+    return json.loads(pandas.json_normalize(input_dict).to_json(orient="records"))[0]
+
+
+def insert_or_update_train_run(train_run: TrainRun, state: TrainEpochState):
+    train_run_flat = dict_to_normalized_json(train_run.serialize_human())
+    # train_run_flat["train_id"],
+    # train_run_flat["ensemble_id"],
+    insert_model_parameter(
+        state.model_id, "train_config_hash", train_run_flat["train_id"]
+    )
+    for key, value in train_run_flat.items():
+        insert_model_parameter(
+            state.model_id,
+            key,
+            value,
+        )
+
+
+def render_duck(
+    train_run: TrainRun, train_epoch_state: TrainEpochState, in_memory=False
+):
+    ensure_duck(train_run.train_config, in_memory)
+    insert_or_update_train_run(train_run, train_epoch_state)

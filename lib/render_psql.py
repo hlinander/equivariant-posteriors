@@ -2,7 +2,6 @@ import psycopg
 import pandas
 import json
 from threading import Thread
-import os
 import queue
 from typing import Union
 from pathlib import Path

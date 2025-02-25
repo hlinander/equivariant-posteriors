@@ -19,9 +19,7 @@ from lib.ddp import ddp_setup
 from lib.files import prepare_results
 
 
-def main():
-    device_id = ddp_setup("gloo")
-    print(f"Using device {device_id}")
+def create_train_run():
     loss = torch.nn.MSELoss()
 
     def mse_loss(outputs, batch):
@@ -73,8 +71,15 @@ def main():
         save_nth_epoch=5,
         validate_nth_epoch=5,
     )
+    return train_run
+
+
+def main():
+    device_id = ddp_setup("gloo")
+    print(f"Using device {device_id}")
     print(__file__)
     print(" ".join(sys.argv))
+    train_run = create_train_run()
     state = load_or_create_state(train_run, device_id)
     prepare_results("test", train_run.train_config)
     do_training(train_run, state, device_id)

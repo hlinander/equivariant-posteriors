@@ -4245,45 +4245,8 @@ fn get_artifacts_duck(
 fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     // println!("ensure_duckdb_schema");
     let conn = pool.get().unwrap();
-    conn.execute("CREATE SEQUENCE IF NOT EXISTS local.serial_metrics", [])
-        .expect("create sequence");
-    conn.execute(
-        "
-            CREATE TABLE IF NOT EXISTS local.metrics (
-                      id INTEGER PRIMARY KEY DEFAULT nextval('local.serial_metrics'),
-                      created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                      train_id text,
-                      ensemble_id text,
-                      x float,
-                      xaxis text,
-                      variable text,
-                      value float,
-                      value_text text,
-                      UNIQUE(train_id, x, xaxis, variable)
-                  )
-        ",
-        [],
-    )
-    .expect("create metrics");
-
-    conn.execute("CREATE SEQUENCE IF NOT EXISTS local.serial_runs", [])
-        .expect("create sequence runs");
-    conn.execute(
-        "
-                CREATE TABLE IF NOT EXISTS local.runs (
-                    id INTEGER PRIMARY KEY DEFAULT nextval('local.serial_runs'),
-                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                    train_id text,
-                    ensemble_id text,
-                    variable text,
-                    value_float float,
-                    value_int integer,
-                    value_text text,
-                    UNIQUE(train_id, variable)
-                )",
-        [],
-    )
-    .expect("create local runs");
+    conn.execute("COPY FROM DATABASE pg TO local (SCHEMA)", [])
+        .expect("copy schema");
     conn.execute("SET pg_experimental_filter_pushdown=true", [])
         .expect("set filter push down");
     conn.execute("SET pg_use_ctid_scan=false", [])

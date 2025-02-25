@@ -15,10 +15,12 @@ from lib.timing_metric import Timing
 from lib.stable_hash import stable_hash
 from lib.git import get_rev
 import lib.serialize_human
+from lib.random_util import random_positive_i64
 
 
 @dataclass
 class TrainEpochState:
+    model_id: int
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
     train_metrics: List[Metric]
@@ -35,6 +37,7 @@ class TrainEpochState:
     psql_query_cache: Set = field(default_factory=lambda: set())
     psql_starting_xs: Dict[str, float] = None
     code_path: Path = None
+    run_id: int = random_positive_i64()
 
 
 @dataclass
