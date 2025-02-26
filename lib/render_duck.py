@@ -27,8 +27,6 @@ TRAIN_STATE = "train_state"
 CHECKPOINT_SAMPLE_METRIC = "checkpoint_sample_metric"
 CHECKPOINT_PARAMETER = "checkpoint_parameter"
 
-KINDS = [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC, TRAIN_STATE]
-
 MODELS_TABLE_NAME = "models"
 TRAIN_STEPS_TABLE_NAME = "train_steps"
 CHECKPOINTS_TABLE_NAME = "checkpoints"
@@ -261,7 +259,7 @@ def sync(train_config: Optional[TrainConfig] = None):
     execute("INSTALL postgres")
     execute("LOAD postgres")
     execute(
-        "ATTACH IF NOT EXISTS 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5431' as pg (TYPE POSTGRES)"
+        "ATTACH IF NOT EXISTS 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as pg (TYPE POSTGRES)"
     )
     _ensure_schema(execute_pg)
     for table_name in ALL_TABLES:

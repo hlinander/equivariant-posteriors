@@ -4245,7 +4245,7 @@ fn get_artifacts_duck(
 fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     // println!("ensure_duckdb_schema");
     let conn = pool.get().unwrap();
-    conn.execute("COPY FROM DATABASE pg TO local (SCHEMA)", [])
+    conn.execute("COPY FROM DATABASE db TO local (SCHEMA)", [])
         .expect("copy schema");
     conn.execute("SET pg_experimental_filter_pushdown=true", [])
         .expect("set filter push down");
@@ -4332,9 +4332,11 @@ fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
     let max_id: i32 = conn
-        .query_row("SELECT COALESCE(max(id), 0) FROM local.runs", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COALESCE(max(id_serial), 0) FROM local.models",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     let query = format!(
         "
@@ -4346,6 +4348,30 @@ fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
         max_id
     );
     conn.execute(&query, []).expect("sync runs failed");
+}
+
+#[instrument(skip_all)]
+fn sync_full_table(pool: &r2d2::Pool<DuckdbConnectionManager>, table_name: &str) {
+    ensure_duckdb_schema(pool);
+    let conn = pool.get().unwrap();
+    let max_id: i32 = conn
+        .query_row(
+            format!("SELECT COALESCE(max(id_serial), 0) FROM local.{table_name}").as_str(),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let query = format!(
+        "
+        INSERT INTO local.{table_name}
+        SELECT * FROM db.{table_name} 
+        WHERE id > {}
+        ORDER BY id ASC
+        ",
+        max_id
+    );
+    conn.execute(&query, [])
+        .expect(format!("sync {table_name} failed").as_str());
 }
 
 #[instrument(skip_all)]
@@ -4536,10 +4562,15 @@ WHERE name = 'threads';
         .expect("attach to psql failed");
     if env::var("DATABASE_URL").is_ok() {
         conn.execute(
-        "ATTACH 'dbname=equiv user=postgres password=herdeherde host=127.0.0.1 port=5431' as db (TYPE POSTGRES, READ_ONLY);",
+        "ATTACH 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as db (TYPE POSTGRES, READ_ONLY);",
         [],
     ).expect("attach to psql failed");
-        sync_runs_duck(&duckdb_pool);
+        // sync_runs_duck(&duckdb_pool);
+        sync_full_table(&duckdb_pool, "models");
+        sync_full_table(&duckdb_pool, "model_parameter_float");
+        sync_full_table(&duckdb_pool, "model_parameter_int");
+        sync_full_table(&duckdb_pool, "model_parameter_text");
+        panic!();
         let db_thread_pool = duckdb_pool.clone();
         std::thread::spawn(move || {
             let mut train_runs = Vec::new();
