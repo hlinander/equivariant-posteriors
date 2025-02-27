@@ -2,6 +2,7 @@ use chrono::NaiveDateTime;
 use clap::Parser;
 use duckdb::arrow2::legacy::utils::CustomIterTools;
 use duckdb::polars::frame::DataFrame;
+use duckdb::types::FromSql;
 use eframe::egui_wgpu::{CallbackResources, ScreenDescriptor, WgpuSetup, WgpuSetupCreateNew};
 use eframe::{egui, App};
 use egui::{epaint, Stroke, TextBuffer};
@@ -21,6 +22,7 @@ use std::borrow::{Borrow, BorrowMut};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::{create_dir_all, File};
+use std::hash::Hash;
 use std::io::{Read, Write};
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -74,7 +76,7 @@ struct PlotMapKey {
     xaxis: String,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 struct RunParamKey {
     train_id: String,
     name: String,
@@ -159,7 +161,7 @@ struct GuiParams {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
 struct ArtifactId {
-    artifact_id: i32,
+    artifact_id: i64,
     train_id: String,
     name: String,
     artifact_type: ArtifactType,
@@ -597,7 +599,7 @@ enum BinaryArtifact {
 
 fn download_artifact(
     artifact_id: ArtifactId,
-    tx_path_mutex: Arc<Mutex<SyncSender<i32>>>,
+    tx_path_mutex: Arc<Mutex<SyncSender<i64>>>,
     rx_artifact_mutex: Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) -> BinaryArtifact {
     let (tx_update, rx_update) = mpsc::channel::<DownloadProgressStatus>();
@@ -715,7 +717,7 @@ fn add_artifact(
     handler: &mut ArtifactHandler,
     artifact_id: &ArtifactId,
     _args: &Args,
-    tx_path_mutex: &mut Arc<Mutex<SyncSender<i32>>>,
+    tx_path_mutex: &mut Arc<Mutex<SyncSender<i64>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     let t = Instant::now();
@@ -762,7 +764,7 @@ fn add_artifact(
 fn handle_add_npy(
     arrays: &mut HashMap<ArtifactId, SpatialNPYArray>,
     artifact_id: &ArtifactId,
-    tx_path_mutex: &mut Arc<Mutex<SyncSender<i32>>>,
+    tx_path_mutex: &mut Arc<Mutex<SyncSender<i64>>>,
     rx_artifact_mutex: &Arc<Mutex<Receiver<ArtifactTransfer>>>,
 ) {
     match arrays.get_mut(artifact_id) {
@@ -1075,7 +1077,7 @@ struct GuiRuns {
     gui_params_sender: SyncSender<GuiParams>,
     gui_params_sender_slot: Option<GuiParams>,
     // recomputed_reciever: Receiver<HashMap<String, Run>>,
-    tx_db_artifact_path: Arc<Mutex<SyncSender<i32>>>,
+    tx_db_artifact_path: Arc<Mutex<SyncSender<i64>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
     rx_run_params: Receiver<HashMap<RunParamKey, String>>,
     rx_batch_status: Receiver<(usize, usize)>,
@@ -1123,7 +1125,7 @@ fn get_train_ids_from_filter_duck(
                     .iter()
                     .map(|value| {
                         format!(
-                            "(variable='{}' AND value_text=?)",
+                            "(name='{}' AND value=?)",
                             param_name,
                             // value.escape_default()
                         )
@@ -1137,9 +1139,15 @@ fn get_train_ids_from_filter_duck(
             continue;
         }
         let sql = format!(
-            "SELECT train_id FROM local.runs WHERE {sql_where} GROUP BY train_id HAVING COUNT(*)={n_filters}"
+            "SELECT train_id, COUNT(*) FROM local.model_parameter_text JOIN local.models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
-        if let Ok(mut stmt) = duck.prepare(&sql) {
+        println!("{}", sql);
+        println!("{:?}", non_empty_filters);
+        let res = duck.prepare(&sql);
+        if let Err(err) = &res {
+            println!("{:?}", err);
+        }
+        if let Ok(mut stmt) = res {
             let ids: Vec<String> = stmt
                 .query_map(
                     params_from_iter(
@@ -1152,6 +1160,7 @@ fn get_train_ids_from_filter_duck(
                 .unwrap()
                 .map(|x| x.unwrap())
                 .collect();
+            println!("{:?}", ids);
             train_ids.extend_from_slice(&ids);
         }
     }
@@ -1286,7 +1295,7 @@ impl eframe::App for GuiRuns {
             // self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
             let pool = self.duckdb.clone();
             self.param_values_handle = Some(tokio::task::spawn_blocking(move || {
-                get_parameter_values_duck(&pool)
+                get_parameter_values_duck::<String>(&pool, "model_parameter_text")
             }));
         }
 
@@ -2610,10 +2619,10 @@ fn update_plot_map(
     // for (name, data) in df.group_by(["train_id", "variable"]).unwrap() {}
     let train_ids = df.column("train_id").unwrap().rechunk();
     let mut train_ids = train_ids.as_materialized_series().iter();
-    let variables = df.column("variable").unwrap().rechunk();
+    let variables = df.column("name").unwrap().rechunk();
     let mut variables = variables.as_materialized_series().iter();
-    let xaxis = df.column("xaxis").unwrap().rechunk();
-    let mut xaxis = xaxis.as_materialized_series().iter();
+    // let xaxis = df.column("xaxis").unwrap().rechunk();
+    // let mut xaxis = xaxis.as_materialized_series().iter();
     let xs = df.column("xs").unwrap().rechunk();
     let mut xs = xs.as_materialized_series().iter();
     let values = df.column("values").unwrap().rechunk();
@@ -2636,8 +2645,8 @@ fn update_plot_map(
         let train_id = tid.get_str().unwrap();
         let var = variables.next().unwrap();
         let variable = var.get_str().unwrap();
-        let xaxis = xaxis.next().unwrap();
-        let xaxis = xaxis.get_str().unwrap();
+        // let xaxis = xaxis.next().unwrap();
+        // let xaxis = xaxis.get_str().unwrap();
         let x = xs.next().unwrap();
         // println!("pre x");
         let x = match x {
@@ -2706,7 +2715,7 @@ fn update_plot_map(
             PlotMapKey {
                 train_id: train_id.into(),
                 variable: variable.into(),
-                xaxis: xaxis.into(),
+                xaxis: "batch".to_string(), // xaxis: xaxis.into(),
             },
             // (
             //     variable.to_string(),
@@ -4101,28 +4110,39 @@ fn render_param_tree(
 }
 
 #[instrument(skip_all)]
-fn get_parameter_values_duck(
+fn get_parameter_values_duck<T: FromSql + std::cmp::Eq + Hash>(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
-) -> HashMap<String, HashSet<String>> {
+    table_name: &str,
+) -> HashMap<String, HashSet<T>> {
     println!("get_parameter_values_duck");
     let conn = pool.get().unwrap();
-    let sql = "SELECT variable, string_agg(DISTINCT value_text ORDER BY value_text) FROM local.runs GROUP BY variable";
-    let mut stmt = conn.prepare(sql).unwrap();
+    let sql = format!(
+        "SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
+    );
+    let mut stmt = conn.prepare(sql.as_str()).unwrap();
     let rows = stmt
         .query_map([], |row| {
-            duckdb::Result::Ok((row.get::<_, String>(0), row.get::<_, String>(1)))
+            duckdb::Result::Ok((
+                row.get::<_, String>(0).unwrap(),
+                row.get::<_, T>(1).unwrap(),
+            ))
         })
         .unwrap()
-        .map(|row| {
-            let (a, b) = row.unwrap();
-            (
-                a.unwrap(),
-                b.unwrap()
-                    .split(",")
-                    .map(|x| x.to_string())
-                    .collect::<HashSet<String>>(),
-            )
-        });
+        .map(|row| row.unwrap())
+        .group_by(|(a, b)| a.clone());
+    let rows = rows
+        .into_iter()
+        .map(|(key, group)| (key, group.map(|(k, v)| v).collect()));
+    //     .map(|row| {
+    //         let (a, b) = row.unwrap();
+    //         (
+    //             a.unwrap(),
+    //             b.unwrap()
+    //                 .split(",")
+    //                 .map(|x| x.to_string())
+    //                 .collect::<HashSet<T>>(),
+    //         )
+    //     });
     // .collect();
     return HashMap::from_iter(rows);
 }
@@ -4185,14 +4205,16 @@ fn get_artifacts_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
 ) -> HashMap<ArtifactKey, ArtifactId> {
-    // println!("get_runs_duck");
+    // return HashMap::new();
+    println!("get_runs_duck {:?}", active_runs);
     if active_runs.is_empty() {
         return HashMap::new();
     }
     let conn = pool.get().unwrap();
     let query = format!(
         "
-        SELECT * FROM db.artifacts
+        SELECT * EXCLUDE (id, created_at, id_serial), db.artifacts.id as id FROM db.artifacts
+        JOIN db.models ON db.artifacts.model_id=db.models.id
         WHERE train_id IN ({}) ORDER BY train_id
         ",
         repeat_vars(active_runs.len()),
@@ -4210,6 +4232,7 @@ fn get_artifacts_duck(
         .reduce(|acc, e| acc.vstack(&e).unwrap())
         .unwrap();
     large_df.sort(vec!["train_id"], Default::default()).unwrap();
+    println!("{}", large_df);
 
     let train_ids = large_df.column("train_id").unwrap().rechunk();
     let train_ids = train_ids.as_materialized_series().iter();
@@ -4222,7 +4245,7 @@ fn get_artifacts_duck(
         .zip(ids)
         .map(|((tid, name), id)| {
             let id = match id {
-                AnyValue::Int32(id) => id,
+                AnyValue::Int64(id) => id,
                 _ => panic!(),
             };
             (
@@ -4245,8 +4268,32 @@ fn get_artifacts_duck(
 fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     // println!("ensure_duckdb_schema");
     let conn = pool.get().unwrap();
-    conn.execute("COPY FROM DATABASE db TO local (SCHEMA)", [])
-        .expect("copy schema");
+    for table_name in [
+        "models",
+        "model_parameter_int",
+        "model_parameter_float",
+        "model_parameter_text",
+        "train_step_metric_int",
+        "train_step_metric_float",
+        "train_step_metric_text",
+        "checkpoint_sample_metric_int",
+        "checkpoint_sample_metric_float",
+        "checkpoint_sample_metric_text",
+        "checkpoints",
+        "artifacts",
+        "artifact_chunks",
+    ] {
+        conn.execute(
+            format!(
+                "CREATE TABLE IF NOT EXISTS local.{table_name} AS FROM db.{table_name} LIMIT 0"
+            )
+            .as_str(),
+            [],
+        )
+        .expect(format!("create table {table_name}").as_str());
+        // conn.execute("COPY FROM DATABASE db TO local (SCHEMA)", [])
+        //     .expect("copy schema");
+    }
     conn.execute("SET pg_experimental_filter_pushdown=true", [])
         .expect("set filter push down");
     conn.execute("SET pg_use_ctid_scan=false", [])
@@ -4267,15 +4314,31 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude:
     let conn = pool.get().unwrap();
     let query = format!(
         "
-        SELECT * FROM local.runs 
-        WHERE variable NOT IN ({}) 
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+        FROM local.model_parameter_text JOIN local.models ON id=model_id
+        WHERE name NOT IN ({}) 
+        UNION
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+        FROM local.model_parameter_float JOIN local.models ON id=model_id
+        WHERE name NOT IN ({}) 
+        UNION
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+        FROM local.model_parameter_int JOIN local.models ON id=model_id
+        WHERE name NOT IN ({}) 
         ",
+        repeat_vars(HIDDEN_PARAMS.len()),
+        repeat_vars(HIDDEN_PARAMS.len()),
         repeat_vars(HIDDEN_PARAMS.len()),
     );
     // println!("{}", query);
     let mut stmt = conn.prepare(&query).unwrap();
     let polars = stmt
-        .query_polars(duckdb::params_from_iter(HIDDEN_PARAMS.iter()))
+        .query_polars(duckdb::params_from_iter(
+            HIDDEN_PARAMS
+                .iter()
+                .chain(HIDDEN_PARAMS.iter())
+                .chain(HIDDEN_PARAMS.iter()),
+        ))
         .expect("duck runs");
     // println!("{:?}", polars);
     let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
@@ -4330,24 +4393,10 @@ fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<RunPara
 #[instrument(skip(pool))]
 fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
     ensure_duckdb_schema(pool);
-    let conn = pool.get().unwrap();
-    let max_id: i32 = conn
-        .query_row(
-            "SELECT COALESCE(max(id_serial), 0) FROM local.models",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let query = format!(
-        "
-        INSERT INTO local.runs
-        SELECT * FROM db.runs 
-        WHERE id > {}
-        ORDER BY id ASC
-        ",
-        max_id
-    );
-    conn.execute(&query, []).expect("sync runs failed");
+    sync_full_table(&pool, "models");
+    sync_full_table(&pool, "model_parameter_float");
+    sync_full_table(&pool, "model_parameter_int");
+    sync_full_table(&pool, "model_parameter_text");
 }
 
 #[instrument(skip_all)]
@@ -4365,8 +4414,8 @@ fn sync_full_table(pool: &r2d2::Pool<DuckdbConnectionManager>, table_name: &str)
         "
         INSERT INTO local.{table_name}
         SELECT * FROM db.{table_name} 
-        WHERE id > {}
-        ORDER BY id ASC
+        WHERE id_serial > {}
+        ORDER BY id_serial ASC
         ",
         max_id
     );
@@ -4394,42 +4443,41 @@ fn get_metrics_duck(
         "
             WITH range_info AS (
              SELECT
-                 train_id,
-                 variable,
-                 xaxis,
-                 MIN(x) AS min_x,
-                 MAX(x) AS max_x
-             FROM local.metrics
+                 model_id,
+                 name,
+                 MIN(step) AS min_x,
+                 MAX(step) AS max_x
+             FROM local.train_step_metric_float
              -- WHERE xaxis='batch'
-             GROUP BY train_id, variable, xaxis
+             GROUP BY model_id, name 
          ),
          bucket_size AS (
              SELECT
-                 train_id,
-                 variable,
-                 xaxis,
+                 model_id,
+                 name,
                  (max_x - min_x) / 1000.0 AS size
              FROM range_info
          ),
          bucket_table AS (
          SELECT
-             t.train_id as train_id,
-             t.variable as variable,
-             t.xaxis as xaxis,
-             FLOOR(t.x / bs.size) AS bucket,
+             -- t.model_id as model_id,
+             m.train_id as train_id,
+             t.name as name,
+             FLOOR(t.step / bs.size) AS bucket,
              AVG(t.value) AS value, (bucket * ANY_VALUE(bs.size))::DOUBLE as x
              -- AVG(t.value) AS value, AVG(t.x) as x
-         FROM local.metrics t
+         FROM local.train_step_metric_float t
          JOIN bucket_size bs
-         ON t.train_id = bs.train_id AND t.variable = bs.variable
-         -- WHERE xaxis='batch'
-         WHERE t.train_id IN ({})
-         GROUP BY t.train_id, t.variable, t.xaxis, bucket
-         ORDER BY t.train_id, t.variable, t.xaxis, x)
+         ON t.model_id = bs.model_id AND t.name=bs.name
+         JOIN local.models m
+         ON t.model_id = id
+         WHERE m.train_id IN ({})
+         GROUP BY m.train_id, t.name, bucket
+         ORDER BY m.train_id, t.name, x)
          SELECT
-             train_id, variable, xaxis, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
+             train_id, name, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
             FROM bucket_table
-            GROUP BY train_id, variable, xaxis
+            GROUP BY train_id, name
         ",
         repeat_vars(active_runs.len()),
     );
@@ -4442,8 +4490,9 @@ fn get_metrics_duck(
 }
 
 #[instrument(skip_all)]
-fn sync_metrics_duck(
+fn sync_table(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
+    table_name: &str,
     active_runs: &Vec<String>,
     limit: &mut usize,
 ) -> bool {
@@ -4452,10 +4501,25 @@ fn sync_metrics_duck(
     let mut updated = false;
     println!("syncing {:?}", active_runs);
     for train_id in active_runs {
+        let mut stmt = conn
+            .prepare(format!("SELECT id as model_ids from local.models WHERE train_id=?").as_str())
+            .unwrap();
+        let model_ids: Vec<i64> = stmt
+            .query_map([train_id], |row| row.get(0))
+            .unwrap()
+            .into_iter()
+            .map(|x| x.unwrap())
+            .collect();
+        if model_ids.len() == 0 {
+            continue;
+        }
         println!("getting max id for {}", train_id);
         let max_id: i32 = conn
             .query_row(
-                "SELECT COALESCE(MAX(id), 0) from local.metrics WHERE train_id=?",
+                format!(
+                    "SELECT COALESCE(MAX(local.{table_name}.id_serial), 0) from local.{table_name} JOIN local.models ON local.{table_name}.model_id=local.models.id WHERE local.models.train_id=?"
+                )
+                .as_str(),
                 [train_id],
                 |row| row.get(0),
             )
@@ -4464,22 +4528,34 @@ fn sync_metrics_duck(
         // println!("max id {} for {}", max_id, train_id);
         let query = format!(
             "
-        INSERT INTO local.metrics
-        SELECT * FROM db.metrics
-        WHERE id > {}
+        INSERT INTO local.{table_name} BY NAME
+        SELECT * 
+            EXCLUDE (id, train_id, created_at, id_serial),
+            db.{table_name}.id_serial as id_serial,
+            db.{table_name}.created_at as created_at 
+        FROM db.{table_name}
+        JOIN db.models ON id=model_id
+        WHERE db.{table_name}.id_serial > {}
         AND
         train_id=?
         LIMIT {}
         ",
-            max_id, limit
+            max_id,
+            // repeat_vars(model_ids.len()),
+            limit
         );
         // println!("{query} {}", train_id);
         let t = Instant::now();
-        let n_rows = conn.execute(&query, [train_id]).expect("sync runs failed");
+        let n_rows = conn
+            .execute(&query, [train_id]) //params_from_iter(model_ids.iter()))
+            .expect("sync runs failed");
         println!("Inserted {}", n_rows);
         let max_id_post: i32 = conn
             .query_row(
-                "SELECT COALESCE(MAX(id), 0) from local.metrics WHERE train_id=?",
+                format!(
+                    "SELECT COALESCE(MAX(local.{table_name}.id_serial), 0) from local.{table_name} JOIN local.models ON local.{table_name}.model_id=models.id WHERE models.train_id=?"
+                )
+                .as_str(),
                 [train_id],
                 |row| row.get(0),
             )
@@ -4531,7 +4607,7 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_run_params, rx_run_params) = mpsc::sync_channel::<HashMap<RunParamKey, String>>(1);
     // let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_new_train_runs_to_db));
     let (tx_db_artifact, rx_db_artifact) = mpsc::sync_channel::<ArtifactTransfer>(1);
-    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::sync_channel::<i32>(1);
+    let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::sync_channel::<i64>(1);
     let (tx_batch_status, rx_batch_status) = mpsc::sync_channel::<(usize, usize)>(100);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let rt_handle = rt.handle().clone();
@@ -4566,11 +4642,6 @@ WHERE name = 'threads';
         [],
     ).expect("attach to psql failed");
         // sync_runs_duck(&duckdb_pool);
-        sync_full_table(&duckdb_pool, "models");
-        sync_full_table(&duckdb_pool, "model_parameter_float");
-        sync_full_table(&duckdb_pool, "model_parameter_int");
-        sync_full_table(&duckdb_pool, "model_parameter_text");
-        panic!();
         let db_thread_pool = duckdb_pool.clone();
         std::thread::spawn(move || {
             let mut train_runs = Vec::new();
@@ -4585,7 +4656,12 @@ WHERE name = 'threads';
                     println!("[db] got new train runs {:?}", train_runs);
                 }
                 let t = Instant::now();
-                let updated = sync_metrics_duck(&db_thread_pool, &train_runs, &mut limit);
+                let updated = sync_table(
+                    &db_thread_pool,
+                    "train_step_metric_float",
+                    &train_runs,
+                    &mut limit,
+                );
                 if updated {
                     println!("sync elapsed {}", t.elapsed().as_millis());
                 }
@@ -4595,19 +4671,20 @@ WHERE name = 'threads';
             }
         });
         use tracing::Instrument;
+        let db_artifact_pool = duckdb_pool.clone();
         let future = async move {
-            let database_url = env::var("DATABASE_URL")
-                .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
-            let pool = PgPoolOptions::new()
-                .max_connections(5)
-                .connect(&database_url)
-                .await
-                .expect("Can't connect to database");
+            // let database_url = env::var("DATABASE_URL")
+            //     .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
+            // let pool = PgPoolOptions::new()
+            //     .max_connections(5)
+            //     .connect(&database_url)
+            //     .await
+            //     .expect("Can't connect to database");
             println!("Artifact loop starting...");
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
-                    handle_artifact_request(artifact_id, &pool, &tx_db_artifact).await;
+                    handle_artifact_request(artifact_id, &db_artifact_pool, &tx_db_artifact).await;
                 }
             }
         };
@@ -4620,6 +4697,8 @@ WHERE name = 'threads';
             println!("updating...");
             let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
             let artifacts = if env::var("DATABASE_URL").is_ok() {
+                ensure_duckdb_schema(&plot_map_thread_pool);
+                sync_full_table(&plot_map_thread_pool, "artifacts");
                 get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
             } else {
                 HashMap::new()
@@ -4846,87 +4925,79 @@ WHERE name = 'threads';
 }
 
 // #[profiling::function]
-#[instrument]
+#[instrument(skip(pool))]
 async fn handle_artifact_request(
-    artifact_id: i32,
-    pool: &sqlx::Pool<sqlx::Postgres>,
+    artifact_id: i64,
+    // pool: &sqlx::Pool<sqlx::Postgres>,
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
     tx_db_artifact: &SyncSender<ArtifactTransfer>,
 ) {
     println!("[db] artifact requested: {}", artifact_id);
-    let query = sqlx::query(
-        r#"
-                SELECT size FROM artifacts WHERE id=$1
-                "#,
-    )
-    .bind(&artifact_id);
+    let conn = pool.get().unwrap();
+    let filesize = conn
+        .query_row(
+            "SELECT size FROM local.artifacts WHERE id=?",
+            [artifact_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
     // println!("{}", query);
-    let size_res = query.fetch_one(pool).await;
-    match size_res {
-        Ok(row) => {
-            let filesize = row.get::<i32, _>("size");
-            println!("Got request for existing artifact id of size {}", filesize);
-            // println!("[f] File {} size {}", &path, &filesize);
-            let mut last_seq_num = -1;
-            // let mut chunk_size = 1_000_000;
-            let mut batch_size = 1;
-            let mut buffer: Vec<u8> = vec![0; filesize as usize];
-            let mut offset: usize = 0;
-            // while offset < filesize {
-            loop {
-                // let length = chunk_size.min(filesize - offset);
-                let query_time = std::time::Instant::now();
-                let blobs_rows = sqlx::query(
-                    r#"
-                            SELECT seq_num, data, size FROM artifact_chunks WHERE artifact_id=$1 AND seq_num > $2 ORDER BY seq_num LIMIT $3
-                            "#,
-                )
-                .bind(&artifact_id)
-                .bind(&last_seq_num)
-                .bind(&batch_size)
-                .fetch_all(pool)
-                .await;
-                let elapsed_seconds = query_time.elapsed().as_secs_f32();
-                if elapsed_seconds < 0.5 {
-                    batch_size *= 2;
-                } else if elapsed_seconds > 2.0 {
-                    batch_size = (batch_size / 2).max(1);
-                }
-                // if let Ok(row) = blobs_rows {
-                if let Ok(rows) = blobs_rows {
-                    if rows.len() == 0 {
-                        println!("[db] Fetched all available artifact chunks");
-                        break;
-                    }
-                    println!("Got {} rows", rows.len());
-                    for row in rows {
-                        let chunk_size = row.get::<i32, _>("size");
-                        let dst = &mut buffer[offset..offset + chunk_size as usize];
-                        dst.copy_from_slice(row.get::<Vec<u8>, _>("data").as_slice());
-                        offset += chunk_size as usize;
-                        last_seq_num = row.get::<i32, _>("seq_num");
-                        println!("[f] Read chunk {} at {}", chunk_size, offset);
-                        tx_db_artifact
-                            .send(ArtifactTransfer::Loading(
-                                offset as usize,
-                                filesize as usize,
-                            ))
-                            .unwrap();
-                    }
-                } else if let Err(error) = blobs_rows {
-                    println!("error {}", error.to_string());
-                    tx_db_artifact
-                        .send(ArtifactTransfer::Err(error.to_string()))
-                        .unwrap();
-                    break;
-                }
-            }
-            tx_db_artifact.send(ArtifactTransfer::Done(buffer)).unwrap();
+    println!("Got request for existing artifact id of size {}", filesize);
+    // println!("[f] File {} size {}", &path, &filesize);
+    let mut last_seq_num: i32 = -1;
+    // let mut chunk_size = 1_000_000;
+    let mut batch_size: usize = 1;
+    let mut buffer: Vec<u8> = vec![0; filesize as usize];
+    let mut offset: usize = 0;
+    // while offset < filesize {
+    loop {
+        // let length = chunk_size.min(filesize - offset);
+        let query_time = std::time::Instant::now();
+        println!("loop step {}, {}", batch_size, last_seq_num);
+        // https://github.com/duckdb/duckdb-postgres/issues/233
+        let mut stmt = conn.prepare(
+                format!("SELECT * FROM postgres_query('db', 'SELECT seq_num, data, size FROM artifact_chunks WHERE artifact_id={artifact_id} AND seq_num > {last_seq_num} ORDER BY seq_num LIMIT {batch_size}')").as_str()
+            ).unwrap();
+        // .bind(&artifact_id)
+        // .bind(&last_seq_num)
+        // .bind(&batch_size)
+        // .fetch_all(pool)
+        // .await;
+        // let res = stmt.query(duckdb::params![artifact_id, last_seq_num, batch_size]);
+        let res = stmt.query([]);
+        if let Err(err) = &res {
+            println!("{:?}", err);
+            break;
         }
-        Err(err) => {
-            println!("[db] error {}", err.to_string());
-            tx_db_artifact
-                .send(ArtifactTransfer::Err(err.to_string()))
-                .unwrap();
+        if let Ok(mut rows) = res {
+            // if rows.
+            let mut received_rows = 0;
+            while let Some(row) = rows.next().unwrap() {
+                let chunk_size: i32 = row.get("size").unwrap();
+                let dst = &mut buffer[offset..offset + chunk_size as usize];
+                dst.copy_from_slice(row.get::<_, Vec<u8>>("data").unwrap().as_slice());
+                offset += chunk_size as usize;
+                last_seq_num = row.get::<_, i32>("seq_num").unwrap();
+                received_rows += 1;
+                println!("[f] Read chunk {} at {}", chunk_size, offset);
+                tx_db_artifact
+                    .send(ArtifactTransfer::Loading(
+                        offset as usize,
+                        filesize as usize,
+                    ))
+                    .unwrap();
+            }
+            if received_rows == 0 {
+                println!("[db] Fetched all available artifact chunks");
+                break;
+            }
+        }
+        let elapsed_seconds = query_time.elapsed().as_secs_f32();
+        if elapsed_seconds < 0.5 {
+            batch_size *= 2;
+        } else if elapsed_seconds > 2.0 {
+            batch_size = (batch_size / 2).max(1);
         }
     }
+    tx_db_artifact.send(ArtifactTransfer::Done(buffer)).unwrap();
 }

@@ -1,7 +1,9 @@
+from pathlib import Path
 from typing import Optional
 import pandas
 import json
 import duckdb
+import os
 from typing import List
 from dataclasses import dataclass
 from lib.train_dataclasses import TrainRun, TrainEpochState, TrainConfig
@@ -30,6 +32,8 @@ CHECKPOINT_PARAMETER = "checkpoint_parameter"
 MODELS_TABLE_NAME = "models"
 TRAIN_STEPS_TABLE_NAME = "train_steps"
 CHECKPOINTS_TABLE_NAME = "checkpoints"
+ARTIFACTS_TABLE_NAME = "artifacts"
+ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
 
 
 @dataclass
@@ -53,11 +57,95 @@ def table_name(kind, type_name):
 
 
 ALL_TABLES = (
-    [MODELS_TABLE_NAME, TRAIN_STEPS_TABLE_NAME, CHECKPOINTS_TABLE_NAME]
+    [
+        MODELS_TABLE_NAME,
+        TRAIN_STEPS_TABLE_NAME,
+        CHECKPOINTS_TABLE_NAME,
+        ARTIFACTS_TABLE_NAME,
+        ARTIFACT_CHUNKS_TABLE_NAME,
+    ]
     + [table_name(TRAIN_STEP_METRIC, type_def.name) for type_def in TYPE_DEFS]
     + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
     + [table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name) for type_def in TYPE_DEFS]
 )
+
+
+def sql_create_table_artifacts():
+    return """
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id BIGINT,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                    model_id BIGINT REFERENCES models(id),
+                    name text,
+                    path text,
+                    type text,
+                    size int,
+                    UNIQUE(model_id, name),
+                    PRIMARY KEY (id)
+                )
+    """
+
+
+def sql_create_table_artifact_chunks():
+    return """
+                CREATE TABLE IF NOT EXISTS artifact_chunks (
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                    artifact_id bigint references artifacts(id),
+                    seq_num int,
+                    data bytea,
+                    size int
+                )
+                """
+
+
+def insert_artifact(
+    model_id: int, name: str, path: Path, type: Optional[str] = None
+) -> int:
+    try:
+        _insert_artifact(model_id, name, path, type)
+    except duckdb.duckdb.ConstraintException:
+        print(f"Artifact {name} already present for {model_id}")
+
+
+def _insert_artifact(
+    model_id: int, name: str, path: Path, type: Optional[str] = None
+) -> int:
+    path = Path(path) if not isinstance(path, Path) else path
+    size_bytes = path.stat().st_size
+    path_str = path.absolute().as_posix()
+    if type is None:
+        type = path.suffix
+
+    artifact_id = random_positive_i64()
+
+    execute(
+        """
+            INSERT INTO artifacts (id, model_id, name, path, type, size)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+        (artifact_id, model_id, name, path_str, type, size_bytes),
+    )
+    print("[db] Uploading artifact")
+    with path.open("rb") as file:
+        seq_num = 0
+        while chunk := file.read(1024 * 1024):
+            execute(
+                "INSERT INTO artifact_chunks (artifact_id, seq_num, data, size) VALUES (?, ?, ?, ?)",
+                (artifact_id, seq_num, chunk, len(chunk)),
+            )
+            seq_num += 1
+            print(f"[db] Chunk {seq_num}")
+
+    return artifact_id
+
+
+def get_artifact(artifact_id):
+    chunks = execute_and_fetch(
+        "SELECT data FROM artifact_chunks WHERE artifact_id = ? ORDER BY seq_num",
+        (artifact_id,),
+    )
+    artifact_data = b"".join(chunk for (chunk,) in chunks)
+    return artifact_data
 
 
 def sql_create_table_model_parameter(type_def):
@@ -251,7 +339,7 @@ def sql_create_table_sync():
     """
 
 
-def sync(train_config: Optional[TrainConfig] = None):
+def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=False):
     import time
 
     start = time.time()
@@ -259,8 +347,16 @@ def sync(train_config: Optional[TrainConfig] = None):
     execute("INSTALL postgres")
     execute("LOAD postgres")
     execute(
-        "ATTACH IF NOT EXISTS 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as pg (TYPE POSTGRES)"
+        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password=herdeherde host=127.0.0.1 port=5430' as pg (TYPE POSTGRES)"
     )
+
+    if clear_pg:
+        if "CLEAR_POSTGRES" not in os.environ:
+            print("Not clearing postgres without CLEAR_POSTGRES env set")
+        else:
+            for table_name in ALL_TABLES:
+                execute(f"DROP TABLE pg.{table_name} CASCADE")
+
     _ensure_schema(execute_pg)
     for table_name in ALL_TABLES:
         execute_pg(
@@ -347,6 +443,8 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_train_steps())
     executor(sql_create_table_checkpoints())
     executor(sql_create_table_sync())
+    executor(sql_create_table_artifacts())
+    executor(sql_create_table_artifact_chunks())
 
     for type_def in TYPE_DEFS:
         executor(sql_create_table_model_parameter(type_def))

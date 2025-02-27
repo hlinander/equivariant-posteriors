@@ -257,6 +257,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
         _version=34,
     )
     train_eval = create_regression_metrics(torch.nn.functional.l1_loss, None)
+    train_eval.log_gradient_norm = True
     train_run = TrainRun(
         compute_config=ComputeConfig(num_workers=0),
         train_config=train_config,

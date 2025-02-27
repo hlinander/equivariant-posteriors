@@ -183,6 +183,21 @@ def train(
                 model.parameters(), train_run.train_config.gradient_clipping
             )
         optimizer.step()
+
+        if train_run.train_eval.log_gradient_norm:
+            grads = [
+                param.grad.detach().flatten()
+                for param in model.parameters()
+                if param.grad is not None
+            ]
+            norm = torch.cat(grads).norm()
+            duck.insert_train_step_metric(
+                train_epoch_state.model_id,
+                train_epoch_state.run_id,
+                "gradient_norm",
+                train_epoch_state.batch,
+                norm.item(),
+            )
         optimizer.zero_grad(set_to_none=True)
 
         if ddp.get_rank() > 0:

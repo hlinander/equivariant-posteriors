@@ -7254,6 +7254,7 @@ dependencies = [
  "ndarray-stats",
  "npyz",
  "polars",
+ "polars-core",
  "r2d2",
  "ron",
  "serde",

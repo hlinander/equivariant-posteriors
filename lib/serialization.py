@@ -180,6 +180,7 @@ def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
 @dataclass
 class DeserializedModel:
     model: torch.nn.Module
+    model_id: int
     epoch: int
 
 
@@ -190,6 +191,7 @@ def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
     if (
         not (checkpoint_path / "model").is_file()
         or not (checkpoint_path / "epoch").is_file()
+        or not (checkpoint_path / "model_id").is_file()
     ):
         print("No files")
         return None
@@ -198,6 +200,7 @@ def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
 
     try:
         model_epoch = torch.load(checkpoint_path / "epoch")
+        model_id = torch.load(checkpoint_path / "model_id")
 
         if model_epoch != config.train_run.epochs:
             model_epoch_checkpoint = get_model_epoch_checkpoint_path(
@@ -224,7 +227,9 @@ def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
         return None
 
     return DeserializedModel(
-        model=create_model(config, model_state_dict), epoch=model_epoch
+        model=create_model(config, model_state_dict),
+        epoch=model_epoch,
+        model_id=model_id,
     )
 
 

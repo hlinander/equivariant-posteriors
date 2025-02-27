@@ -15,7 +15,8 @@ from lib.generic_ablation import generic_ablation
 from lib.distributed_trainer import distributed_train
 from lib.ddp import ddp_setup
 from lib.files import prepare_results
-from lib.render_psql import setup_psql, add_artifact
+from lib.render_duck import ensure_duck, insert_artifact, sync
+from lib.serialization import deserialize_model, DeserializeConfig
 
 
 def create_config(mlp_dim, ensemble_id):
@@ -55,11 +56,14 @@ if __name__ == "__main__":
     distributed_train(configs)
 
     device = ddp_setup()
+    dsm = deserialize_model(DeserializeConfig(train_run=configs[0], device_id=device))
     path = prepare_results("test", configs[0])
     # open(path / "test.npy", "wb").write(b"0" * 1024 * 1024 * 10)
     # print(path)
-    setup_psql()
+    # setup_psql()
     # add_artifact(configs[0], "test.npy", path / "test.bin")
+    ensure_duck(configs[0].train_config)
+
     import matplotlib.pyplot as plt
     import matplotlib
 
@@ -67,4 +71,5 @@ if __name__ == "__main__":
 
     plt.plot([0, 1], [0, 1])
     plt.savefig(path / "plot.png")
-    add_artifact(configs[0], "plot.png", path / "plot.png")
+    insert_artifact(dsm.model_id, "plot.png", path / "plot.png", "png")
+    sync(configs[0].train_config)

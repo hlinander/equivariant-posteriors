@@ -45,6 +45,7 @@ r2d2 = "0.8.9"
 # r2d2-duckdb = "0.1.0"
 # r2d2 = "0.8.10"
 polars = {version="0.46.0", features=["lazy", "rolling_window", "polars-io", "json"]}
+polars-core = "*"
 serde = {version="1.0.209", features=["derive"]}
 ron = "0.8.1"
 

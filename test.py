@@ -12,6 +12,8 @@ from lib.metric import Metric
 from lib.models.dense import DenseConfig
 from lib.data_registry import DataSineConfig
 
+from lib.regression_metrics import create_regression_metrics
+
 from lib.train import load_or_create_state
 from lib.train import do_training
 from lib.ddp import ddp_setup
@@ -20,7 +22,7 @@ from lib.files import prepare_results
 
 
 def create_train_run():
-    loss = torch.nn.MSELoss()
+    loss = torch.nn.functional.mse_loss
 
     def mse_loss(outputs, batch):
         return loss(outputs["logits"], batch["target"])
@@ -37,32 +39,7 @@ def create_train_run():
         optimizer=OptimizerConfig(optimizer=torch.optim.Adam, kwargs=dict()),
         batch_size=2,
     )
-    train_eval = TrainEval(
-        train_metrics=[
-            lambda: Metric(
-                lambda output, batch: tm.functional.mean_absolute_error(
-                    output["predictions"], batch["target"]
-                )
-            ),
-            lambda: Metric(
-                lambda output, batch: tm.functional.mean_squared_error(
-                    output["predictions"], batch["target"]
-                )
-            ),
-        ],
-        validation_metrics=[
-            lambda: Metric(
-                lambda output, batch: tm.functional.mean_absolute_error(
-                    output["predictions"], batch["target"]
-                )
-            ),
-            lambda: Metric(
-                lambda output, batch: tm.functional.mean_squared_error(
-                    output["predictions"], batch["target"]
-                )
-            ),
-        ],
-    )
+    train_eval = create_regression_metrics(loss, None)
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,

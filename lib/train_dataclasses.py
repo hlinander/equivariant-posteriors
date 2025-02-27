@@ -123,11 +123,13 @@ class TrainEval:
     train_metrics: List[Callable[[], Metric]]
     validation_metrics: List[Callable[[], Metric]]
     data_visualizer: Callable[[object, TrainEpochState], None] = None
+    log_gradient_norm = False
 
     def serialize_human(self):
         return dict(
             train_metrics=[metric().name() for metric in self.train_metrics],
             val_metric=[metric().name() for metric in self.validation_metrics],
+            log_gradient_norm=self.log_gradient_norm,
         )
 
 
