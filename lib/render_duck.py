@@ -12,6 +12,7 @@ from lib.paths import (
 )
 from lib.random_util import random_positive_i64
 from lib.stable_hash import stable_hash
+from lib.compute_env import env
 
 CONN = None
 SCHEMA_ENSURED = False
@@ -343,11 +344,14 @@ def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=Fal
     import time
 
     start = time.time()
+    hostname = env().postgres_host  # "localhost"
+    port = env().postgres_port  # 5432
+    pw = env().postgres_password
     ensure_duck(train_config)
     execute("INSTALL postgres")
     execute("LOAD postgres")
     execute(
-        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password=herdeherde host=127.0.0.1 port=5430' as pg (TYPE POSTGRES)"
+        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
     )
 
     if clear_pg:
