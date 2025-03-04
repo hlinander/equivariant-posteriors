@@ -1262,7 +1262,7 @@ impl eframe::App for GuiRuns {
             let pool = self.duckdb.clone();
             self.param_values_handle = Some(tokio::task::spawn_blocking(move || {
                 // TODO: Merge values!
-                get_parameter_values_duck::<String>(&pool, "model_parameter_text")
+                get_parameter_values_duck(&pool)
             }));
         }
 
@@ -4111,7 +4111,60 @@ fn render_param_tree(
 }
 
 #[instrument(skip_all)]
-fn get_parameter_values_duck<T: FromSql + std::cmp::Eq + Hash>(
+fn get_parameter_values_duck(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+) -> HashMap<String, HashSet<String>> {
+    println!("get_parameter_values_duck");
+    let conn = pool.get().unwrap();
+    //"SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
+    let sql = format!("
+        SELECT DISTINCT variable, value_text FROM (
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+        FROM local.model_parameter_text JOIN local.models ON id=model_id
+        -- WHERE name NOT IN () 
+        UNION
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+        FROM local.model_parameter_float JOIN local.models ON id=model_id
+         -- WHERE name NOT IN () 
+        UNION
+        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+        FROM local.model_parameter_int JOIN local.models ON id=model_id
+        --WHERE name NOT IN ()
+        )
+        ORDER BY variable, value_text"
+    );
+    let mut stmt = conn.prepare(sql.as_str()).unwrap();
+    let rows = stmt
+        .query_map([], |row| {
+            duckdb::Result::Ok((
+                row.get::<_, String>(0).unwrap(),
+                row.get::<_, String>(1).unwrap(),
+            ))
+        })
+        .unwrap()
+        .map(|row| row.unwrap())
+        .group_by(|(a, b)| a.clone());
+    let rows = rows
+        .into_iter()
+        .map(|(key, group)| (key, group.map(|(k, v)| v).collect()));
+    //     .map(|row| {
+    //         let (a, b) = row.unwrap();
+    //         (
+    //             a.unwrap(),
+    //             b.unwrap()
+    //                 .split(",")
+    //                 .map(|x| x.to_string())
+    //                 .collect::<HashSet<T>>(),
+    //         )
+    //     });
+    // .collect();
+    let ret = HashMap::from_iter(rows);
+    // println!("mode_ids {:?}", ret.get("model_id"));
+    ret
+}
+
+#[instrument(skip_all)]
+fn get_parameter_values_duck_old<T: FromSql + std::cmp::Eq + Hash>(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     table_name: &str,
 ) -> HashMap<String, HashSet<T>> {

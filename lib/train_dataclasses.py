@@ -109,6 +109,7 @@ class TrainConfig:
             ensemble_id=self.ensemble_id,
             extra=lib.serialize_human.serialize_human(self.extra),
             gradient_clipping=self.gradient_clipping,
+            _version=self._version,
         )
 
     def ensemble_dict(self):
