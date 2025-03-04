@@ -1,11 +1,11 @@
 {
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/02f05fc";
   inputs.helix-pkg.url = "github:helix-editor/helix";
   # inputs.helix-pkg.url = "github:helix-editor/helix?tag=25.01";
 
   # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
   inputs.fenix = {
     url = "github:nix-community/fenix";
     inputs.nixpkgs.follows = "nixpkgs";

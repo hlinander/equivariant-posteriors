@@ -482,6 +482,7 @@ def insert_or_update_train_run(train_run: TrainRun, state: TrainEpochState):
     insert_model_parameter(
         state.model_id, "train_config_hash", train_run_flat["train_id"]
     )
+    insert_model_parameter(state.model_id, "model_id", state.model_id)
     for key, value in train_run_flat.items():
         insert_model_parameter(
             state.model_id,

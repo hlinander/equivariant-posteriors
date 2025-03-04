@@ -169,7 +169,7 @@ def train(
         train_epoch_state.timing_metric.start("insert_duck_metric")
         duck.insert_train_step(
             train_epoch_state.model_id,
-            train_epoch_state.run_id,
+            train_run.run_id,
             train_epoch_state.batch,
             data_factory.get_factory()
             .get_class(train_run.train_config.train_data_config)
@@ -193,7 +193,7 @@ def train(
             norm = torch.cat(grads).norm()
             duck.insert_train_step_metric(
                 train_epoch_state.model_id,
-                train_epoch_state.run_id,
+                train_run.run_id,
                 "gradient_norm",
                 train_epoch_state.batch,
                 norm.item(),
@@ -219,7 +219,7 @@ def train(
             value = metric(metric_sample)
             duck.insert_train_step_metric(
                 metric_sample.model_id,
-                train_epoch_state.run_id,
+                train_run.run_id,
                 metric.name(),
                 train_epoch_state.batch,
                 # metric_sample.batch,

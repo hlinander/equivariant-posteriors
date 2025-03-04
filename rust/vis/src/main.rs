@@ -1254,6 +1254,18 @@ impl eframe::App for GuiRuns {
         //     }
         // }
 
+        if std::time::Instant::now() > self.gui_params.next_param_update {
+            self.gui_params.next_param_update =
+                std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let t = Instant::now();
+            // self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
+            let pool = self.duckdb.clone();
+            self.param_values_handle = Some(tokio::task::spawn_blocking(move || {
+                // TODO: Merge values!
+                get_parameter_values_duck::<String>(&pool, "model_parameter_text")
+            }));
+        }
+
         let ensemble_colors: HashMap<String, egui::Color32> = self
             .runs2
             .active_runs
@@ -1287,17 +1299,6 @@ impl eframe::App for GuiRuns {
                 (run_id.clone(), *ensemble_colors.get(&ensemble_id).unwrap())
             })
             .collect();
-
-        if std::time::Instant::now() > self.gui_params.next_param_update {
-            self.gui_params.next_param_update =
-                std::time::Instant::now() + std::time::Duration::from_secs(10);
-            let t = Instant::now();
-            // self.gui_params.param_values = get_parameter_values_duck(&self.duckdb);
-            let pool = self.duckdb.clone();
-            self.param_values_handle = Some(tokio::task::spawn_blocking(move || {
-                get_parameter_values_duck::<String>(&pool, "model_parameter_text")
-            }));
-        }
 
         egui::SidePanel::left("Controls")
             .resizable(true)
@@ -4291,6 +4292,7 @@ fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
             [],
         )
         .expect(format!("create table {table_name}").as_str());
+        // println!("created {table_name}");
         // conn.execute("COPY FROM DATABASE db TO local (SCHEMA)", [])
         //     .expect("copy schema");
     }
@@ -4342,6 +4344,7 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude:
         .expect("duck runs");
     // println!("{:?}", polars);
     let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
+    println!("{:?}", large_df);
     large_df
         .sort(vec!["variable", "train_id"], Default::default())
         .unwrap()
@@ -4373,7 +4376,6 @@ fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<RunPara
             )
         })
         .collect::<HashMap<_, _>>();
-    // println!("get_run_params to hash map {}", t.elapsed().as_millis());
     ret
 }
 
@@ -4563,7 +4565,7 @@ fn sync_table(
         if max_id_post != max_id {
             updated = true;
         }
-        if max_id_post != max_id && t.elapsed().as_millis() < 500 && *limit < 1e6 as usize {
+        if max_id_post != max_id && t.elapsed().as_millis() < 500 && *limit < 10e6 as usize {
             *limit = *limit * 2;
             println!("increasing metric limit to {}", limit);
         }
@@ -4628,6 +4630,16 @@ WHERE name = 'threads';
         )
         .expect("check threads");
     println!("duckdb threads {}", threads);
+    let version: String = conn
+        .query_row(
+            "
+            SELECT version() as version;
+        ",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check threads");
+    println!("duckdb version {}", version);
     conn.execute("INSTALL postgres;", [])
         .expect("install postgres failed");
     conn.execute("LOAD postgres;", [])
@@ -4641,6 +4653,7 @@ WHERE name = 'threads';
         "ATTACH 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as db (TYPE POSTGRES, READ_ONLY);",
         [],
     ).expect("attach to psql failed");
+        sync_runs_duck(&duckdb_pool);
         // sync_runs_duck(&duckdb_pool);
         let db_thread_pool = duckdb_pool.clone();
         std::thread::spawn(move || {

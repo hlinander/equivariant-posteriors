@@ -37,7 +37,6 @@ class TrainEpochState:
     psql_query_cache: Set = field(default_factory=lambda: set())
     psql_starting_xs: Dict[str, float] = None
     code_path: Path = None
-    run_id: int = random_positive_i64()
 
 
 @dataclass
@@ -199,6 +198,7 @@ class TrainRun:
     git_rev: str = get_rev()
     slurm_jobid: str = get_slurm_id()
     modules: str = get_modules()
+    run_id: int = random_positive_i64()
 
     def custom_dict(self):
         serialize_dict = copy.deepcopy(self.__dict__)
@@ -220,6 +220,7 @@ class TrainRun:
             git_rev=self.git_rev,
             slurm_jobid=self.slurm_jobid,
             modules=self.modules,
+            run_id=self.run_id,
         )
 
 

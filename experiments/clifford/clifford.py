@@ -23,7 +23,9 @@ from lib.ddp import ddp_setup
 # from lib.ensemble import request_ensemble
 # from lib.ensemble import symlink_checkpoint_files
 from lib.files import prepare_results
-from lib.render_psql import add_artifact, add_parameter, has_artifact
+
+# from lib.render_psql import add_artifact, add_parameter, has_artifact
+from lib.render_duck import insert_artifact, insert_model_parameter
 from lib.serialization import serialize_human
 from lib.generic_ablation import generic_ablation
 
@@ -265,7 +267,7 @@ def create_config(clifford_width, clifford_depth, ensemble_id):
         epochs=200,
         save_nth_epoch=1,
         validate_nth_epoch=5,
-        visualize_terminal=True,
+        visualize_terminal=False,
     )
     return train_run
 
@@ -312,12 +314,12 @@ if __name__ == "__main__":
     device_id = ddp_setup()
     # ensemble = create_ensemble(ensemble_config, device_id)
     for config in configs:
-        if has_artifact(config, "clifford_rope_test"):
-            continue
+        # if has_artifact(config, "clifford_rope_test"):
+        # continue
         deserialized_model = deserialize_model(DeserializeConfig(config, device_id))
         model = deserialized_model.model
         n_params = sum(p.numel() for p in model.parameters())
-        add_parameter(config, "parameters", f"{n_params}")
+        insert_model_parameter(deserialized_model.model_id, "parameters", f"{n_params}")
 
         ds = data_factory.get_factory().create(DataCableConfig(npoints=100))
         dl = torch.utils.data.DataLoader(
@@ -368,6 +370,7 @@ if __name__ == "__main__":
             fig.suptitle("80 iteration constraint resolve")
             path = result_path / "clifford_test.png"
             fig.savefig(path)
-            add_artifact(config, "clifford_rope_test.png", path)
+            # add_artifact(config, "clifford_rope_test.png", path)
+            insert_artifact(deserialized_model.model_id, "clifford_rope_test.png", path)
             break
             # raise Exception("exit")
