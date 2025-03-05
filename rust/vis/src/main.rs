@@ -71,6 +71,7 @@ struct Args {
 
 #[derive(Hash, Eq, PartialEq)]
 struct PlotMapKey {
+    // model_id: i64,
     train_id: String,
     variable: String,
     xaxis: String,
@@ -91,8 +92,8 @@ struct ArtifactKey {
 struct Runs2 {
     // runs: DataFrame,
     // metrics: Option<DataFrame>,
-    run_params: HashMap<RunParamKey, String>,
-    plot_map: HashMap<PlotMapKey, Vec<[f32; 2]>>,
+    run_params: HashMap<RunParamKey, HashSet<String>>,
+    plot_map: HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>,
     artifacts: HashMap<ArtifactKey, ArtifactId>,
     artifacts_by_run: HashMap<String, Vec<ArtifactId>>,
     active_runs: Vec<String>,
@@ -758,7 +759,6 @@ fn add_artifact(
             handle_add_npy(arrays, &artifact_id, tx_path_mutex, rx_artifact_mutex)
         }
     }
-    // println!("add {}", t.elapsed().as_millis());
 }
 
 fn handle_add_npy(
@@ -882,7 +882,6 @@ fn image_from_ndarray_healpix(
                 let y = (lat + std::f64::consts::PI / 2.0) / std::f64::consts::PI * height as f64;
                 let xu = (x as usize).clamp(0, width - 1);
                 let yu = (y as usize).clamp(0, height - 1);
-                // println!("{}, {}", xu, yu);
                 for xu in xu - 1..=xu + 1 {
                     for yu in yu - 1..=yu + 1 {
                         let xu = xu.clamp(0, width - 1);
@@ -1068,7 +1067,7 @@ struct GuiRuns {
     plot_timer: Instant,
     rx_plot_map: Receiver<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<[f32; 2]>>,
+        HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>,
     )>,
     tx_active_runs: SyncSender<Vec<String>>,
     // dirty: bool,
@@ -1079,7 +1078,7 @@ struct GuiRuns {
     // recomputed_reciever: Receiver<HashMap<String, Run>>,
     tx_db_artifact_path: Arc<Mutex<SyncSender<i64>>>,
     rx_db_artifact: Arc<Mutex<Receiver<ArtifactTransfer>>>,
-    rx_run_params: Receiver<HashMap<RunParamKey, String>>,
+    rx_run_params: Receiver<HashMap<RunParamKey, HashSet<String>>>,
     rx_batch_status: Receiver<(usize, usize)>,
     batch_status: (usize, usize),
     initialized: bool,
@@ -1141,8 +1140,6 @@ fn get_train_ids_from_filter_duck(
         let sql = format!(
             "SELECT train_id, COUNT(*) FROM local.model_parameter_text JOIN local.models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
-        println!("{}", sql);
-        println!("{:?}", non_empty_filters);
         let res = duck.prepare(&sql);
         if let Err(err) = &res {
             println!("{:?}", err);
@@ -1160,7 +1157,7 @@ fn get_train_ids_from_filter_duck(
                 .unwrap()
                 .map(|x| x.unwrap())
                 .collect();
-            println!("{:?}", ids);
+            // println!("{:?}", ids);
             train_ids.extend_from_slice(&ids);
         }
     }
@@ -1373,15 +1370,15 @@ impl eframe::App for GuiRuns {
                 self.gui_params.filters.param_filters = temp_param_filters;
                 if changed {
                     self.update_filtered_runs();
-                    for (idx, param_filter) in
-                        self.gui_params.filters.param_filters.iter().enumerate()
-                    {
-                        for (k, v) in param_filter.filter.iter() {
-                            if !v.is_empty() {
-                                println!("{}: {:?}", k, v);
-                            }
-                        }
-                    }
+                    // for (idx, param_filter) in
+                    //     self.gui_params.filters.param_filters.iter().enumerate()
+                    // {
+                    //     for (k, v) in param_filter.filter.iter() {
+                    //         if !v.is_empty() {
+                    //             println!("{}: {:?}", k, v);
+                    //         }
+                    //     }
+                    // }
                     self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
                 }
                 if let Some(remove_idx) = remove_idx {
@@ -1495,7 +1492,7 @@ fn get_artifact_type(path: &String) -> ArtifactType {
 
 fn label_from_active_inspect_params(
     train_id: String,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
     gui_params: &GuiParams,
 ) -> String {
     let label = if gui_params.filters.inspect_params.is_empty() {
@@ -1505,9 +1502,13 @@ fn label_from_active_inspect_params(
                 train_id,
                 name: "ensemble_id".into(),
             })
-            .unwrap_or(&"none000".to_string())
-            .clone()[0..6]
-            .to_string()
+            .unwrap_or(&["none000".to_string()].into_iter().collect())
+            .clone()
+            .iter()
+            .sorted()
+            .map(|v| v[0..6].to_string())
+            .join(",")
+        // .to_string()
     } else {
         let empty = "".to_string();
         gui_params
@@ -1525,7 +1526,10 @@ fn label_from_active_inspect_params(
                             name: param.clone()
                         })
                         // .get(&(train_id.clone(), param.clone()))
-                        .unwrap_or(&empty)
+                        .unwrap_or(&[empty.clone()].into_iter().collect())
+                        .iter()
+                        .sorted()
+                        .join(",")
                 )
             })
             .join(", ")
@@ -1564,7 +1568,7 @@ fn show_artifacts(
     // runs: &HashMap<String, Run>,
     filtered_runs: &Vec<String>,
     run_ensemble_color: &HashMap<String, egui::Color32>,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
 ) {
     match handler {
         ArtifactHandler::NPYArtifact {
@@ -1973,7 +1977,7 @@ fn render_npy_artifact_hp(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
     views: &mut HashMap<ArtifactId, NPYArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -2257,7 +2261,7 @@ fn render_npy_artifact_driscoll_healy(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
     views: &mut HashMap<ArtifactId, NPYArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -2439,7 +2443,7 @@ fn render_npy_artifact_tabular(
     artifact_id: &ArtifactId,
     gui_params: &GuiParams,
     run_ensemble_color: &HashMap<String, egui::Color32>,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
     views: &mut HashMap<ArtifactId, NPYTabularArtifactView>,
     array: &ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
@@ -2504,7 +2508,6 @@ fn render_npy_artifact_tabular(
                     ys.insert_axis(ndarray::Axis(1))
                 ];
                 // xs.view()
-                // println!("{:?}", xy.shape());
                 let x_shaper = |x: f32| {
                     if view.log_x {
                         if x > 0.000001 {
@@ -2538,7 +2541,6 @@ fn render_npy_artifact_tabular(
                     .collect_vec();
                 // let ys = array.slice_collapse(s![.., view.y]);
                 // let xy = ndarray::stack(ndarray::Axis(1), &[xs, ys]).unwrap();
-                // println!("{:?}", xy.shape());
                 // let xy = xs
                 //     .to_slice()
                 //     .unwrap()
@@ -2546,7 +2548,6 @@ fn render_npy_artifact_tabular(
                 //     .zip(ys.to_slice().unwrap())
                 //     .map(|x| [*x.0 as f64, *x.1 as f64])
                 //     .collect_vec();
-                // println!("{:?}", v);
                 // let v = xy.iter().next();
                 // xs.fold_axis(, , )
                 plot_ui.points(Points::new(xy));
@@ -2586,13 +2587,12 @@ enum Group {
 fn update_plot_map(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
-) -> HashMap<PlotMapKey, Vec<[f32; 2]>> {
+) -> HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>> {
     // self.runs2.plot_map.clear();
     let mut plot_map = HashMap::new();
     if active_runs.len() == 0 {
         return HashMap::new();
     }
-    // println!("update_plot_map");
     // let duck = pool.get().unwrap();
     // let metrics_sql = format!(
     //     "
@@ -2616,8 +2616,9 @@ fn update_plot_map(
     if df.height() == 0 {
         return HashMap::new();
     }
-    // println!("{}", df);
     // for (name, data) in df.group_by(["train_id", "variable"]).unwrap() {}
+    let model_ids = df.column("model_id").unwrap().rechunk();
+    let mut model_ids = model_ids.as_materialized_series().iter();
     let train_ids = df.column("train_id").unwrap().rechunk();
     let mut train_ids = train_ids.as_materialized_series().iter();
     let variables = df.column("name").unwrap().rechunk();
@@ -2642,6 +2643,7 @@ fn update_plot_map(
     //     .collect::<Vec<_>>();
     // let mut last_train_id = String::new();
     for row in 0..df.height() {
+        let mid = model_ids.next().unwrap();
         let tid = train_ids.next().unwrap();
         let train_id = tid.get_str().unwrap();
         let var = variables.next().unwrap();
@@ -2649,7 +2651,6 @@ fn update_plot_map(
         // let xaxis = xaxis.next().unwrap();
         // let xaxis = xaxis.get_str().unwrap();
         let x = xs.next().unwrap();
-        // println!("pre x");
         let x = match x {
             AnyValue::List(sx) => sx
                 .f64()
@@ -2677,29 +2678,28 @@ fn update_plot_map(
                 panic!()
             }
         };
-        for (idx, w) in x.windows(2).enumerate() {
-            if w[1] < w[0] {
-                println!(
-                    "{}: {}, {} < {} [{idx} ({})]",
-                    train_id,
-                    variable,
-                    w[1],
-                    w[0],
-                    x.len()
-                );
-                // panic!();
-                let output_file: File =
-                    File::create("out.json").expect("Failed to create an output file.");
+        // for (idx, w) in x.windows(2).enumerate() {
+        //     if w[1] < w[0] {
+        //         println!(
+        //             "{}: {}, {} < {} [{idx} ({})]",
+        //             train_id,
+        //             variable,
+        //             w[1],
+        //             w[0],
+        //             x.len()
+        //         );
+        //         // panic!();
+        //         let output_file: File =
+        //             File::create("out.json").expect("Failed to create an output file.");
 
-                let mut writer: polars::io::json::JsonWriter<File> = JsonWriter::new(output_file);
+        //         let mut writer: polars::io::json::JsonWriter<File> = JsonWriter::new(output_file);
 
-                writer
-                    .finish(&mut df)
-                    .expect("Failed to write the CSV file.");
-                panic!();
-            }
-        }
-        // println!("to xy");
+        //         writer
+        //             .finish(&mut df)
+        //             .expect("Failed to write the CSV file.");
+        //         panic!();
+        //     }
+        // }
         let xy = x
             .into_iter()
             .zip(y)
@@ -2712,19 +2712,24 @@ fn update_plot_map(
                 }
             })
             .collect_vec();
-        plot_map.insert(
-            PlotMapKey {
+        let AnyValue::Int64(mid) = mid else { panic!() };
+        plot_map
+            .entry(PlotMapKey {
                 train_id: train_id.into(),
                 variable: variable.into(),
                 xaxis: "batch".to_string(), // xaxis: xaxis.into(),
-            },
-            // (
-            //     variable.to_string(),
-            //     train_id.to_string(),
-            //     xaxis.to_string(),
-            // ),
-            xy,
-        );
+            })
+            .or_insert(vec![])
+            .push(xy);
+        //         plot_map.insert(
+        // ,
+        //             // (
+        //             //     variable.to_string(),
+        //             //     train_id.to_string(),
+        //             //     xaxis.to_string(),
+        //             // ),
+        //             xy,
+        //         );
     }
     // for x in df.group_by(["train_id", "variable"]).unwrap() {}
     return plot_map;
@@ -2952,12 +2957,12 @@ impl GuiRuns {
                                                 egui::StrokeKind::Middle,
                                             );
                                         }
-                                        if let Ok(val_f32) = val.parse::<f32>() {
-                                            ui.label(format!("{:.2}", val_f32));
-                                        } else {
-                                            ui.add(egui::Label::new(val).truncate());
-                                            // ui.label(val);
-                                        }
+                                        // if let Ok(val_f32) = val.parse::<f32>() {
+                                        // ui.label(format!("{:.2}", val_f32));
+                                        // } else {
+                                        ui.add(egui::Label::new(val.iter().join(",")).truncate());
+                                        // ui.label(val);
+                                        // }
                                     }
                                 });
                                 // ui.painter().rect
@@ -3154,7 +3159,6 @@ impl GuiRuns {
                 let y = y.f64().unwrap().into_no_null_iter();
                 let group = df.column(c3).expect("getting group column").rechunk();
                 let group = group.as_materialized_series().iter().map(|x| x.to_string());
-                // println!("here");
                 Plot::new("custom")
                     .legend(Legend::default())
                     .x_axis_label(c1.to_string())
@@ -3223,52 +3227,54 @@ impl GuiRuns {
                         ui.label(metric_name_and_axis.0.clone());
                         let plot_res = plot.show(ui, |plot_ui| {
                             for train_id in self.runs2.active_runs.iter().sorted() {
-                                if let Some(xy) = self.runs2.plot_map.get(&PlotMapKey {
+                                if let Some(xys) = self.runs2.plot_map.get(&PlotMapKey {
                                     train_id: train_id.clone(),
                                     variable: metric_name_and_axis.0.clone(),
                                     xaxis: metric_name_and_axis.1.clone(),
                                 }) {
-                                    let xy = xy
-                                        .clone()
-                                        .iter()
-                                        // .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
-                                        .map(|[x, y]| [*x as f64, *y as f64])
-                                        .collect::<Vec<_>>();
-                                    let stroke_width = if let Some(selected_runs) =
-                                        &self.gui_params.selected_runs
-                                    {
-                                        if selected_runs.contains(train_id) {
-                                            2.0
+                                    for xy in xys {
+                                        let xy = xy
+                                            .clone()
+                                            .iter()
+                                            // .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
+                                            .map(|[x, y]| [*x as f64, *y as f64])
+                                            .collect::<Vec<_>>();
+                                        let stroke_width = if let Some(selected_runs) =
+                                            &self.gui_params.selected_runs
+                                        {
+                                            if selected_runs.contains(train_id) {
+                                                2.0
+                                            } else {
+                                                1.0
+                                            }
                                         } else {
                                             1.0
-                                        }
-                                    } else {
-                                        1.0
-                                    };
-                                    plot_ui.line(
-                                        Line::new(PlotPoints::from(xy.clone()))
-                                            .stroke(Stroke::new(
-                                                stroke_width,
-                                                *run_ensemble_color
-                                                    .get(train_id)
-                                                    .unwrap_or(&egui::Color32::BLACK),
-                                            ))
-                                            .name(label_from_active_inspect_params(
-                                                train_id.clone(),
-                                                &self.runs2.run_params,
-                                                &self.gui_params,
-                                            ))
-                                            .id(train_id.clone().into()),
-                                    );
-                                    plot_ui.points(
-                                        Points::new(PlotPoints::from(xy))
-                                            .shape(egui_plot::MarkerShape::Circle)
-                                            .color(
-                                                *run_ensemble_color
-                                                    .get(train_id)
-                                                    .unwrap_or(&egui::Color32::BLACK),
-                                            ),
-                                    );
+                                        };
+                                        plot_ui.line(
+                                            Line::new(PlotPoints::from(xy.clone()))
+                                                .stroke(Stroke::new(
+                                                    stroke_width,
+                                                    *run_ensemble_color
+                                                        .get(train_id)
+                                                        .unwrap_or(&egui::Color32::BLACK),
+                                                ))
+                                                .name(label_from_active_inspect_params(
+                                                    train_id.clone(),
+                                                    &self.runs2.run_params,
+                                                    &self.gui_params,
+                                                ))
+                                                .id(train_id.clone().into()),
+                                        );
+                                        plot_ui.points(
+                                            Points::new(PlotPoints::from(xy))
+                                                .shape(egui_plot::MarkerShape::Circle)
+                                                .color(
+                                                    *run_ensemble_color
+                                                        .get(train_id)
+                                                        .unwrap_or(&egui::Color32::BLACK),
+                                                ),
+                                        );
+                                    }
                                 }
                             }
                         });
@@ -3604,7 +3610,6 @@ impl GuiRuns {
         run_ensemble_color: &HashMap<String, egui::Color32>,
         // run_params: &HashMap<(String, String), String>,
     ) {
-        // println!("render");
         let active_artifact_types: Vec<ArtifactType> = self
             .gui_params
             .filters
@@ -3622,7 +3627,6 @@ impl GuiRuns {
                                 .get(&artifact_type)
                                 .unwrap_or(&ArtifactHandlerType::Unknown),
                         ) {
-                            // println!("{}", artifact_type_str);
                             // add_artifact(handler, ui, train_id, path);
                             Some(artifact_type)
                         } else {
@@ -3664,9 +3668,7 @@ impl GuiRuns {
                     //     self.gui_params.filters.artifact_filters.contains(art_name)
                     // })
                     {
-                        // println!("[artifacts] filtered {} {}", train_id, artifact_key.name);
                         if artifact_type == get_artifact_type(&artifact_id.name) {
-                            // println!("{:?}", artifact_type);
                             add_artifact(
                                 handler,
                                 artifact_id,
@@ -3676,9 +3678,7 @@ impl GuiRuns {
                             );
                         }
                     }
-                    // println!("add {}", t.elapsed().as_millis());
                 }
-                // println!("Showing");
                 let t = Instant::now();
                 show_artifacts(
                     ui,
@@ -3689,7 +3689,6 @@ impl GuiRuns {
                     &run_ensemble_color,
                     &self.runs2.run_params,
                 );
-                // println!("show {}", t.elapsed().as_millis());
             }
             // if let Some(handler) = self.artifact_handlers.get(artifact_type) {}
         }
@@ -3829,7 +3828,8 @@ impl GuiRuns {
                             filtered
                                 .entry(pk.name.clone())
                                 .or_insert_with(HashSet::new)
-                                .insert(v.clone());
+                                .extend(v.iter().cloned())
+                            // .insert(v.clone());
                         });
                     filtered
                 }))
@@ -3866,7 +3866,7 @@ fn render_param_tree(
     inspect_filters: &mut HashSet<String>,
     param_filter: &mut RunsFilter,
     filtered_values: &HashMap<String, HashSet<String>>,
-    run_params: &HashMap<RunParamKey, String>,
+    run_params: &HashMap<RunParamKey, HashSet<String>>,
     // runs: &DataFrame,
     tree: Vec<Tree>,
     ui: &mut egui::Ui,
@@ -3923,7 +3923,7 @@ fn render_param_tree(
                                 let multival = run_params
                                     .iter()
                                     .filter(|(k, v)| k.name == path)
-                                    .map(|(k, v)| (v, k.train_id.clone()))
+                                    .flat_map(|(k, v)| v.iter().map(|v| (v, k.train_id.clone())))
                                     .sorted_by_key(|x| x.0)
                                     .group_by(|x| x.0)
                                     .into_iter()
@@ -4114,7 +4114,6 @@ fn render_param_tree(
 fn get_parameter_values_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
 ) -> HashMap<String, HashSet<String>> {
-    println!("get_parameter_values_duck");
     let conn = pool.get().unwrap();
     //"SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
     let sql = format!("
@@ -4159,7 +4158,6 @@ fn get_parameter_values_duck(
     //     });
     // .collect();
     let ret = HashMap::from_iter(rows);
-    // println!("mode_ids {:?}", ret.get("model_id"));
     ret
 }
 
@@ -4168,7 +4166,6 @@ fn get_parameter_values_duck_old<T: FromSql + std::cmp::Eq + Hash>(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     table_name: &str,
 ) -> HashMap<String, HashSet<T>> {
-    println!("get_parameter_values_duck");
     let conn = pool.get().unwrap();
     let sql = format!(
         "SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
@@ -4260,7 +4257,6 @@ fn get_artifacts_duck(
     active_runs: &Vec<String>,
 ) -> HashMap<ArtifactKey, ArtifactId> {
     // return HashMap::new();
-    println!("get_runs_duck {:?}", active_runs);
     if active_runs.is_empty() {
         return HashMap::new();
     }
@@ -4286,7 +4282,6 @@ fn get_artifacts_duck(
         .reduce(|acc, e| acc.vstack(&e).unwrap())
         .unwrap();
     large_df.sort(vec!["train_id"], Default::default()).unwrap();
-    println!("{}", large_df);
 
     let train_ids = large_df.column("train_id").unwrap().rechunk();
     let train_ids = train_ids.as_materialized_series().iter();
@@ -4336,6 +4331,7 @@ fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
         "checkpoints",
         "artifacts",
         "artifact_chunks",
+        "train_steps",
     ] {
         conn.execute(
             format!(
@@ -4385,7 +4381,6 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude:
         repeat_vars(HIDDEN_PARAMS.len()),
         repeat_vars(HIDDEN_PARAMS.len()),
     );
-    // println!("{}", query);
     let mut stmt = conn.prepare(&query).unwrap();
     let polars = stmt
         .query_polars(duckdb::params_from_iter(
@@ -4395,15 +4390,15 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude:
                 .chain(HIDDEN_PARAMS.iter()),
         ))
         .expect("duck runs");
-    // println!("{:?}", polars);
     let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
-    println!("{:?}", large_df);
     large_df
         .sort(vec!["variable", "train_id"], Default::default())
         .unwrap()
 }
 
-fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<RunParamKey, String> {
+fn get_run_params(
+    pool: &r2d2::Pool<DuckdbConnectionManager>,
+) -> HashMap<RunParamKey, HashSet<String>> {
     let t = Instant::now();
 
     let df = get_runs_duck(pool);
@@ -4428,7 +4423,11 @@ fn get_run_params(pool: &r2d2::Pool<DuckdbConnectionManager>) -> HashMap<RunPara
                 val.get_str().unwrap().to_string(),
             )
         })
-        .collect::<HashMap<_, _>>();
+        // .into_iter()
+        .group_by(|(k, v)| k.clone())
+        .into_iter()
+        .map(|(name, group)| (name.clone(), group.map(|(_k, v)| v).collect()))
+        .collect::<HashMap<_, HashSet<String>>>();
     ret
 }
 
@@ -4516,10 +4515,12 @@ fn get_metrics_duck(
          bucket_table AS (
          SELECT
              -- t.model_id as model_id,
-             m.train_id as train_id,
+             t.model_id as model_id,
+             any_value(m.train_id) as train_id,
              t.name as name,
              FLOOR(t.step / bs.size) AS bucket,
-             AVG(t.value) AS value, (bucket * ANY_VALUE(bs.size))::DOUBLE as x
+             AVG(t.value) AS value,
+             (bucket * ANY_VALUE(bs.size))::DOUBLE as x
              -- AVG(t.value) AS value, AVG(t.x) as x
          FROM local.train_step_metric_float t
          JOIN bucket_size bs
@@ -4527,12 +4528,12 @@ fn get_metrics_duck(
          JOIN local.models m
          ON t.model_id = id
          WHERE m.train_id IN ({})
-         GROUP BY m.train_id, t.name, bucket
-         ORDER BY m.train_id, t.name, x)
+         GROUP BY t.model_id, t.name, bucket
+         ORDER BY t.model_id, t.name, x)
          SELECT
-             train_id, name, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
+             model_id, any_value(train_id) as train_id, name, array_agg(x ORDER BY x) as xs, array_agg(value ORDER BY x) as values
             FROM bucket_table
-            GROUP BY train_id, name
+            GROUP BY model_id, name
         ",
         repeat_vars(active_runs.len()),
     );
@@ -4541,7 +4542,9 @@ fn get_metrics_duck(
         .query_polars(duckdb::params_from_iter(active_runs.iter()))
         .unwrap();
     let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
-    large_df.unwrap_or(DataFrame::empty())
+    let df = large_df.unwrap_or(DataFrame::empty());
+    // println!("{}", df);
+    df
 }
 
 #[instrument(skip_all)]
@@ -4657,9 +4660,10 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_active_runs, rx_active_runs) = mpsc::sync_channel::<Vec<String>>(1);
     let (tx_plot_map, rx_plot_map) = mpsc::sync_channel::<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<[f32; 2]>>,
+        HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>,
     )>(1);
-    let (tx_run_params, rx_run_params) = mpsc::sync_channel::<HashMap<RunParamKey, String>>(1);
+    let (tx_run_params, rx_run_params) =
+        mpsc::sync_channel::<HashMap<RunParamKey, HashSet<String>>>(1);
     // let rx_db_filters_am = Arc::new(std::sync::Mutex::new(rx_new_train_runs_to_db));
     let (tx_db_artifact, rx_db_artifact) = mpsc::sync_channel::<ArtifactTransfer>(1);
     let (tx_db_artifact_path, rx_db_artifact_path) = mpsc::sync_channel::<i64>(1);
@@ -4722,13 +4726,14 @@ WHERE name = 'threads';
                     println!("[db] got new train runs {:?}", train_runs);
                 }
                 let t = Instant::now();
-                let updated = sync_table(
+                let updated1 = sync_table(
                     &db_thread_pool,
                     "train_step_metric_float",
                     &train_runs,
                     &mut limit,
                 );
-                if updated {
+                let updated2 = sync_table(&db_thread_pool, "train_steps", &train_runs, &mut limit);
+                if updated1 || updated2 {
                     println!("sync elapsed {}", t.elapsed().as_millis());
                 }
                 if start.elapsed().as_millis() < 1000 {
