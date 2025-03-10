@@ -371,6 +371,7 @@ def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=Fal
         )
 
     for table_name in ALL_TABLES:
+        table_time = time.time()
         last_sync_time = execute_and_fetch(
             "SELECT synced_time FROM sync WHERE table_name=?", (table_name,)
         )
@@ -406,6 +407,8 @@ def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=Fal
                 )
             except duckdb.duckdb.Error as e:
                 print(e)
+
+        print(f"{time.time() - table_time} for table {table_name}")
 
     print("Sync time", time.time() - start)
 
