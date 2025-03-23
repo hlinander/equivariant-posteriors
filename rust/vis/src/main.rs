@@ -1124,7 +1124,7 @@ fn get_train_ids_from_filter_duck(
                     .iter()
                     .map(|value| {
                         format!(
-                            "(name='{}' AND value=?)",
+                            "(name='{}' AND value_text=?)",
                             param_name,
                             // value.escape_default()
                         )
@@ -1138,7 +1138,16 @@ fn get_train_ids_from_filter_duck(
             continue;
         }
         let sql = format!(
-            "SELECT train_id, COUNT(*) FROM local.model_parameter_text JOIN local.models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
+            "SELECT train_id, COUNT(*) FROM
+                (SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+                FROM local.model_parameter_text
+                UNION
+                SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+                FROM local.model_parameter_float
+                UNION
+                SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+                FROM local.model_parameter_int)
+            JOIN local.models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
         let res = duck.prepare(&sql);
         if let Err(err) = &res {
@@ -2924,7 +2933,10 @@ impl GuiRuns {
                                 ui.painter().rect(
                                     rect,
                                     0.0,
-                                    run_ensemble_color.get(run_id).unwrap().clone(),
+                                    run_ensemble_color
+                                        .get(run_id)
+                                        .unwrap_or(&egui::Color32::WHITE)
+                                        .clone(),
                                     egui::Stroke::new(0.0, egui::Color32::TRANSPARENT),
                                     egui::StrokeKind::Middle,
                                 );

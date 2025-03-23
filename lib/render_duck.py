@@ -11,7 +11,7 @@ from lib.paths import (
     get_or_create_checkpoint_path,
 )
 from lib.random_util import random_positive_i64
-from lib.stable_hash import stable_hash
+from lib.stable_hash import stable_hash_str
 from lib.compute_env import env
 
 CONN = None
@@ -266,7 +266,7 @@ def sql_create_table_models():
 def insert_model(train_config: TrainConfig):
     ensure_duck(train_config)
     model_id = random_positive_i64()
-    train_id = stable_hash(train_config)
+    train_id = stable_hash_str(train_config)
 
     sql_insert_model = """
     INSERT INTO models (id, train_id) VALUES (?, ?)

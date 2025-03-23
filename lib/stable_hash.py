@@ -46,10 +46,35 @@ def json_dumps_dataclass(data_class):
     return json_dumps_dataclass_str(data_class).encode("utf-8")
 
 
+# def stable_hash(data_class):
+#     json_str = json_dumps_dataclass(data_class)
+#     return hashlib.md5(json_str).digest().hex()
+
+
+# def stable_hash_small(data_class):
+#     return stable_hash(data_class)[:7]
+
+
 def stable_hash(data_class):
     json_str = json_dumps_dataclass(data_class)
-    return hashlib.md5(json_str).digest().hex()
+    return int(hashlib.md5(json_str.encode("utf-8")).hexdigest(), 16)
 
 
 def stable_hash_small(data_class):
-    return stable_hash(data_class)[:7]
+    full_hash = stable_hash(data_class)
+    # Simply take the lower 64 bits.
+    return full_hash & ((1 << 64) - 1)
+
+
+def i64_to_hex(i64_val: int) -> str:
+    # Convert a 64-bit integer to a 16-character hex string.
+    return f"{i64_val:016x}"
+
+
+def hex_to_i64(hex_str: str) -> int:
+    # Convert a hex string (16 hex digits) to a 64-bit integer.
+    return int(hex_str, 16)
+
+
+def stable_hash_str(data_class):
+    return i64_to_hex(stable_hash(data_class))

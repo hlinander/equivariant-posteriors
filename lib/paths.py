@@ -1,5 +1,5 @@
 from pathlib import Path
-from lib.stable_hash import stable_hash
+from lib.stable_hash import stable_hash_str
 from lib.compute_env import env
 from lib.train_dataclasses import TrainConfig
 
@@ -11,7 +11,7 @@ def get_or_create_checkpoint_path(train_config) -> Path:
 
 
 def get_lock_path(train_config, lock_name="") -> Path:
-    config_hash = stable_hash(train_config)
+    config_hash = stable_hash_str(train_config)
     lock_dir = Path("locks/")
     lock_dir.mkdir(exist_ok=True, parents=True)
     lock_path = lock_dir / f"lock{lock_name}_{config_hash}"
@@ -19,7 +19,7 @@ def get_lock_path(train_config, lock_name="") -> Path:
 
 
 def get_checkpoint_path(train_config) -> Path:
-    config_hash = stable_hash(train_config)
+    config_hash = stable_hash_str(train_config)
     checkpoint_dir = env().paths.checkpoints  # Path("checkpoints/")
     checkpoint_dir.mkdir(exist_ok=True, parents=True)
     checkpoint = checkpoint_dir / f"checkpoint_{config_hash}"
