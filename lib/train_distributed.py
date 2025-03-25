@@ -7,7 +7,7 @@ from typing import List
 
 from lib.train_dataclasses import TrainRun
 from lib.serialization import is_serialized
-from lib.stable_hash import stable_hash
+from lib.stable_hash import stable_hash_str as stable_hash
 
 
 DISTRIBUTED_TRAINING_REQUEST_PATH = Path("distributed_training_requests/")

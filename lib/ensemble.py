@@ -18,7 +18,7 @@ from lib.serialization import (
     get_serialized_epoch,
 )
 from lib.model_factory import get_factory
-from lib.stable_hash import stable_hash
+from lib.stable_hash import stable_hash_str
 from lib.train_dataclasses import Ensemble
 from lib.train_dataclasses import EnsembleConfig
 
@@ -82,11 +82,11 @@ def request_ensemble(ensemble_config: EnsembleConfig):
 
 def monitor_ensemble(ensemble_config: EnsembleConfig):
     all_member_hashes = set(
-        [stable_hash(member_config) for member_config in ensemble_config.members]
+        [stable_hash_str(member_config) for member_config in ensemble_config.members]
     )
     train_config_hash_dict = {
-        stable_hash(member_config): dict(
-            train_config_hash=stable_hash(member_config.train_config),
+        stable_hash_str(member_config): dict(
+            train_config_hash=stable_hash_str(member_config.train_config),
             train_run=member_config,
         )
         for member_config in ensemble_config.members
@@ -104,11 +104,11 @@ def monitor_ensemble(ensemble_config: EnsembleConfig):
 def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     members = []
     all_member_hashes = set(
-        [stable_hash(member_config) for member_config in ensemble_config.members]
+        [stable_hash_str(member_config) for member_config in ensemble_config.members]
     )
     train_config_hash_dict = {
-        stable_hash(member_config): dict(
-            train_config_hash=stable_hash(member_config.train_config),
+        stable_hash_str(member_config): dict(
+            train_config_hash=stable_hash_str(member_config.train_config),
             train_run=member_config,
         )
         for member_config in ensemble_config.members
@@ -121,9 +121,9 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
     print("Loading or training ensemble...")
     while len(trained_members) < len(ensemble_config.members):
         for member_config in ensemble_config.members:
-            hash = stable_hash(member_config)
+            hash = stable_hash_str(member_config)
             print(f"Checking if {hash} has already been trained...")
-            if stable_hash(member_config) in trained_members:
+            if stable_hash_str(member_config) in trained_members:
                 print(f"{hash} has already been trained. Continuing.")
                 continue
 
@@ -166,7 +166,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                 print("Releasing distributed lock explicitly.")
                 distributed_train_run_lock.release()
 
-            trained_members.add(stable_hash(member_config))
+            trained_members.add(stable_hash_str(member_config))
 
             model.eval()
             members.append(model)

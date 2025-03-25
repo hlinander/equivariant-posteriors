@@ -57,13 +57,17 @@ def json_dumps_dataclass(data_class):
 
 def stable_hash(data_class):
     json_str = json_dumps_dataclass(data_class)
-    return int(hashlib.md5(json_str).hexdigest(), 16)
+    return int(hashlib.md5(json_str).hexdigest(), 16) & ((1 << 64) - 1)
 
 
 def stable_hash_small(data_class):
-    full_hash = stable_hash(data_class)
-    # Simply take the lower 64 bits.
-    return full_hash & ((1 << 64) - 1)
+    return stable_hash_str(data_class)
+
+
+# def stable_hash_small(data_class):
+#     full_hash = stable_hash_str(data_class)
+#     # Simply take the lower 64 bits.
+#     return full_hash & ((1 << 64) - 1)
 
 
 def i64_to_hex(i64_val: int) -> str:
