@@ -16,6 +16,7 @@ from lib.compute_env import env
 
 CONN = None
 SCHEMA_ENSURED = False
+PG_SCHEMA_ENSURED = False
 
 
 INT = "int"
@@ -263,15 +264,15 @@ def sql_create_table_models():
     )"""
 
 
-def insert_model(train_config: TrainConfig):
-    ensure_duck(train_config)
+def insert_model(train_run: TrainRun):
+    ensure_duck(train_run)
     model_id = random_positive_i64()
-    train_hash = stable_hash_str(train_config)
+    train_id = stable_hash_str(train_run.train_config)
 
     sql_insert_model = """
     INSERT INTO models (id, train_id) VALUES (?, ?)
     """
-    execute(sql_insert_model, (model_id, train_hash))
+    execute(sql_insert_model, (model_id, train_id))
     return model_id
 
 
@@ -330,6 +331,18 @@ def insert_checkpoint(model_id: int, step: int, path: str):
     )
 
 
+def get_checkpoints(model_id: int):
+    sql_get_checkpoints = f"""
+        SELECT * FROM {CHECKPOINTS_TABLE_NAME}
+        WHERE model_id=?
+    """
+    # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
+    return execute_and_fetch(
+        sql_get_checkpoints,
+        [model_id],
+    )
+
+
 def sql_create_table_sync():
     return """
     CREATE TABLE IF NOT EXISTS sync (
@@ -340,19 +353,34 @@ def sql_create_table_sync():
     """
 
 
-def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=False):
+def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
+    global PG_SCHEMA_ENSURED
     import time
 
     start = time.time()
+    total_time = 0
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
     pw = env().postgres_password
-    ensure_duck(train_config)
+    # t = time.time() - start
+    # print(f"env {t}")
+    # total_time += t
+
+    # ensure_time = time.time()
+    ensure_duck(train_run)
+    # t = time.time() - ensure_time
+    # print(f"ensure_duck {t}")
+    # total_time += t
+
+    # ila_time = time.time()
     execute("INSTALL postgres")
     execute("LOAD postgres")
     execute(
         f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
     )
+    # t = time.time() - ila_time
+    # print(f"ILA {t}")
+    # total_time += t
 
     if clear_pg:
         if "CLEAR_POSTGRES" not in os.environ:
@@ -361,17 +389,24 @@ def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=Fal
             for table_name in ALL_TABLES:
                 execute(f"DROP TABLE pg.{table_name} CASCADE")
 
-    _ensure_schema(execute_pg)
-    for table_name in ALL_TABLES:
-        execute_pg(
-            f"""
-            ALTER TABLE {table_name}
-                ADD COLUMN IF NOT EXISTS id_serial SERIAL;
-           """
-        )
+    if not PG_SCHEMA_ENSURED:
+        # pg_stime = time.time()
+        _ensure_schema(execute_pg)
+        # print(f"pg schema {time.time() - pg_stime}")
+        for table_name in ALL_TABLES:
+            # alter_time = time.time()
+            execute_pg(
+                f"""
+                ALTER TABLE {table_name}
+                    ADD COLUMN IF NOT EXISTS id_serial SERIAL;
+               """
+            )
+            # print(f"alter {table_name} {time.time() - alter_time}")
+
+        PG_SCHEMA_ENSURED = True
 
     for table_name in ALL_TABLES:
-        table_time = time.time()
+        # table_time = time.time()
         last_sync_time = execute_and_fetch(
             "SELECT synced_time FROM sync WHERE table_name=?", (table_name,)
         )
@@ -408,9 +443,11 @@ def sync(train_config: Optional[TrainConfig] = None, db="equiv_v2", clear_pg=Fal
             except duckdb.duckdb.Error as e:
                 print(e)
 
-        print(f"{time.time() - table_time} for table {table_name}")
+        # t = time.time() - table_time
+        # print(f"{t} for table {table_name}")
+        # total_time += t
 
-    print("Sync time", time.time() - start)
+    print("Sync time", time.time() - start, total_time)
 
 
 def execute_pg(sql, params=None):
@@ -459,16 +496,21 @@ def _ensure_schema(executor=execute):
         executor(sql_create_table_train_step_metric(type_def))
 
 
-def ensure_duck(train_config: Optional[TrainConfig], in_memory=False):
+def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
     global CONN
     global SCHEMA_ENSURED
 
-    if train_config is None or in_memory:
+    if run_run is None or in_memory:
         db_path = ":memory:"
     else:
-        db_path = get_or_create_checkpoint_path(train_config) / "duck.db"
+        db_path = (
+            get_or_create_checkpoint_path(run_run.train_config)
+            / f"duck_{run_run.run_id:x}.db"
+        )
     if CONN is None:
+        print("Connecting to duck...")
         CONN = duckdb.connect(db_path)
+        print("Connected.")
 
     if not SCHEMA_ENSURED:
         _ensure_schema()
@@ -497,5 +539,5 @@ def insert_or_update_train_run(train_run: TrainRun, state: TrainEpochState):
 def render_duck(
     train_run: TrainRun, train_epoch_state: TrainEpochState, in_memory=False
 ):
-    ensure_duck(train_run.train_config, in_memory)
+    ensure_duck(train_run, in_memory)
     insert_or_update_train_run(train_run, train_epoch_state)

@@ -230,6 +230,7 @@ def train(
         try:
             now = time.time()
             if now > train_epoch_state.next_visualization:
+                train_epoch_state.next_visualization = time.time() + 60
                 write_status_file(
                     SerializeConfig(
                         train_run=train_run, train_epoch_state=train_epoch_state
@@ -248,7 +249,6 @@ def train(
                     last_sync_result = None, str(e)
 
                 train_epoch_state.timing_metric.stop("psql")
-                train_epoch_state.next_visualization = now + 5
                 if train_run.visualize_terminal:
                     # train_epoch_state.next_visualizer = (
                     #     train_epoch_state.next_visualizer + 1
@@ -347,7 +347,7 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
     ]
 
     return TrainEpochState(
-        model_id=duck.insert_model(train_run.train_config),
+        model_id=duck.insert_model(train_run),
         model=init_model,
         optimizer=opt,
         train_metrics=train_metrics,
@@ -398,10 +398,12 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
     try:
+        print("Render duck")
         duck.render_duck(train_run, state)
     except duck.duckdb.duckdb.ConstraintException:
         print("Probably already synced model parameters...")
 
+    print("Sync duck")
     duck.sync()
     print("Run epochs...")
     while state.epoch < train_run.epochs:

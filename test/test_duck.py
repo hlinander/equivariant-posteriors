@@ -10,7 +10,7 @@ def test_db():
 
     train_run = create_train_run()
     state = create_initial_state(train_run, None, "cpu")
-    model_id = duck.insert_model(train_run.train_config)
+    model_id = duck.insert_model(train_run)
     train_id = train_run.serialize_human()["train_id"]
     duck.insert_model_parameter(train_id, "test", 0)
     duck.insert_model_parameter(train_id, "test", 0.5)
@@ -41,7 +41,7 @@ def test_sync():
 
     train_run = create_train_run()
     state = create_initial_state(train_run, None, "cpu")
-    model_id = duck.insert_model(train_run.train_config)
+    model_id = duck.insert_model(train_run)
     duck.insert_model_parameter(model_id, "test", 0)
     duck.insert_model_parameter(model_id, "test", 0.5)
     duck.insert_model_parameter(model_id, "test", "test")

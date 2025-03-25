@@ -62,7 +62,7 @@ if __name__ == "__main__":
     # print(path)
     # setup_psql()
     # add_artifact(configs[0], "test.npy", path / "test.bin")
-    ensure_duck(configs[0].train_config)
+    ensure_duck(configs[0])
 
     import matplotlib.pyplot as plt
     import matplotlib

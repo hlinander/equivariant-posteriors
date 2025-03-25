@@ -1,3 +1,4 @@
+import time
 import copy
 import json
 import torch
@@ -464,6 +465,14 @@ class DataHP(torch.utils.data.Dataset):
             ),
             prediction_timedelta_hours=24,
         )
+        done = False
+        while not done:
+            try:
+                fs_cache_path.is_dir()
+                done = True
+            except OSError:
+                time.sleep(0.5)
+
         if fs_cache_path.is_dir() and self.config.cache:
             # print("Loading from cache")
             for key, filename in names.items():
