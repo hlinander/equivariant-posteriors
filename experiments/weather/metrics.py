@@ -9,6 +9,8 @@ from experiments.weather.data import (
     denormalize_sample,
     deserialize_dataset_statistics,
     e5_to_numpy_hp,
+    DataHP,
+    DataHPConfig,
 )
 from experiments.weather.cdsmontly import ERA5Sample
 from lib.render_psql import add_artifact
@@ -295,7 +297,7 @@ def rmse_hp(model, dataloader, device_id):
     # return dict(surface=rmse_surface, upper=rmse_upper)
 
 
-def rmse_dh(model, dataloader_dh, dataloader_hp, device_id):
+def rmse_dh(model, dataloader_dh, device_id):
     # surface: B, variable, x
     # upper: B, variable, height, x
 
@@ -307,11 +309,18 @@ def rmse_dh(model, dataloader_dh, dataloader_hp, device_id):
     # dims = [0, -1]
     model.eval()
     n_batches = 0
-    stats = deserialize_dataset_statistics(dataloader_hp.dataset.config.nside).item()
+    ds_config = dataloader_dh.dataset.config.validation()
+    ds_config.driscoll_healy = False
+    ds_hp = DataHP(ds_config)
+    dl_hp = torch.utils.data.DataLoader(
+        ds_hp,
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    stats = deserialize_dataset_statistics(dl_hp.dataset.config.nside).item()
     # stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
-    for idx, (batch_dh, batch_hp) in tqdm.tqdm(
-        enumerate(zip(dataloader_dh, dataloader_hp))
-    ):
+    for idx, (batch_dh, batch_hp) in tqdm.tqdm(enumerate(zip(dataloader_dh, dl_hp))):
         batch = {k: v.to(device_id) for k, v in batch_dh.items()}
         with torch.no_grad():
             output = model(batch)
@@ -319,7 +328,7 @@ def rmse_dh(model, dataloader_dh, dataloader_hp, device_id):
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),
             output["logits_upper"][0].detach().cpu().numpy(),
-            dataloader_hp.dataset.get_meta(),
+            dl_hp.dataset.get_meta(),
         )
         # np.save(
         #     "/tmp/surface_test.npy",
@@ -327,7 +336,7 @@ def rmse_dh(model, dataloader_dh, dataloader_hp, device_id):
         # )
         # add_artifact(train_run, "surface_test_rmse.npydh", "/tmp/surface_test.npy")
         # breakpoint()
-        surface, upper = e5_to_numpy_hp(e5s, dataloader_hp.dataset.config.nside, False)
+        surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
         # np.save(
         #     "/tmp/surface_test_hp.npy",
         #     surface.astype(np.float32),

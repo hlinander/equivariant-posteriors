@@ -31,17 +31,17 @@ from lib.serialization import deserialize_model, DeserializeConfig
 
 from lib.data_factory import get_factory as get_dataset_factory
 
-from lib.render_duck import (
-    add_artifact,
-    # has_artifact,
-    # add_parameter,
-    connect_psql,
-    # add_metric_epoch_values,
-    insert_checkpoint_sample_metric,
-    # get_parameter,
-    insert_param,
-    get_checkpoints,
-)
+# from lib.render_duck import (
+# add_artifact,
+# has_artifact,
+# add_parameter,
+# connect_psql,
+# add_metric_epoch_values,
+# insert_checkpoint_sample_metric,
+# get_parameter,
+# insert_param,
+# get_checkpoints,
+# )
 
 from lib.distributed_trainer import distributed_train
 
@@ -50,6 +50,7 @@ from experiments.weather.data import DataHPConfig, Climatology, DataHP
 from experiments.weather.metrics import (
     anomaly_correlation_coefficient_hp,
     rmse_hp,
+    rmse_dh,
     MeteorologicalData,
 )
 
@@ -57,12 +58,17 @@ from experiments.weather.metrics import (
 if __name__ == "__main__":
     device_id = ddp_setup()
 
-    config_file = importlib.import_module(sys.argv[1])
-    ensemble_config = create_ensemble_config(config_file.create_config, 1)
-    train_run = ensemble_config.members[0]
+    # config_file = importlib.import_module(sys.argv[1])
+    module_name = Path(sys.argv[1]).stem
+    spec = importlib.util.spec_from_file_location(module_name, sys.argv[1])
+    config_file = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_file)
+    # ensemble_config = create_ensemble_config(config_file.create_config, 1)
+    train_run = config_file.create_config(0, 10)
+    # train_run = ensemble_config.members[0]
     result_path = prepare_results(
         f"{train_run.serialize_human()["run_id"]}",
-        ensemble_config,
+        train_run,
     )
 
     def save_and_register(name, array):
@@ -72,9 +78,10 @@ if __name__ == "__main__":
             path,
             array.detach().cpu().float().numpy(),
         )
-        add_artifact(train_run, name, path)
+        # add_artifact(train_run, name, path)
 
-    ds_rmse = DataHP(train_run.train_config.train_data_config.validation())
+    ds_rmse_config = train_run.train_config.train_data_config.validation()
+    ds_rmse = DataHP(ds_rmse_config)
     dl_rmse = torch.utils.data.DataLoader(
         ds_rmse,
         batch_size=1,
@@ -103,7 +110,7 @@ if __name__ == "__main__":
         exit(0)
 
     try:
-        eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
+        # eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
         # if get_parameter(train_run, eval_report_version) is not None:
         # continue
         print(f"[eval] Epoch {epoch}")
@@ -122,38 +129,40 @@ if __name__ == "__main__":
         model = deser_model.model
         model.eval()
         print("[eval] rmse")
-        rmse_res = rmse_hp(model, dl_rmse, device_id)
+        if ds_rmse_config.driscoll_healy:
+            rmse_res = rmse_dh(model, dl_rmse, device_id)
+        else:
+            rmse_res = rmse_hp(model, dl_rmse, device_id)
 
-        with connect_psql() as conn:
-            for var_idx, var_data in enumerate(rmse_res.mean_surface):
-                insert_checkpoint_sample_metric(
-                    deser_model.model_id,
-                )
-                # add_metric_epoch_values(
-                #     conn,
-                #     deser_config.train_run,
-                #     f"rmse_surface_{era5_meta.surface.names[var_idx]}",
-                #     var_data.item(),
-                # )
+        # for var_idx, var_data in enumerate(rmse_res.mean_surface):
+        #     insert_checkpoint_sample_metric(
+        #         deser_model.model_id,
+        #     )
+        # add_metric_epoch_values(
+        #     conn,
+        #     deser_config.train_run,
+        #     f"rmse_surface_{era5_meta.surface.names[var_idx]}",
+        #     var_data.item(),
+        # )
 
-        print("[eval] acc")
-        acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-        save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
-        save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
-        save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
-        save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
+        # print("[eval] acc")
+        # acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+        # save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
+        # save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
+        # save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
+        # save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
 
-        with connect_psql() as conn:
-            for var_idx, var_data in enumerate(acc.acc_surface):
-                add_metric_epoch_values(
-                    conn,
-                    deser_config.train_run,
-                    f"acc_surface_{era5_meta.surface.names[var_idx]}",
-                    var_data.item(),
-                )
-            train_run_serialized = train_run.serialize_human()
-            train_id = train_run_serialized["train_id"]
-            ensemble_id = train_run_serialized["ensemble_id"]
-            insert_param(conn, train_id, ensemble_id, eval_report_version, "done")
+        # with connect_psql() as conn:
+        #     for var_idx, var_data in enumerate(acc.acc_surface):
+        #         add_metric_epoch_values(
+        #             conn,
+        #             deser_config.train_run,
+        #             f"acc_surface_{era5_meta.surface.names[var_idx]}",
+        #             var_data.item(),
+        #         )
+        #     train_run_serialized = train_run.serialize_human()
+        #     train_id = train_run_serialized["train_id"]
+        #     ensemble_id = train_run_serialized["ensemble_id"]
+        #     insert_param(conn, train_id, ensemble_id, eval_report_version, "done")
     finally:
         lock.release()
