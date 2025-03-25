@@ -12,7 +12,7 @@ from pathlib import Path
 
 from lib.metric import Metric
 from lib.timing_metric import Timing
-from lib.stable_hash import stable_hash
+from lib.stable_hash import stable_hash_str
 from lib.git import get_rev
 import lib.serialize_human
 from lib.random_util import random_positive_i64
@@ -210,8 +210,8 @@ class TrainRun:
         return dict(
             compute_config=self.compute_config.serialize_human(),
             train_config=self.train_config.serialize_human(),
-            train_id=stable_hash(self.train_config),
-            ensemble_id=stable_hash(self.train_config.ensemble_dict()),
+            train_id=stable_hash_str(self.train_config),
+            ensemble_id=stable_hash_str(self.train_config.ensemble_dict()),
             train_eval=self.train_eval.serialize_human(),
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,

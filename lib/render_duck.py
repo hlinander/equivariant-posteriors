@@ -266,12 +266,12 @@ def sql_create_table_models():
 def insert_model(train_config: TrainConfig):
     ensure_duck(train_config)
     model_id = random_positive_i64()
-    train_id = stable_hash_str(train_config)
+    train_hash = stable_hash_str(train_config)
 
     sql_insert_model = """
     INSERT INTO models (id, train_id) VALUES (?, ?)
     """
-    execute(sql_insert_model, (model_id, train_id))
+    execute(sql_insert_model, (model_id, train_hash))
     return model_id
 
 

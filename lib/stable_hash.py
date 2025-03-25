@@ -57,7 +57,7 @@ def json_dumps_dataclass(data_class):
 
 def stable_hash(data_class):
     json_str = json_dumps_dataclass(data_class)
-    return int(hashlib.md5(json_str.encode("utf-8")).hexdigest(), 16)
+    return int(hashlib.md5(json_str).hexdigest(), 16)
 
 
 def stable_hash_small(data_class):
