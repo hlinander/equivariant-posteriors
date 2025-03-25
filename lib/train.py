@@ -157,7 +157,15 @@ def train(
     # visualizers = [visualize_progress, visualize_progress_batches]
     visualizers = [visualize_progress_batches]
     for i, batch in enumerate(dataloader):
-        train_epoch_state.timing_metric.stop("batch")
+        batch_time = train_epoch_state.timing_metric.stop("batch")
+        if batch_time is not None:
+            duck.insert_train_step_metric(
+                train_epoch_state.model_id,
+                train_run.run_id,
+                "batch_time",
+                train_epoch_state.batch,
+                batch_time,
+            )
         train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += 1
 
@@ -231,12 +239,7 @@ def train(
             now = time.time()
             if now > train_epoch_state.next_visualization:
                 train_epoch_state.next_visualization = time.time() + 60
-                write_status_file(
-                    SerializeConfig(
-                        train_run=train_run, train_epoch_state=train_epoch_state
-                    )
-                )
-                train_epoch_state.timing_metric.start("psql")
+                train_epoch_state.timing_metric.start("duck")
                 # last_postgres_result = render_psql(train_run, train_epoch_state)
                 # last_duck_result = duck.render_duck(train_run, train_epoch_state)
                 # duck.touch_model(train_run.train_config, train_epoch_state.model_id)
@@ -248,7 +251,14 @@ def train(
                     print(e)
                     last_sync_result = None, str(e)
 
-                train_epoch_state.timing_metric.stop("psql")
+                duck_time = train_epoch_state.timing_metric.stop("duck")
+                duck.insert_train_step_metric(
+                    train_epoch_state.model_id,
+                    train_run.run_id,
+                    "dbsync",
+                    train_epoch_state.batch,
+                    duck_time,
+                )
                 if train_run.visualize_terminal:
                     # train_epoch_state.next_visualizer = (
                     #     train_epoch_state.next_visualizer + 1

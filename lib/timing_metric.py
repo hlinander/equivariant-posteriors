@@ -18,6 +18,8 @@ class Timing:
             self.data[name] = []
         if name in self.starts:
             self.data[name].append(stop - self.starts[name])
+            return stop - self.starts[name]
+        return None
 
     def reset_group(self, name):
         self.groups[name] = []
