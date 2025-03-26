@@ -334,6 +334,7 @@
         pytest
         sqlalchemy
         (rpy2.override{ extraRPackages = with pkgs.rPackages; [ggplot2 ggforce dplyr latex2exp patchwork reticulate Hmisc]; })
+        seaborn
         # weatherlearn
       ];
 
