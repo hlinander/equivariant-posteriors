@@ -374,7 +374,7 @@ class RingShift:
         # H, W = self.input_resolution
         # img_mask = torch.zeros((1, D, N, 1))  # 1 H W 1
         d_slices = (
-            slice(0, -self.window_size_d),
+            # slice(0, -self.window_size_d),
             slice(-self.window_size_d, -self.shift_size_d),
             slice(-self.shift_size_d, None),
         )
@@ -384,10 +384,24 @@ class RingShift:
             slice(-self.shift_size_hp, None),
         )
         cnt = 0
-        for d in d_slices:
+        # Every depth needs a mask for the HP ring shift
+        for d in range(0, D, self.window_size_d):
             for n in n_slices:
-                mask[d, n] = cnt
+                # Every depth in the same window gets the same mask id
+                for d_idx in range(self.window_size_d):
+                    mask[d + d_idx, n] = cnt
+                # mask[d, n] = cnt
                 cnt += 1
+
+        multiplier = cnt
+        # The final
+        for d in d_slices:
+            mask[d, :] += multiplier
+            # for n in n_slices:
+            # mask[d, n] = cnt
+            # cnt += 1
+        assert mask[-1, 0] != mask[-2, 0]
+        assert mask[-1, -self.shift_size_hp] != mask[-1, -1]
 
         # mask_windows = window_partition(
         #     img_mask, self.window_size
