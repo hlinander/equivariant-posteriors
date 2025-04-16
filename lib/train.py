@@ -382,10 +382,12 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
     state = None
     try:
         state = deserialize(config)
+        if state is not None:
+            duck.insert_model_with_model_id(train_run, state.model_id)
         # duck.execute("DELETE FROM ")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
-        raise e
+        # raise e
         # print(str(e))
 
     if state is None:

@@ -15,6 +15,7 @@ from lib.models.llama2generative import LLaMA2Generative, LLaMA2GenerativeConfig
 from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
 from experiments.weather.models.swin_hp_pangu import SwinHPPangu
 from experiments.weather.models.pangu import Pangu, PanguConfig
+from experiments.weather.models.pangu import PanguParametrized, PanguParametrizedConfig
 from experiments.weather.models.swin_hp_pangu_isolatitude import (
     SwinHPPanguIsolatitudeConfig,
 )
@@ -52,6 +53,7 @@ class _ModelFactory:
             SwinHPPanguIsolatitudeConv
         )
         self.models[PanguConfig.__name__] = Pangu
+        self.models[PanguParametrizedConfig.__name__] = PanguParametrized
 
     def register(self, config_class, model_class):
         self.models[config_class.__name__] = model_class

@@ -31,13 +31,19 @@ from lib.serialization import deserialize_model, DeserializeConfig
 
 from lib.data_factory import get_factory as get_dataset_factory
 
-# from lib.render_duck import (
-# add_artifact,
-# has_artifact,
-# add_parameter,
-# connect_psql,
-# add_metric_epoch_values,
-# insert_checkpoint_sample_metric,
+from lib.render_duck import (
+    # add_artifact,
+    # has_artifact,
+    # add_parameter,
+    # connect_psql,
+    # add_metric_epoch_values,
+    insert_or_update_train_run,
+    insert_model_with_model_id,
+    insert_checkpoint_sample_metric,
+    ensure_duck,
+    attach_pg,
+)
+
 # get_parameter,
 # insert_param,
 # get_checkpoints,
@@ -80,6 +86,7 @@ if __name__ == "__main__":
         )
         # add_artifact(train_run, name, path)
 
+    ds_train = DataHP(train_run.train_config.train_data_config)
     ds_rmse_config = train_run.train_config.train_data_config.validation()
     ds_rmse = DataHP(ds_rmse_config)
     dl_rmse = torch.utils.data.DataLoader(
@@ -110,6 +117,7 @@ if __name__ == "__main__":
         exit(0)
 
     try:
+
         # eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
         # if get_parameter(train_run, eval_report_version) is not None:
         # continue
@@ -126,6 +134,11 @@ if __name__ == "__main__":
             print("Can't deserialize")
             exit(0)
 
+        ensure_duck(train_run)
+        attach_pg()
+        # insert_model_with_model_id(train_run, deser_model.model_id)
+        # insert_or_update_train_run(train_run, deser_model.model_id)
+
         model = deser_model.model
         model.eval()
         print("[eval] rmse")
@@ -134,10 +147,33 @@ if __name__ == "__main__":
         else:
             rmse_res = rmse_hp(model, dl_rmse, device_id)
 
-        # for var_idx, var_data in enumerate(rmse_res.mean_surface):
-        #     insert_checkpoint_sample_metric(
-        #         deser_model.model_id,
-        #     )
+        for var_idx, var_data in enumerate(rmse_res.mean_surface):
+            insert_checkpoint_sample_metric(
+                deser_model.model_id,
+                epoch * len(ds_train),
+                f"rmse_surface_{era5_meta.surface.names[var_idx]}",
+                ds_rmse_config.short_name(),
+                [],
+                var_data.item(),
+                [],
+                db_prefix="pg.",
+            )
+        for var_idx, var_data in enumerate(rmse_res.mean_upper):
+            for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
+                # print(level, value)
+                var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}"
+                # print(var_name)
+                # breakpoint()
+                insert_checkpoint_sample_metric(
+                    deser_model.model_id,
+                    epoch * len(ds_train),
+                    var_name,
+                    ds_rmse_config.short_name(),
+                    [],
+                    value.item(),
+                    [],
+                    db_prefix="pg.",
+                )
         # add_metric_epoch_values(
         #     conn,
         #     deser_config.train_run,
@@ -146,7 +182,11 @@ if __name__ == "__main__":
         # )
 
         # print("[eval] acc")
-        # acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+        # if ds_rmse_config.driscoll_healy:
+        #     # rmse_res = rmse_dh(model, dl_rmse, device_id)
+        #     acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+        # else:
+        #     acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
         # save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
         # save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
         # save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)

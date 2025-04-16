@@ -15,6 +15,8 @@ from lib.stable_hash import stable_hash_str
 from lib.compute_env import env
 
 CONN = None
+LAST_MODEL_ID = None
+LAST_RUN_CONFIG = None
 SCHEMA_ENSURED = False
 PG_SCHEMA_ENSURED = False
 
@@ -105,7 +107,8 @@ def insert_artifact(
 ) -> int:
     try:
         _insert_artifact(model_id, name, path, type)
-    except duckdb.duckdb.ConstraintException:
+    except duckdb.duckdb.ConstraintException as e:
+        print(e)
         print(f"Artifact {name} already present for {model_id}")
 
 
@@ -233,7 +236,7 @@ def sql_create_table_checkpoint_sample_metric(type_def):
 
 
 def insert_checkpoint_sample_metric(
-    model_id, step, name, dataset, sample_ids, mean, value_per_sample
+    model_id, step, name, dataset, sample_ids, mean, value_per_sample, db_prefix=""
 ):
     value_type = type(mean)
     if value_type in PYTHON_TYPE_TO_TYPE_DEF:
@@ -245,7 +248,7 @@ def insert_checkpoint_sample_metric(
         return
 
     sql_insert_train_step_metric = f"""
-        INSERT INTO {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample) 
+        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """
     execute(
@@ -265,8 +268,12 @@ def sql_create_table_models():
 
 
 def insert_model(train_run: TrainRun):
-    ensure_duck(train_run)
     model_id = random_positive_i64()
+    return insert_model_with_model_id(train_run, model_id)
+
+
+def insert_model_with_model_id(train_run: TrainRun, model_id: int):
+    ensure_duck(train_run)
     train_id = stable_hash_str(train_run.train_config)
 
     sql_insert_model = """
@@ -353,34 +360,25 @@ def sql_create_table_sync():
     """
 
 
+def attach_pg(db="equiv_v2"):
+    hostname = env().postgres_host  # "localhost"
+    port = env().postgres_port  # 5432
+    pw = env().postgres_password
+    execute("INSTALL postgres")
+    execute("LOAD postgres")
+    execute(
+        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
+    )
+
+
 def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
     global PG_SCHEMA_ENSURED
     import time
 
     start = time.time()
     total_time = 0
-    hostname = env().postgres_host  # "localhost"
-    port = env().postgres_port  # 5432
-    pw = env().postgres_password
-    # t = time.time() - start
-    # print(f"env {t}")
-    # total_time += t
-
-    # ensure_time = time.time()
     ensure_duck(train_run)
-    # t = time.time() - ensure_time
-    # print(f"ensure_duck {t}")
-    # total_time += t
-
-    # ila_time = time.time()
-    execute("INSTALL postgres")
-    execute("LOAD postgres")
-    execute(
-        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
-    )
-    # t = time.time() - ila_time
-    # print(f"ILA {t}")
-    # total_time += t
+    attach_pg(db)
 
     if clear_pg:
         if "CLEAR_POSTGRES" not in os.environ:
@@ -520,17 +518,15 @@ def dict_to_normalized_json(input_dict):
     return json.loads(pandas.json_normalize(input_dict).to_json(orient="records"))[0]
 
 
-def insert_or_update_train_run(train_run: TrainRun, state: TrainEpochState):
+def insert_or_update_train_run(train_run: TrainRun, model_id: int):
     train_run_flat = dict_to_normalized_json(train_run.serialize_human())
     # train_run_flat["train_id"],
     # train_run_flat["ensemble_id"],
-    insert_model_parameter(
-        state.model_id, "train_config_hash", train_run_flat["train_id"]
-    )
-    insert_model_parameter(state.model_id, "model_id", state.model_id)
+    insert_model_parameter(model_id, "train_config_hash", train_run_flat["train_id"])
+    insert_model_parameter(model_id, "model_id", model_id)
     for key, value in train_run_flat.items():
         insert_model_parameter(
-            state.model_id,
+            model_id,
             key,
             value,
         )
@@ -539,5 +535,7 @@ def insert_or_update_train_run(train_run: TrainRun, state: TrainEpochState):
 def render_duck(
     train_run: TrainRun, train_epoch_state: TrainEpochState, in_memory=False
 ):
+    global LAST_MODEL_ID
     ensure_duck(train_run, in_memory)
-    insert_or_update_train_run(train_run, train_epoch_state)
+    insert_or_update_train_run(train_run, train_epoch_state.model_id)
+    LAST_MODEL_ID = train_epoch_state.model_id

@@ -49,6 +49,9 @@ class DataHPConfig:
     start_year: int = 2007
     end_year: int = 2017
 
+    def short_name(self):
+        return f"era5_{self.start_year}_{self.end_year}"
+
     def serialize_human(self):
         return serialize_human(self.__dict__)
 

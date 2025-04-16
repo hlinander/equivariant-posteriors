@@ -247,8 +247,11 @@ def rmse_hp(model, dataloader, device_id):
     n_batches = 0
     stats = deserialize_dataset_statistics(dataloader.dataset.config.nside).item()
     stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
-    for idx, batch in enumerate(dataloader):
-        batch = {k: v.to(device_id) for k, v in batch.items()}
+    for idx, batch in tqdm.tqdm(enumerate(dataloader)):
+        # batch = {k: v.to(device_id) for k, v in batch.items()}
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
+        }
         with torch.no_grad():
             output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
@@ -281,7 +284,7 @@ def rmse_hp(model, dataloader, device_id):
             rmse_upper += rmse_upper_batches.sum(dim=0) / n_samples
         n_batches += 1
         # TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        # if idx > 2:
+        # if idx > 1:
         # break
 
     rmse_surface /= n_batches
@@ -319,9 +322,16 @@ def rmse_dh(model, dataloader_dh, device_id):
         drop_last=False,
     )
     stats = deserialize_dataset_statistics(dl_hp.dataset.config.nside).item()
+    stats = {k: torch.tensor(v).to(device_id) for k, v in stats.items()}
     # stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
     for idx, (batch_dh, batch_hp) in tqdm.tqdm(enumerate(zip(dataloader_dh, dl_hp))):
-        batch = {k: v.to(device_id) for k, v in batch_dh.items()}
+        # batch = {k: v.to(device_id) for k, v in batch_dh.items()}
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
+        }
+        batch_hp = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
+        }
         with torch.no_grad():
             output = model(batch)
         output = {k: v.detach() for k, v in output.items() if hasattr(v, "detach")}
@@ -342,8 +352,8 @@ def rmse_dh(model, dataloader_dh, device_id):
         #     surface.astype(np.float32),
         # )
         # add_artifact(train_run, "surface_test_rmse_hp.npy", "/tmp/surface_test_hp.npy")
-        surface = torch.from_numpy(surface)
-        upper = torch.from_numpy(upper)
+        surface = torch.from_numpy(surface).to(device_id)
+        upper = torch.from_numpy(upper).to(device_id)
 
         out_surface, out_upper = denormalize_sample(
             stats,
@@ -355,7 +365,6 @@ def rmse_dh(model, dataloader_dh, device_id):
             batch_hp["target_surface"].double(),  # astype(np.double),
             batch_hp["target_upper"].double(),  # astype(np.double),
         )
-        # breakpoint()
         n_pixels = batch_hp["target_surface"].shape[-1]
         n_samples = batch_hp["target_surface"].shape[0]
         if not initialized:

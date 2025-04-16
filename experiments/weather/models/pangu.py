@@ -47,3 +47,41 @@ class Pangu(torch.nn.Module):
         return dict(
             logits_surface=out_surface, logits_upper=out_upper, layer_out=layer_out
         )
+
+
+@dataclass
+class PanguParametrizedConfig:
+    nside: int
+    embed_dim: int
+
+    def serialize_human(self):
+        return serialize_human(self.__dict__)  # dict(validation=self.validation)
+
+
+class PanguParametrized(torch.nn.Module):
+    def __init__(self, config: PanguParametrizedConfig, data_spec: DataSpecHP):
+        super().__init__()
+        self.config = config
+        # breakpoint()
+        ds = DataHP(DataHPConfig(nside=data_spec.nside, driscoll_healy=True))
+        resolution = ds.dh_resolution()
+        self.model = WeatherLearnPangu(
+            lat=resolution["lat"],
+            lon=resolution["lon"],
+            embed_dim=self.config.embed_dim,
+        )
+
+    def forward(self, batch):
+        x_surface = batch["input_surface"]
+        x_upper = batch["input_upper"]
+        surface_masks = torch.zeros(
+            (3, x_surface.shape[-2], x_surface.shape[-1]),
+            device=batch["input_surface"].device,
+        )
+        B, C, lat, lon = x_surface.shape
+        out_surface, out_upper, layer_out = self.model(
+            x_surface, surface_masks, x_upper
+        )
+        return dict(
+            logits_surface=out_surface, logits_upper=out_upper, layer_out=layer_out
+        )

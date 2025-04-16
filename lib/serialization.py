@@ -323,6 +323,8 @@ def deserialize(config: DeserializeConfig):
     else:
         val_dataloader = None
 
+    duck.LAST_MODEL_ID = file_data.model_id
+    duck.LAST_RUN_CONFIG = config.train_run
     model = create_model(config, data_dict["model"])
     # model = model_factory.get_factory().create(
     #     train_config.model_config, val_ds.data_spec()

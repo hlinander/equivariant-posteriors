@@ -6,6 +6,9 @@ import numpy as np
 # import healpix as hp
 import chealpix as chp
 
+# from lib.render_duck import insert_artifact
+import lib.render_duck as rd
+
 
 def get_attn_mask_from_mask(mask, window_size, window_partition):
     """Translates mask of shape (N) with different int values to attention mask of shape (nW,
@@ -357,9 +360,11 @@ class RingShift:
         D, N = self.input_resolution
 
         ring_idcs = np.arange(12 * self.nside**2)
+        # [0, 1, 2, 3, ...]
         shifted_ring_idcs = np.roll(ring_idcs, -self.shift_size_hp)
+        # [2, 3, ..., 0, 1]
         shifted_ring_idcs_in_nest = chp.ring2nest(self.nside, shifted_ring_idcs)
-        # shifted_ring_idcs_in_nest = hp.ring2nest(self.nside, shifted_ring_idcs)
+        # [2_n, 3_n, ...,0_n, 1_n]
 
         # so far, this would return the image in ring indices, convert back to nested:
         nest_idcs = np.arange(self.npix)
@@ -395,14 +400,41 @@ class RingShift:
 
         multiplier = cnt
         # The final
-        for d in d_slices:
-            mask[d, :] += multiplier
+        for d_idx, d in enumerate(d_slices):
+            mask[d, :] += (d_idx + 1) * multiplier
+            # print("{} : {}", d, multiplier)
             # for n in n_slices:
             # mask[d, n] = cnt
             # cnt += 1
         assert mask[-1, 0] != mask[-2, 0]
-        assert mask[-1, -self.shift_size_hp] != mask[-1, -1]
+        assert mask[-1, -self.shift_size_hp - 1] != mask[-1, -1]
 
+        for d_idx in range(D):
+            mask[d_idx, :] = mask[d_idx, nest_idcs_in_ring]
+
+        # if rd.LAST_MODEL_ID is not None:
+        #     print("Trying to insert artifact")
+        #     index_check = np.array(shifted_ring_idcs, dtype=np.float32)
+        #     index_check = index_check[nest_idcs_in_ring]
+        #     np.save("/tmp/index_debug.npy", index_check)
+        #     rd.ensure_duck(rd.LAST_RUN_CONFIG)
+        #     rd.insert_model_with_model_id(rd.LAST_RUN_CONFIG, rd.LAST_MODEL_ID)
+        #     rd.insert_artifact(
+        #         rd.LAST_MODEL_ID, "index_debug.npy", "/tmp/index_debug.npy"
+        #     )
+        #     rd.sync(rd.LAST_RUN_CONFIG)
+        # exit(0)
+        #     mask_f32 = np.array(mask, dtype=np.float32)
+        #     np.save("/tmp/mask_debug.npy", mask_f32)
+        #     rd.ensure_duck(rd.LAST_RUN_CONFIG)
+        #     rd.insert_model_with_model_id(rd.LAST_RUN_CONFIG, rd.LAST_MODEL_ID)
+        #     rd.insert_artifact(
+        #         rd.LAST_MODEL_ID, "mask_debug_f32_fixed_nest.npy", "/tmp/mask_debug.npy"
+        #     )
+        #     rd.sync(rd.LAST_RUN_CONFIG)
+        #     print("Saved debug artifact")
+
+        # exit(0)
         # mask_windows = window_partition(
         #     img_mask, self.window_size
         # )  # nW, window_size, window_size, 1
