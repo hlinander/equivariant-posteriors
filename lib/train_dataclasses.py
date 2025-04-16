@@ -194,6 +194,7 @@ class TrainRun:
     keep_epoch_checkpoints: bool = False
     keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
+    visualize_terminal_interval: int = 60
     notes: object = None
     argv: str = " ".join(sys.argv)
     git_rev: str = get_rev()
@@ -216,6 +217,7 @@ class TrainRun:
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,
             visualize_terminal=self.visualize_terminal,
+            visualize_terminal_interval=self.visualize_terminal_interval,
             notes=self.notes,
             argv=self.argv,
             git_rev=self.git_rev,

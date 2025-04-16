@@ -51,19 +51,32 @@ class Transformer(torch.nn.Module):
 
     def forward(self, batch):
         x = batch["input"]
-        embed = self.embed(x) * math.sqrt(32)
-        embed = self.pos_embed(embed)
-        tout = self.transformer(embed, self.mem[: embed.shape[0]])
-        # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
-        output = self.debed(tout[:, 0, :])
-        return dict(logits=output, predictions=self.output_to_value_detached(output))
+        return self.forward_tensor(x)
+        # embed = self.embed(x) * math.sqrt(32)
+        # embed = self.pos_embed(embed)
+        # tout = self.transformer(embed, self.mem[: embed.shape[0]])
+        # tout = self.transformer(tout, self.mem[: embed.shape[0]])
+        # # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
+        # # [B, T, C]
+        # output = self.debed(tout[:, 0, :])
+        # return dict(logits=output, predictions=self.output_to_value_detached(output))
 
-    def forward_tensor(self, x):
-        embed = self.embed(x) * math.sqrt(32)
+    def forward_tensor(self, x, depth=None):
+        embed = self.embed(x)  # * math.sqrt(32)
         embed = self.pos_embed(embed)
-        tout = self.transformer(embed, self.mem[: embed.shape[0]])
+        tout = self.transformer(embed, embed)  # self.mem[: embed.shape[0]])
+        import random
+
+        if depth is None:
+            depth = random.randint(0, 2)
+
+        for _ in range(depth):
+            embed = torch.concat([embed, tout[:, -1:, :]], dim=1)
+            tout = self.transformer(embed, embed)  # self.mem[: embed.shape[0]])
+        # embed = torch.concat([embed, tout[:, -1:, :]], dim=1)
+        # tout = self.transformer(embed, self.mem[: embed.shape[0]])
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
-        output = self.debed(tout[:, 0, :])
+        output = self.debed(tout[:, -1, :])
         return dict(logits=output, predictions=self.output_to_value_detached(output))
 
     def output_to_value_detached(self, output):

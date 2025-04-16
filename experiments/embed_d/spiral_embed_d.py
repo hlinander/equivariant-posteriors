@@ -13,6 +13,13 @@ from lib.datasets.spiral_visualization import visualize_spiral
 from lib.generic_ablation import generic_ablation
 from lib.classification_metrics import create_classification_metrics
 from lib.distributed_trainer import distributed_train
+from lib.ddp import ddp_setup
+import lib.data_factory as data_factory
+
+from lib.serialization import (
+    deserialize_model,
+    DeserializeConfig,
+)
 
 
 def loss(preds, target):
@@ -34,11 +41,12 @@ def create_config(embed_d, ensemble_id):
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=embed_d,
-            mlp_dim=10,
-            n_seq=2,
+            mlp_dim=50,
+            n_seq=20,
             batch_size=500,
             num_layers=2,
             num_heads=1,
+            softmax=True,
         ),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
@@ -58,14 +66,32 @@ def create_config(embed_d, ensemble_id):
         epochs=500,
         save_nth_epoch=20,
         validate_nth_epoch=20,
+        visualize_terminal_interval=5,
     )
     return train_run
 
 
 def create_values():
-    return dict(embed_d=[100, 50, 100], ensemble_id=list(range(5)))
+    return dict(embed_d=[100], ensemble_id=list(range(1)))
 
 
 if __name__ == "__main__":
     configs = generic_ablation(create_config, create_values())
     distributed_train(configs)
+    config = configs[0]
+
+    device_id = ddp_setup()
+
+    deserialized_model = deserialize_model(DeserializeConfig(config, device_id))
+    model = deserialized_model.model
+
+    ds = data_factory.get_factory().create(config.train_config.val_data_config)
+    dl = torch.utils.data.DataLoader(
+        ds,
+        batch_size=config.train_config.batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    for batch in dl:
+        
