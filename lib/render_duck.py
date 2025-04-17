@@ -220,6 +220,7 @@ def select_train_step_metric_float(model_id, name):
 def sql_create_table_checkpoint_sample_metric(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (
+            id BIGINT,
             model_id BIGINT,
             step INTEGER,
             name TEXT,

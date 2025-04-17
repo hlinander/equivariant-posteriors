@@ -39,6 +39,7 @@ import lib.ddp as ddp
 
 def evaluate_metrics_on_data(
     model,
+    model_id,
     metrics: Dict[str, Metric],
     data_config,
     batch_size: int,
@@ -58,11 +59,35 @@ def evaluate_metrics_on_data(
             metric_sample = MetricSample(
                 output=output,
                 batch=batch,
-                # prediction=output["predictions"],
-                epoch=-1,
+                # epoch=train_epoch_state.epoch,
+                model_id=model_id,
             )
             for metric_name, metric in metrics.items():
-                metric(metric_sample)
+                values = metric.per_sample(metric_sample)
+
+                if values.dtype == torch.double:
+                    values = values.float()
+
+                if (
+                    len(values.shape) == 1
+                    and values.shape[0] == batch["sample_id"].shape[0]
+                ):
+                    value_per_sample = values.tolist()
+                else:
+                    value_per_sample = None
+
+                duck.insert_checkpoint_sample_metric(
+                    metric_sample.model_id,
+                    train_epoch_state.batch,
+                    metric.name(),
+                    data_factory.get_factory()
+                    .get_class(train_run.train_config.val_data_config)
+                    .__name__,
+                    batch["sample_id"].tolist(),
+                    # metric_sample.batch,
+                    values.mean().item(),
+                    value_per_sample,
+                )
 
 
 def validate(
