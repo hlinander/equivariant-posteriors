@@ -252,8 +252,13 @@ def rmse_hp(model, dataloader, device_id):
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
         }
-        with torch.no_grad():
-            output = model(batch)
+        for _ in dataloader.dataset.config.lead_time_days:
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+        # with torch.no_grad():
+        #     output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
         out_surface, out_upper = denormalize_sample(
             stats, output["logits_surface"].double(), output["logits_upper"].double()
@@ -332,8 +337,12 @@ def rmse_dh(model, dataloader_dh, device_id):
         batch_hp = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
         }
-        with torch.no_grad():
-            output = model(batch)
+        for _ in ds_config.lead_time_days:
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+
         output = {k: v.detach() for k, v in output.items() if hasattr(v, "detach")}
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),

@@ -48,6 +48,7 @@ class DataHPConfig:
     normalized: bool = True
     start_year: int = 2007
     end_year: int = 2017
+    lead_time_days: int = 1
 
     def short_name(self):
         return f"era5_{self.start_year}_{self.end_year}"
@@ -60,6 +61,7 @@ class DataHPConfig:
         if self.start_year == 2007 and self.end_year == 2017:
             del serialize_dict["start_year"]
             del serialize_dict["end_year"]
+        del serialize_dict["lead_time_days"]
         return serialize_dict
 
     def statistics_name(self):
@@ -82,6 +84,11 @@ class DataHPConfig:
     def as_hp(self):
         ret = copy.deepcopy(self)
         ret.driscoll_healy = False
+        return ret
+
+    def with_lead_time_days(self, days: int):
+        ret = copy.deepcopy(self)
+        ret.lead_time_days = days
         return ret
 
 
@@ -447,6 +454,17 @@ class DataHP(torch.utils.data.Dataset):
             )
 
     def __getitem__(self, idx):
+        if self.config.lead_time_days == 1:
+            return self._get_24h(idx)
+        else:
+            sample = self._get_24h(idx)
+            target = self._get_24h(idx + self.config.lead_time_days - 1)
+            sample["target_surface"] = target["target_surface"]
+            sample["target_upper"] = target["target_upper"]
+            sample["prediction_timedelta_hours"] = 24 * self.config.lead_time_days
+            return sample
+
+    def _get_24h(self, idx):
         if idx >= len(self):
             raise IndexError()
         fs_cache_path = self.get_cache_dir() / f"{idx}"

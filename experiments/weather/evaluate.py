@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 import sys
 import importlib
 import torch
@@ -86,8 +87,9 @@ if __name__ == "__main__":
         )
         # add_artifact(train_run, name, path)
 
+    lead_time_days = int(os.environ.get('LEADTIME', '1'))
     ds_train = DataHP(train_run.train_config.train_data_config)
-    ds_rmse_config = train_run.train_config.train_data_config.validation()
+    ds_rmse_config = train_run.train_config.train_data_config.validation().with_lead_time_days(lead_time_days)
     ds_rmse = DataHP(ds_rmse_config)
     dl_rmse = torch.utils.data.DataLoader(
         ds_rmse,
@@ -95,7 +97,7 @@ if __name__ == "__main__":
         shuffle=False,
         drop_last=False,
     )
-    ds_acc = Climatology(train_run.train_config.train_data_config.validation())
+    ds_acc = Climatology(train_run.train_config.train_data_config.validation().with_lead_time_days(lead_time_days))
     dl_acc = torch.utils.data.DataLoader(
         ds_acc,
         batch_size=1,
@@ -151,7 +153,7 @@ if __name__ == "__main__":
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
-                f"rmse_surface_{era5_meta.surface.names[var_idx]}",
+                f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
                 [],
                 var_data.item(),
@@ -161,7 +163,7 @@ if __name__ == "__main__":
         for var_idx, var_data in enumerate(rmse_res.mean_upper):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
                 # print(level, value)
-                var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}"
+                var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 # print(var_name)
                 # breakpoint()
                 insert_checkpoint_sample_metric(
