@@ -119,6 +119,21 @@ class WindowAttention(nn.Module):
             )
             trunc_normal_(self.earth_position_bias, std=0.02)
 
+        if self.rel_pos_bias == "single":
+            # B * n_windows, window_size, C
+            window_size_d, window_size_hp = window_size
+            self.earth_position_bias = nn.Parameter(
+                torch.zeros(
+                    (
+                        1,
+                        self.num_heads,
+                        window_size_d * window_size_hp,
+                        window_size_d * window_size_hp,
+                    )
+                )
+            )
+            trunc_normal_(self.earth_position_bias, std=0.02)
+
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
@@ -156,7 +171,7 @@ class WindowAttention(nn.Module):
             q = q * self.scale
             attn = q @ k.transpose(-2, -1)
 
-        if self.rel_pos_bias == "earth":
+        if self.rel_pos_bias == "earth" or self.rel_pos_bias == "single":
             attn = attn + self.earth_position_bias
 
         if mask is not None:
@@ -574,9 +589,9 @@ class BasicLayer(nn.Module):
                     qk_scale=qk_scale,
                     drop=drop,
                     attn_drop=attn_drop,
-                    drop_path=drop_path[i]
-                    if isinstance(drop_path, list)
-                    else drop_path,
+                    drop_path=(
+                        drop_path[i] if isinstance(drop_path, list) else drop_path
+                    ),
                     norm_layer=norm_layer,
                     use_v2_norm_placement=use_v2_norm_placement,
                     use_cos_attn=use_cos_attn,

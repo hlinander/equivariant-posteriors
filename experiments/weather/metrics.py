@@ -10,6 +10,7 @@ from experiments.weather.data import (
     deserialize_dataset_statistics,
     e5_to_numpy_hp,
     DataHP,
+    Climatology,
     DataHPConfig,
 )
 from experiments.weather.cdsmontly import ERA5Sample
@@ -233,6 +234,132 @@ def anomaly_correlation_coefficient_hp(model, dataloader, device_id):
     )
 
 
+def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
+    # surface: B, variable, x
+    # upper: B, variable, height, x
+    ds_config = dataloader_dh.dataset.config.validation()
+    ds_config.driscoll_healy = False
+    ds_hp = Climatology(ds_config)
+    # ds_hp = DataHP(ds_config)
+    dl_hp = torch.utils.data.DataLoader(
+        ds_hp,
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    stats = deserialize_dataset_statistics(dl_hp.dataset.config.nside).item()
+    stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
+
+    initialized = False
+    logit_surface_squared = None
+    target_surface_squared = None
+    logit_upper_squared = None
+    target_upper_squared = None
+    nominator_surface = None
+    nominator_upper = None
+
+    dims = [0, -1]
+    # stats = deserialize_dataset_statistics(dataloader.dataset.config.nside).item()
+    # traced_model = None
+    model = model.eval()
+
+    # def model_forward(surface, upper):
+    # return model._forward((surface, upper))
+    # template = dataloader.dataset.ds.get_template_e5s()
+    # meta = dataloader.dataset.ds.get_meta()
+    # breakpoint()
+
+    for idx, (batch_dh, batch_hp) in tqdm.tqdm(enumerate(zip(dataloader_dh, dl_hp))):
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
+        }
+        batch_hp = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
+        }
+        # if traced_model is None:
+        # traced_model = torch.jit.trace(
+        # model_forward, (batch["input_surface"], batch["input_upper"])
+        # )
+        # traced_model = torch.jit.freeze(traced_model)
+        # print("Model forward...")
+        # with torch.no_grad():
+        # output = model(batch)
+        for _ in range(ds_config.lead_time_days):
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+
+        output = {k: v.detach() for k, v in output.items()}
+        e5s = dh_numpy_to_xr_surface_hp(
+            output["logits_surface"][0].detach().cpu().numpy(),
+            output["logits_upper"][0].detach().cpu().numpy(),
+            dl_hp.dataset.get_meta(),
+        )
+        surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
+        surface = torch.from_numpy(surface).to(device_id)
+        upper = torch.from_numpy(upper).to(device_id)
+        # print("Denorming...")
+        out_surface, out_upper = denormalize_sample(
+            stats, output["logits_surface"].double(), output["logits_upper"].double()
+        )
+        target_surface, target_upper = denormalize_sample(
+            stats, batch["target_surface"].double(), batch["target_upper"].double()
+        )
+        climate_surface, climate_upper = denormalize_sample(
+            stats,
+            batch_hp["climate_target_surface"].double(),
+            batch_hp["climate_target_upper"].double(),
+        )
+        # print("ACC..")
+        out_surface = out_surface - climate_surface
+        out_upper = out_upper - climate_upper
+        target_surface = target_surface - climate_surface
+        target_upper = target_upper - climate_upper
+        if not initialized:
+            initialized = True
+            logit_surface_squared = out_surface**2  # .sum(dim=dims)
+            target_surface_squared = target_surface**2  # .sum(dim=dims)
+            logit_upper_squared = out_upper**2  # .sum(dim=dims)
+            target_upper_squared = target_upper**2  # .sum(dim=dims)
+
+            # breakpoint()
+            nominator_surface = out_surface * target_surface  # .sum(dim=dims)
+            nominator_upper = out_upper * target_upper  # .sum(dim=dims)
+        else:
+            # print("surface")
+            logit_surface_squared += out_surface**2  # .sum(dim=dims)
+            target_surface_squared += target_surface**2  # .sum(dim=dims)
+            # print("upper")
+            logit_upper_squared += out_upper**2  # .sum(dim=dims)
+            target_upper_squared += target_upper**2  # .sum(dim=dims)
+
+            # print("nominator")
+            # breakpoint()
+            nominator_surface += out_surface * target_surface  # .sum(dim=dims)
+            nominator_upper += out_upper * target_upper  # .sum(dim=dims)
+            # print("nominator done")
+        # if idx > 2:
+        # break
+
+    denominator_surface = torch.sqrt(
+        logit_surface_squared.sum(dim=dims) * target_surface_squared.sum(dim=dims)
+    )
+    denominator_upper = torch.sqrt(
+        logit_upper_squared.sum(dim=dims) * target_upper_squared.sum(dim=dims)
+    )
+
+    acc_surface = nominator_surface.sum(dim=dims) / denominator_surface
+    acc_upper = nominator_upper.sum(dim=dims) / denominator_upper
+
+    return ACC(
+        acc_surface=acc_surface,
+        acc_upper=acc_upper,
+        acc_unnorm_surface=nominator_surface,
+        acc_unnorm_upper=nominator_upper,
+    )
+
+
 def rmse_hp(model, dataloader, device_id):
     # surface: B, variable, x
     # upper: B, variable, height, x
@@ -252,7 +379,7 @@ def rmse_hp(model, dataloader, device_id):
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
         }
-        for _ in dataloader.dataset.config.lead_time_days:
+        for _ in range(dataloader.dataset.config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
             batch["input_surface"] = output["logits_surface"]
@@ -337,7 +464,7 @@ def rmse_dh(model, dataloader_dh, device_id):
         batch_hp = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
         }
-        for _ in ds_config.lead_time_days:
+        for _ in range(ds_config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
             batch["input_surface"] = output["logits_surface"]

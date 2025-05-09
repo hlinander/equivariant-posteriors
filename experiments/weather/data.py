@@ -68,11 +68,15 @@ class DataHPConfig:
         keys = sorted(self.__dict__.keys())
         keys.remove("cache")
         keys.remove("normalized")
+        keys.remove("lead_time_days")
+        keys.remove("end_year")
         return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
 
     def cache_name(self):
         keys = sorted(self.__dict__.keys())
         keys.remove("cache")
+        keys.remove("lead_time_days")
+        keys.remove("end_year")
         return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
 
     def validation(self):
@@ -466,7 +470,7 @@ class DataHP(torch.utils.data.Dataset):
 
     def _get_24h(self, idx):
         if idx >= len(self):
-            raise IndexError()
+            raise StopIteration()
         fs_cache_path = self.get_cache_dir() / f"{idx}"
         fs_cache_path_tmp = self.get_cache_dir() / f"{idx}_constructing"
         names = dict(

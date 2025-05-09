@@ -73,23 +73,28 @@ if __name__ == "__main__":
     # ensemble_config = create_ensemble_config(config_file.create_config, 1)
     train_run = config_file.create_config(0, 10)
     # train_run = ensemble_config.members[0]
-    result_path = prepare_results(
-        f"{train_run.serialize_human()["run_id"]}",
-        train_run,
-    )
+    # result_path = prepare_results(
+    #     f"{train_run.serialize_human()["run_id"]}",
+    #     train_run,
+    # )
 
-    def save_and_register(name, array):
-        path = result_path / f"{name}.npy"
+    # def save_and_register(name, array):
+    #     path = result_path / f"{name}.npy"
 
-        np.save(
-            path,
-            array.detach().cpu().float().numpy(),
-        )
-        # add_artifact(train_run, name, path)
+    #     np.save(
+    #         path,
+    #         array.detach().cpu().float().numpy(),
+    #     )
+    # add_artifact(train_run, name, path)
 
-    lead_time_days = int(os.environ.get('LEADTIME', '1'))
+    lead_time_days = int(os.environ.get("LEADTIME", "1"))
+    print("Lead time {lead_time}d")
     ds_train = DataHP(train_run.train_config.train_data_config)
-    ds_rmse_config = train_run.train_config.train_data_config.validation().with_lead_time_days(lead_time_days)
+    ds_rmse_config = (
+        train_run.train_config.train_data_config.validation().with_lead_time_days(
+            lead_time_days
+        )
+    )
     ds_rmse = DataHP(ds_rmse_config)
     dl_rmse = torch.utils.data.DataLoader(
         ds_rmse,
@@ -97,7 +102,11 @@ if __name__ == "__main__":
         shuffle=False,
         drop_last=False,
     )
-    ds_acc = Climatology(train_run.train_config.train_data_config.validation().with_lead_time_days(lead_time_days))
+    ds_acc = Climatology(
+        train_run.train_config.train_data_config.validation().with_lead_time_days(
+            lead_time_days
+        )
+    )
     dl_acc = torch.utils.data.DataLoader(
         ds_acc,
         batch_size=1,
@@ -108,103 +117,77 @@ if __name__ == "__main__":
 
     epoch = int(sys.argv[2])
 
-    lock = FileLock(
-        get_lock_path(train_config=train_run.train_config, lock_name=f"eval_{epoch}"),
-        0.1,
+    # lock = FileLock(
+    #     get_lock_path(train_config=train_run.train_config, lock_name=f"eval_{epoch}"),
+    #     0.1,
+    # )
+    # try:
+    #     lock.acquire(blocking=False)
+    # except Timeout:
+    #     print("Already evaluating...")
+    #     exit(0)
+
+    # try:
+
+    # eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
+    # if get_parameter(train_run, eval_report_version) is not None:
+    # continue
+    print(f"[eval] Epoch {epoch}")
+    deser_config = DeserializeConfig(
+        train_run=create_ensemble_config(
+            lambda eid: config_file.create_config(eid, epoch),
+            1,
+        ).members[0],
+        device_id=device_id,
     )
-    try:
-        lock.acquire(blocking=False)
-    except Timeout:
-        print("Already evaluating...")
+    deser_model = deserialize_model(deser_config)
+    if deser_model is None:
+        print("Can't deserialize")
         exit(0)
 
-    try:
+    ensure_duck(train_run)
+    attach_pg()
+    # insert_model_with_model_id(train_run, deser_model.model_id)
+    # insert_or_update_train_run(train_run, deser_model.model_id)
 
-        # eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
-        # if get_parameter(train_run, eval_report_version) is not None:
-        # continue
-        print(f"[eval] Epoch {epoch}")
-        deser_config = DeserializeConfig(
-            train_run=create_ensemble_config(
-                lambda eid: config_file.create_config(eid, epoch),
-                1,
-            ).members[0],
-            device_id=device_id,
+    model = deser_model.model
+    model.eval()
+
+    print("ACC")
+    if ds_rmse_config.driscoll_healy:
+        acc_res = rmse_dh(model, dl_rmse, device_id)
+    else:
+        acc_res = rmse_hp(model, dl_rmse, device_id)
+    print("[eval] rmse")
+    if ds_rmse_config.driscoll_healy:
+        rmse_res = rmse_dh(model, dl_rmse, device_id)
+    else:
+        rmse_res = rmse_hp(model, dl_rmse, device_id)
+
+    for var_idx, var_data in enumerate(rmse_res.mean_surface):
+        insert_checkpoint_sample_metric(
+            deser_model.model_id,
+            epoch * len(ds_train),
+            f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+            ds_rmse_config.short_name(),
+            [],
+            var_data.item(),
+            [],
+            db_prefix="pg.",
         )
-        deser_model = deserialize_model(deser_config)
-        if deser_model is None:
-            print("Can't deserialize")
-            exit(0)
-
-        ensure_duck(train_run)
-        attach_pg()
-        # insert_model_with_model_id(train_run, deser_model.model_id)
-        # insert_or_update_train_run(train_run, deser_model.model_id)
-
-        model = deser_model.model
-        model.eval()
-        print("[eval] rmse")
-        if ds_rmse_config.driscoll_healy:
-            rmse_res = rmse_dh(model, dl_rmse, device_id)
-        else:
-            rmse_res = rmse_hp(model, dl_rmse, device_id)
-
-        for var_idx, var_data in enumerate(rmse_res.mean_surface):
+    for var_idx, var_data in enumerate(rmse_res.mean_upper):
+        for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
+            # print(level, value)
+            var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
+            # print(var_name)
+            # breakpoint()
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
-                f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+                var_name,
                 ds_rmse_config.short_name(),
                 [],
-                var_data.item(),
+                value.item(),
                 [],
                 db_prefix="pg.",
             )
-        for var_idx, var_data in enumerate(rmse_res.mean_upper):
-            for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                # print(level, value)
-                var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-                # print(var_name)
-                # breakpoint()
-                insert_checkpoint_sample_metric(
-                    deser_model.model_id,
-                    epoch * len(ds_train),
-                    var_name,
-                    ds_rmse_config.short_name(),
-                    [],
-                    value.item(),
-                    [],
-                    db_prefix="pg.",
-                )
-        # add_metric_epoch_values(
-        #     conn,
-        #     deser_config.train_run,
-        #     f"rmse_surface_{era5_meta.surface.names[var_idx]}",
-        #     var_data.item(),
-        # )
-
-        # print("[eval] acc")
-        # if ds_rmse_config.driscoll_healy:
-        #     # rmse_res = rmse_dh(model, dl_rmse, device_id)
-        #     acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-        # else:
-        #     acc = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-        # save_and_register(f"{epoch:03d}_rmse_surface.npy", rmse_res.surface)
-        # save_and_register(f"{epoch:03d}_rmse_upper.npy", rmse_res.upper)
-        # save_and_register(f"{epoch:03d}_acc_surface.npy", acc.acc_unnorm_surface)
-        # save_and_register(f"{epoch:03d}_acc_upper.npy", acc.acc_unnorm_upper)
-
-        # with connect_psql() as conn:
-        #     for var_idx, var_data in enumerate(acc.acc_surface):
-        #         add_metric_epoch_values(
-        #             conn,
-        #             deser_config.train_run,
-        #             f"acc_surface_{era5_meta.surface.names[var_idx]}",
-        #             var_data.item(),
-        #         )
-        #     train_run_serialized = train_run.serialize_human()
-        #     train_id = train_run_serialized["train_id"]
-        #     ensemble_id = train_run_serialized["ensemble_id"]
-        #     insert_param(conn, train_id, ensemble_id, eval_report_version, "done")
-    finally:
-        lock.release()

@@ -45,7 +45,7 @@ from experiments.weather.data import DataHPConfig, Climatology
 NSIDE = 64
 
 
-def create_config(ensemble_id, epoch=200):
+def create_config(ensemble_id, epoch=200, dataset_years=10):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):
@@ -84,7 +84,7 @@ def create_config(ensemble_id, epoch=200):
             ape=False,
             patch_size=int(16 * (NSIDE / 256)),
         ),
-        train_data_config=DataHPConfig(nside=NSIDE),
+        train_data_config=DataHPConfig(nside=NSIDE, end_year=2007 + dataset_years),
         val_data_config=None,  # DataHPConfig(nside=NSIDE),
         loss=reg_loss,
         optimizer=OptimizerConfig(
@@ -145,32 +145,42 @@ if __name__ == "__main__":
     torch._C._cuda_attach_out_of_memory_observer(oom_observer)
 
     # register()
+    import os
 
-    ensemble_config = create_ensemble_config(create_config, 1)
+    try:
+        dataset_years = int(os.environ["ERA5_YEARS"])
+    except:
+        dataset_years = 10
+
+    print(f"Train dataset years {dataset_years}")
+    ensemble_config = create_ensemble_config(
+        lambda eid: create_config(eid, dataset_years=dataset_years), 1
+    )
+
     print("Maybe training...")
     if not is_ensemble_serialized(ensemble_config):
         request_ensemble(ensemble_config)
         distributed_train(ensemble_config.members)
         exit(0)
     # ensemble = create_ensemble(ensemble_config, device_id)
-    print("Creating ensemble..")
-    ensemble = create_ensemble(ensemble_config, device_id)
+    # print("Creating ensemble..")
+    # ensemble = create_ensemble(ensemble_config, device_id)
 
-    data_factory = get_dataset_factory()
-    ds = data_factory.create(DataHPConfig(nside=NSIDE))
-    dl = torch.utils.data.DataLoader(
-        ds,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-    )
+    # data_factory = get_dataset_factory()
+    # ds = data_factory.create(DataHPConfig(nside=NSIDE))
+    # dl = torch.utils.data.DataLoader(
+    #     ds,
+    #     batch_size=1,
+    #     shuffle=False,
+    #     drop_last=False,
+    # )
 
-    result_path = prepare_results(
-        # Path(__file__).parent,
-        f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}_nside_{NSIDE}_lite",
-        ensemble_config,
-    )
-    symlink_checkpoint_files(ensemble, result_path)
+    # result_path = prepare_results(
+    #     # Path(__file__).parent,
+    #     f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}_nside_{NSIDE}_lite",
+    #     ensemble_config,
+    # )
+    # symlink_checkpoint_files(ensemble, result_path)
 
     # options = ort.SessionOptions()
     # options.enable_cpu_mem_arena = False
@@ -187,34 +197,34 @@ if __name__ == "__main__":
     #     sess_options=options,
     #     providers=[("CUDAExecutionProvider", cuda_provider_options)],
     # )
-    def save_and_register(name, array):
-        path = result_path / f"{name}.npy"
+    # def save_and_register(name, array):
+    #     path = result_path / f"{name}.npy"
 
-        np.save(
-            path,
-            array.detach().cpu().float().numpy(),
-        )
-        add_artifact(ensemble_config.members[0], name, path)
+    #     np.save(
+    #         path,
+    #         array.detach().cpu().float().numpy(),
+    #     )
+    #     add_artifact(ensemble_config.members[0], name, path)
 
     # acc = anomaly_correlation_coefficient(ensemble.members[0], dl, device_id)
     # rmse = rmse(ensemble.members[0], dl, device_id)
     # breakpoint()
     # torch.cuda.memory._record_memory_history(stacks="python")
-    for idx, batch in enumerate(dl):
-        if idx > 1:
-            break
-        if has_artifact(ensemble_config.members[0], f"{idx}_of_surface.npy"):
-            continue
-        batch = {k: v.to(device_id) for k, v in batch.items()}
+    # for idx, batch in enumerate(dl):
+    #     if idx > 1:
+    #         break
+    #     if has_artifact(ensemble_config.members[0], f"{idx}_of_surface.npy"):
+    #         continue
+    #     batch = {k: v.to(device_id) for k, v in batch.items()}
 
-        #     start = time.time()
-        output = ensemble.members[0](batch)
-        #     model_time = time.time()
-        #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
-        save_and_register(f"{idx}_of_surface.npy", output["logits_surface"])
-        save_and_register(f"{idx}_if_surface.npy", batch["input_surface"])
-        save_and_register(f"{idx}_tf_surface.npy", batch["target_surface"])
-        save_and_register(f"{idx}_of_upper.npy", output["logits_upper"])
-        save_and_register(f"{idx}_if_upper.npy", batch["input_upper"])
-        save_and_register(f"{idx}_tf_upper.npy", batch["target_upper"])
-        del output
+    #     #     start = time.time()
+    #     output = ensemble.members[0](batch)
+    #     #     model_time = time.time()
+    #     #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
+    #     save_and_register(f"{idx}_of_surface.npy", output["logits_surface"])
+    #     save_and_register(f"{idx}_if_surface.npy", batch["input_surface"])
+    #     save_and_register(f"{idx}_tf_surface.npy", batch["target_surface"])
+    #     save_and_register(f"{idx}_of_upper.npy", output["logits_upper"])
+    #     save_and_register(f"{idx}_if_upper.npy", batch["input_upper"])
+    #     save_and_register(f"{idx}_tf_upper.npy", batch["target_upper"])
+    #     del output

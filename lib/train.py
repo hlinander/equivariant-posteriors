@@ -416,6 +416,8 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         print("Probably already synced model parameters...")
 
     print("Sync duck")
+    if ddp.get_rank() == 0:
+        serialize(serialize_config)
     duck.sync()
     print("Run epochs...")
     while state.epoch < train_run.epochs:

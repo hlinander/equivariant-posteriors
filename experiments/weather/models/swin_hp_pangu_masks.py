@@ -120,6 +120,21 @@ class WindowAttention(nn.Module):
             )
             trunc_normal_(self.earth_position_bias, std=0.02)
 
+        if self.rel_pos_bias == "single":
+            # B * n_windows, window_size, C
+            window_size_d, window_size_hp = window_size
+            self.earth_position_bias = nn.Parameter(
+                torch.zeros(
+                    (
+                        1,
+                        self.num_heads,
+                        window_size_d * window_size_hp,
+                        window_size_d * window_size_hp,
+                    )
+                )
+            )
+            trunc_normal_(self.earth_position_bias, std=0.02)
+
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
@@ -157,7 +172,7 @@ class WindowAttention(nn.Module):
             q = q * self.scale
             attn = q @ k.transpose(-2, -1)
 
-        if self.rel_pos_bias == "earth":
+        if self.rel_pos_bias == "earth" or self.rel_pos_bias == "single":
             attn = attn + self.earth_position_bias
 
         if mask is not None:
@@ -639,7 +654,13 @@ class PatchEmbed(nn.Module):
         assert N == hp.nside2npix(
             self.data_spec.nside
         ), f"Input image size ({N}) doesn't match model ({self.data_spec.input_shape[0]})."
-        x_surface = torch.concatenate([x_surface, self.masks.unsqueeze(0)], dim=1)
+        x_surface = torch.concatenate(
+            [
+                x_surface,
+                self.masks.unsqueeze(0).expand(B, 3, 12 * self.data_spec.nside**2),
+            ],
+            dim=1,
+        )
         x_surface = self.proj_surface(x_surface)[:, :, None, :]
         x_upper = self.proj_upper(x_upper)
         x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
