@@ -7,6 +7,7 @@
 #endif
 
 #define PI 3.14150265358
+#define M_PI 3.14150265358
 
 layout(location = 0) VERTEXARG vec2 uv;
 
@@ -14,8 +15,8 @@ layout(location = 0) VERTEXARG vec2 uv;
 layout(set = 0, binding = 0) uniform Uniforms{
     float angle1;
     float angle2;
-    float min;
-    float max;
+    float minval;
+    float maxval;
     int nside;
 };
 layout(std430, set = 0, binding = 1) readonly buffer HPBuffers{
@@ -83,6 +84,10 @@ const float piover2 = PI * 0.5;
 const float pi = PI;
 const float twopi = 2.0 * PI;
 
+// const float pi2 = 3.141592653589793;
+const float TWO_PI = 6.283185307179586;
+const float INV2PI = 0.159154943091895; // 1/(2π)
+
 int vec2pix_nest(int nside, vec3 vec) {
     float z, za, z0, tt, tp, tmp, phi;
     int face_num, jp, jm, ifp, ifm;
@@ -149,6 +154,87 @@ int vec2pix_nest(int nside, vec3 vec) {
     return ipix;
 }
 
+// returns the angular distance (in radians) from dir to the nearest HEALPix cell boundary
+// #version 450 core
+
+// Returns the fractional distance (in [0,0.5]) from the nearest HEALPix cell edge
+
+// Returns the normalized distance (in [0,0.5]) to the nearest HEALPix cell edge
+float healpixEdgeDist2(int nside, vec3 dir) {
+    vec3 v = normalize(dir);
+    float z = v.z;
+    float phi = atan(v.y, v.x);
+    if (phi < 0.0) phi += 2.0 * PI;
+    float za = abs(z);
+    float tt = phi / (0.5 * PI);
+
+    float xf, yf;
+    if (za <= 2.0/3.0) {
+        // equatorial
+        float jp_f = float(nside) * (0.5 + tt - 0.75 * z);
+        float jm_f = float(nside) * (0.5 + tt + 0.75 * z);
+        xf = fract(jm_f);
+        yf = fract(float(nside) - jp_f);
+    } else {
+        // polar
+        int ntt = min(int(floor(tt)), 3);
+        float tp = tt - float(ntt);
+        float tmp = sqrt(3.0 * (1.0 - za));
+        float jp_f = float(nside) * tp * tmp;
+        float jm_f = float(nside) * (1.0 - tp) * tmp;
+        if (z >= 0.0) {
+            xf = fract(float(nside) - jm_f);
+            yf = fract(float(nside) - jp_f);
+        } else {
+            xf = fract(jp_f);
+            yf = fract(jm_f);
+        }
+    }
+
+    // distance in pixel‐units to the nearest grid line
+    return min(min(xf, 1.0 - xf), min(yf, 1.0 - yf));
+}
+
+
+float healpixEdgeDist(int nside, vec3 dir) {
+    vec3 v = normalize(dir);
+    float z = v.z;
+    float phi = atan(v.y, v.x);
+    if(phi < 0.0) phi += 2.0 * PI;
+    float za = abs(z);
+    float tt = phi / (PI * 0.5);
+
+    float xfp, yfp;
+    if (za <= 2.0/3.0) {
+        // Equatorial region
+        float jp = float(nside) * (0.5 + tt - 0.75 * z);
+        float jm = float(nside) * (0.5 + tt + 0.75 * z);
+        xfp = mod(jm, float(nside));
+        yfp = float(nside) - mod(jp, float(nside));
+    } else {
+        // Polar caps
+        int ntt = min(int(floor(tt)), 3);
+        float tp = tt - float(ntt);
+        float tmp = sqrt(3.0 * (1.0 - za));
+        float jp = clamp(floor(float(nside) * tp * tmp), 0.0, float(nside - 1));
+        float jm = clamp(floor(float(nside) * (1.0 - tp) * tmp), 0.0, float(nside - 1));
+        if (z >= 0.0) {
+            xfp = float(nside) - jm - 1.0;
+            yfp = float(nside) - jp - 1.0;
+        } else {
+            xfp = jp;
+            yfp = jm;
+        }
+    }
+
+    float fx = fract(xfp);
+    float fy = fract(yfp);
+    // distance to nearest integer grid line in pixel‐units
+    return min(min(fx, 1.0 - fx), min(fy, 1.0 - fy));
+}
+
+
+
 vec3 rotateVector(vec3 v, vec3 axis, float angle) {
     float c = cos(angle);
     float s = sin(angle);
@@ -181,7 +267,7 @@ void main() {
 
     vec4 sph = vec4(0, 0, 0, 0.4);
     float t = sphIntersect(ro, rd, sph);
-    vec3 col = vec3(0);
+    vec3 col = vec3(1.0);
     if (t > 0.0) {
         vec3 pos = ro + t*rd;
         vec3 nor = normalize( pos - sph.xyz );
@@ -189,7 +275,13 @@ void main() {
         // nor = rotateVector(nor, vec3(1, 0, 0), 3.14159 / 2.0 + angle2);
         int hp = vec2pix_nest(nside, nor);
         // int npix = 12 * 64 * 64;
-        col = plasma_quintic((hp_data[hp] - min) / (max - min));
+        col = plasma_quintic((hp_data[hp] - minval) / (maxval - minval));
+        float d = healpixEdgeDist2(nside / 2, nor);
+        float d2 = healpixEdgeDist2(nside / 16, nor);
+        float line = smoothstep(0.0, 0.1, d);
+        float line2 = smoothstep(0.0, 0.02, d2);
+        col = mix(vec3(0.0, 1.0, 0.0), col, line);
+        col = mix(vec3(1.0, 0.0, 0.0), col, line2);
         // col = plasma_quintic(float(hp) / float(npix));
         // col = vec3(1.2);
         // col *= 0.6+0.4*nor.y;

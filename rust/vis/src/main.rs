@@ -12,6 +12,7 @@ use egui_plot::{Legend, PlotPoint, PlotPoints, Points};
 use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
+use png::{BitDepth, ColorType, Encoder};
 use sqlformat::{format, FormatOptions};
 // use profiling::tracy_client;
 use core::time;
@@ -56,6 +57,10 @@ use ndarray_stats::QuantileExt;
 use np::load_npy_bytes;
 
 pub mod era5;
+
+// use png::{BitDepth, ColorType, Encoder};
+use std::num::NonZeroU32;
+use wgpu::{Extent3d, Texture};
 
 static HIDDEN_PARAMS: [&str; 3] = [
     "train_config.data.config",
@@ -143,6 +148,7 @@ struct GuiParams {
     x_axis: XAxis,
     npy_plot_size: f64,
     render_format: wgpu::TextureFormat,
+    png_texture: Option<wgpu::Texture>,
     param_values: HashMap<String, HashSet<String>>,
     // param_values_handle: JoinHandle<HashMap<String, HashSet<String>>>,
     filtered_values: HashMap<String, HashSet<String>>,
@@ -210,11 +216,13 @@ struct HPShader {
     angle2: f32,
     min: f32,
     max: f32,
+    capture: bool,
     array: ndarray::prelude::ArrayBase<
         ndarray::OwnedRepr<f32>,
         ndarray::prelude::Dim<ndarray::IxDynImpl>,
     >,
     artifact_view: NPYArtifactView,
+    artifact_view_texture: Texture,
 }
 
 #[allow(dead_code)]
@@ -461,11 +469,112 @@ impl eframe::egui_wgpu::CallbackTrait for HPShader {
 
     fn finish_prepare(
         &self,
-        _device: &eframe::wgpu::Device,
-        _queue: &eframe::wgpu::Queue,
-        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        encoder: &mut eframe::wgpu::CommandEncoder,
         _callback_resources: &mut eframe::egui_wgpu::CallbackResources,
     ) -> Vec<eframe::wgpu::CommandBuffer> {
+        if !self.capture {
+            return Vec::new();
+        }
+        // 1) make a staging buffer (reuse in resources if you like)
+        // 1) new encoder for our offscreen pass + copy
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("hp-capture"),
+        });
+
+        // 2) offscreen render into `self.artifact_view_texture`
+        let view = self.artifact_view_texture.create_view(&Default::default());
+        {
+            // let res = /* same resources you created in prepare() */
+            //     unimplemented!("get your HPShaderResources here");
+            let res = _callback_resources.get_mut::<HPShaderResources>().unwrap();
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hp-offscreen-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rpass.set_pipeline(&res.pipeline);
+            rpass.set_viewport(0.0, 0.0, 1024 as f32, 1024 as f32, 0.0, 1.0);
+            rpass.set_bind_group(0, res.bind_groups.get(&self.artifact_view).unwrap(), &[]);
+            rpass.draw(0..4, 0..1);
+        }
+
+        // 3) copy offscreen -> staging buffer
+        let size = self.artifact_view_texture.size();
+        let bytes_per_row = 4 * size.width;
+        let padded = NonZeroU32::new(bytes_per_row).unwrap();
+        let buf_size = (bytes_per_row as u64) * (size.height as u64);
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hp-capture-staging"),
+            size: buf_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &self.artifact_view_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(size.height),
+                },
+            },
+            size,
+        );
+
+        // 4) finish and submit
+        let cmd_buf = encoder.finish();
+        queue.submit(Some(cmd_buf));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = futures::channel::oneshot::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        device.poll(wgpu::Maintain::Wait);
+        futures::executor::block_on(rx).unwrap().unwrap();
+
+        // 2) copy out a Vec<u8>
+        let data = slice.get_mapped_range();
+        let mut png_data = data.to_vec(); // clone into a Vec<u8>
+
+        for px in png_data.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        // 3) drop the mapped view so we can unmap
+        drop(data);
+        staging.unmap();
+
+        // 4) write the PNG from our Vec<u8>
+        let index_str = self
+            .artifact_view
+            .index
+            .iter()
+            .map(|x| format!("{}", x))
+            .join("_");
+        let filename = format!("{}_{}.png", self.artifact_view.artifact_id.name, index_str);
+        let mut file = File::create(filename).unwrap();
+        let mut enc = Encoder::new(&mut file, size.width, size.height);
+        enc.set_color(ColorType::Rgba);
+        enc.set_depth(BitDepth::Eight);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(&png_data).unwrap();
+
+        println!("> hp_shader.png written");
         Vec::new()
     }
 }
@@ -1181,7 +1290,7 @@ impl eframe::App for GuiRuns {
         let mut file = File::create("last_filters.ron").unwrap();
         file.write_all(serialized.as_bytes()).unwrap();
     }
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let t_update = Instant::now();
 
         if !self.initialized {
@@ -1473,6 +1582,7 @@ impl eframe::App for GuiRuns {
                 });
         });
         self.initialized = true;
+
         ctx.request_repaint();
     }
 }
@@ -2247,6 +2357,7 @@ fn render_hp_shader(
     let subarray = slice_array(view, array);
     // dbg!(&view);
     // dbg!(&subarray);
+    let save = ui.input(|inp| inp.key_pressed(egui::Key::S));
     painter.add(egui::Shape::Callback(
         eframe::egui_wgpu::Callback::new_paint_callback(
             resp.rect,
@@ -2257,9 +2368,11 @@ fn render_hp_shader(
                 min,
                 max, // min: min_max_hp(, ),
                 array: subarray,
-                artifact_view: view.clone(), // array: array.clone(),
-                                             // max: 0.0, // node: *node_idx,
-                                             // out_port: output_id,
+                artifact_view: view.clone(),
+                capture: save,
+                artifact_view_texture: gui_params.png_texture.as_ref().unwrap().clone(), // array: array.clone(),
+                                                                                         // max: 0.0, // node: *node_idx,
+                                                                                         // out_port: output_id,
             },
         ),
     ));
@@ -4899,6 +5012,27 @@ WHERE name = 'threads';
         "Visualizer",
         options,
         Box::new(|cc| {
+            let render_format = cc.wgpu_render_state.as_ref().unwrap().target_format;
+            let size = Extent3d {
+                width: 1024,
+                height: 1024,
+                depth_or_array_layers: 1,
+            };
+            let offscreen_texture = cc
+                .wgpu_render_state
+                .as_ref()
+                .unwrap()
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("hp-offscreen-texture"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: render_format, // same as your swapchain / shader target format
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[render_format],
+                });
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut gui_runs = GuiRuns {
                 duckdb: duckdb_pool,
@@ -4931,6 +5065,7 @@ WHERE name = 'threads';
                     }),
                     hovered_run: None,
                     selected_runs: None,
+                    png_texture: Some(offscreen_texture),
                 },
                 // texture: None,
                 artifact_handlers: HashMap::from([
