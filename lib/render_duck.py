@@ -324,12 +324,24 @@ def sql_create_table_checkpoints():
     """
 
 
-def insert_checkpoint(model_id: int, step: int, path: str):
+def insert_checkpoint(model_id: int, step: int, path: str, db_prefix=""):
     sql_insert_train_step = f"""
-        INSERT INTO {CHECKPOINTS_TABLE_NAME} (model_id, step, path)
+        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path)
         VALUES (?, ?, ?)
         ON CONFLICT (model_id, step)
         DO UPDATE SET path=EXCLUDED.path
+    """
+    # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
+    execute(
+        sql_insert_train_step,
+        [model_id, step, path],
+    )
+
+
+def insert_checkpoint_pg(model_id: int, step: int, path: str, db_prefix=""):
+    sql_insert_train_step = f"""
+        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path)
+        VALUES (?, ?, ?)
     """
     # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
     execute(

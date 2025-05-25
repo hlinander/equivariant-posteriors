@@ -337,7 +337,7 @@ class SwinTransformerBlock(nn.Module):
         #     INJECT_SAVE(
         #         "pre_shift_vis_windows_deep.npy", x[0, 0, ...].detach().permute(1, 0)
         #     )
-
+        # with torch.autograd.profiler.record_function("shift"):
         shifted_x = self.shifter.shift(x)
         # debug_shifted_x = shifted_x
 
@@ -359,6 +359,8 @@ class SwinTransformerBlock(nn.Module):
             device=next(self.parameters()).device,
         )  # nW*B, window_size, C
         # W-MSA/SW-MSA
+        # with torch.autograd.profiler.record_function("attention"):
+        # print("[att]", x_windows.shape)
         attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size, C
 
         # merge windows
@@ -368,6 +370,7 @@ class SwinTransformerBlock(nn.Module):
         )  # B N' C
 
         # reverse cyclic shift
+        # with torch.autograd.profiler.record_function("shift_back"):
         x = self.shifter.shift_back(shifted_x)
         # x = shifted_x
         # if self.shift_size > 0:
@@ -849,34 +852,43 @@ class SwinHPPangu(nn.Module):
         layer_out = []
         # x_upper = batch["input_upper"]
         # input = x
+        # with torch.autograd.profiler.record_function("patch embed"):
         x = self.patch_embed(x_surface, x_upper)
         # layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
         # skip2 = x
         # x = x + self.absolute_pos_embed
         # x = x.permute(0, 2, 1)
-        x = self.layers[0](x)
+        with torch.autograd.profiler.record_function("layer1"):
+            x = self.layers[0](x)
         # layer_out.append(("layer0", x[0, 0].permute(1, 0).detach()))
         skip = x
-        x = self.downsample(x)
+        with torch.autograd.profiler.record_function("downsample"):
+            x = self.downsample(x)
         # layer_out.append(("downsample", x[0, 0, :, 0].detach()))
-        x = self.layers[1](x)
+        with torch.autograd.profiler.record_function("layer2"):
+            x = self.layers[1](x)
         # layer_out.append(("layer1", x[0, 0].permute(1, 0).detach()))
-        x = self.layers[2](x)
+        with torch.autograd.profiler.record_function("layer3"):
+            x = self.layers[2](x)
         # layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
         x = self.norm(x)
         # # layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
         # # layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
         # # layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
         # # layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
-        x = self.upsample(x)
+        with torch.autograd.profiler.record_function("upsample"):
+            x = self.upsample(x)
         # layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
-        x = self.layers[3](x)
+        with torch.autograd.profiler.record_function("layer4"):
+            x = self.layers[3](x)
         # layer_out.append(("layer3", x[0, 0].permute(1, 0).detach()))
-        x = torch.concatenate([skip, x], -1)
+        with torch.autograd.profiler.record_function("concat"):
+            x = torch.concatenate([skip, x], -1)
         # layer_out.append(("post_skip", x[0, 0].permute(1, 0).detach()))
         # breakpoint()
         # x = torch.concatenate([x, x], -1)
-        x_surface, x_upper = self.final_up(x)
+        with torch.autograd.profiler.record_function("patch recovery"):
+            x_surface, x_upper = self.final_up(x)
         # layer_out.append(("final_up_surface", x_surface[0, :, 0].detach()))
         # layer_out.append(("final_up_upper", x_upper[0, 0, :, 0].detach()))
         x_surface = x_surface.permute(0, 2, 1)

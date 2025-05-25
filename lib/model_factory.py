@@ -27,6 +27,9 @@ from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
 from experiments.weather.models.swin_hp_pangu_masks import SwinHPPanguMaskConfig
 from experiments.weather.models.swin_hp_pangu_masks import SwinHPPanguMask
 
+from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPadConfig
+from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPad
+
 from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
     SwinHPPanguIsolatitudeConv,
 )
@@ -48,6 +51,7 @@ class _ModelFactory:
         self.models[LLaMA2GenerativeConfig.__name__] = LLaMA2Generative
         self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
         self.models[SwinHPPanguMaskConfig.__name__] = SwinHPPanguMask
+        self.models[SwinHPPanguPadConfig.__name__] = SwinHPPanguPad
         self.models[SwinHPPanguIsolatitudeConfig.__name__] = SwinHPPanguIsolatitude
         self.models[SwinHPPanguIsolatitudeConvConfig.__name__] = (
             SwinHPPanguIsolatitudeConv

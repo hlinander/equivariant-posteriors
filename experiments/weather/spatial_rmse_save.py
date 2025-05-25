@@ -183,143 +183,36 @@ if __name__ == "__main__":
     model = deser_model.model
     model.eval()
 
-    print("ACC")
-    if ds_rmse_config.driscoll_healy:
-        acc_res_on_dh = anomaly_correlation_coefficient_dh_on_dh(
-            model, dl_acc, device_id
-        )
-        acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
-
-        for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-                ds_rmse_config.short_name(),
-                [],
-                var_data.item(),
-                [],
-                db_prefix="pg.",
-            )
-        for var_idx, var_data in enumerate(acc_res_on_dh.acc_upper):
-            for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                # print(level, value)
-                var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-                # print(var_name)
-                # breakpoint()
-                insert_checkpoint_sample_metric(
-                    deser_model.model_id,
-                    epoch * len(ds_train),
-                    var_name,
-                    ds_rmse_config.short_name(),
-                    [],
-                    value.item(),
-                    [],
-                    db_prefix="pg.",
-                )
-    else:
-        acc_res = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-
-    # print("EXITING AFTER ACC")
-    # exit(0)
-
     print("[eval] rmse")
     if ds_rmse_config.driscoll_healy:
         rmse_res = rmse_dh(model, dl_rmse, device_id)
-        rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
+        # rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
+        rmse_res_on_dh_unweighted = rmse_dh_on_dh(
+            model, dl_rmse, device_id, weighted=False
+        )
         # save_and_register(
-        #     f"spatial_rmse_surface_{lead_time_days}d_dh.npydh", rmse_res_on_dh.surface
+        #     f"spatial_rmse_surface_e{epoch}_{lead_time_days}d_dh.npydh",
+        #     rmse_res_on_dh.surface,
         # )
         # save_and_register(
-        #     f"spatial_rmse_upper_{lead_time_days}d_dh.npydh", rmse_res_on_dh.upper
+        #     f"spatial_rmse_upper_e{epoch}_{lead_time_days}d_dh.npydh",
+        #     rmse_res_on_dh.upper,
         # )
-        for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-                ds_rmse_config.short_name(),
-                [],
-                var_data.item(),
-                [],
-                db_prefix="pg.",
-            )
-        for var_idx, var_data in enumerate(rmse_res_on_dh.mean_upper):
-            for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                # print(level, value)
-                var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-                # print(var_name)
-                # breakpoint()
-                insert_checkpoint_sample_metric(
-                    deser_model.model_id,
-                    epoch * len(ds_train),
-                    var_name,
-                    ds_rmse_config.short_name(),
-                    [],
-                    value.item(),
-                    [],
-                    db_prefix="pg.",
-                )
+        save_and_register(
+            f"spatial_rmse_surface_e{epoch}_{lead_time_days}d_dh_unweighted.npydh",
+            rmse_res_on_dh_unweighted.surface,
+        )
+        save_and_register(
+            f"spatial_rmse_upper_e{epoch}_{lead_time_days}d_dh_unweighted.npydh",
+            rmse_res_on_dh_unweighted.upper,
+        )
     else:
         rmse_res = rmse_hp(model, dl_rmse, device_id)
 
     # save_and_register(
-    #     f"spatial_rmse_surface_{lead_time_days}d_hp.npy", rmse_res.surface
+    #     f"spatial_rmse_surface_e{epoch}_{lead_time_days}d_hp.npy", rmse_res.surface
     # )
-    # save_and_register(f"spatial_rmse_upper_{lead_time_days}d_hp.npy", rmse_res.upper)
-    # sync(train_run)
-
-    for var_idx, var_data in enumerate(rmse_res.mean_surface):
-        insert_checkpoint_sample_metric(
-            deser_model.model_id,
-            epoch * len(ds_train),
-            f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-            ds_rmse_config.short_name(),
-            [],
-            var_data.item(),
-            [],
-            db_prefix="pg.",
-        )
-    for var_idx, var_data in enumerate(rmse_res.mean_upper):
-        for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            # print(level, value)
-            var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            # print(var_name)
-            # breakpoint()
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                var_name,
-                ds_rmse_config.short_name(),
-                [],
-                value.item(),
-                [],
-                db_prefix="pg.",
-            )
-    for var_idx, var_data in enumerate(acc_res.acc_surface):
-        insert_checkpoint_sample_metric(
-            deser_model.model_id,
-            epoch * len(ds_train),
-            f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-            ds_rmse_config.short_name(),
-            [],
-            var_data.item(),
-            [],
-            db_prefix="pg.",
-        )
-    for var_idx, var_data in enumerate(acc_res.acc_upper):
-        for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            # print(level, value)
-            var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            # print(var_name)
-            # breakpoint()
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                var_name,
-                ds_rmse_config.short_name(),
-                [],
-                value.item(),
-                [],
-                db_prefix="pg.",
-            )
+    # save_and_register(
+    #     f"spatial_rmse_upper_e{epoch}_{lead_time_days}d_hp.npy", rmse_res.upper
+    # )
+    sync(train_run)

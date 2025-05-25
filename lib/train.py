@@ -159,13 +159,14 @@ def train(
     for i, batch in enumerate(dataloader):
         batch_time = train_epoch_state.timing_metric.stop("batch")
         if batch_time is not None:
-            duck.insert_train_step_metric(
-                train_epoch_state.model_id,
-                train_run.run_id,
-                "batch_time",
-                train_epoch_state.batch,
-                batch_time,
-            )
+            if ddp.get_rank() == 0:
+                duck.insert_train_step_metric(
+                    train_epoch_state.model_id,
+                    train_run.run_id,
+                    "batch_time",
+                    train_epoch_state.batch,
+                    batch_time,
+                )
         train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += 1
 
@@ -174,17 +175,18 @@ def train(
 
         loss_val = loss(output, batch)
         loss_val.backward()
-        train_epoch_state.timing_metric.start("insert_duck_metric")
-        duck.insert_train_step(
-            train_epoch_state.model_id,
-            train_run.run_id,
-            train_epoch_state.batch,
-            data_factory.get_factory()
-            .get_class(train_run.train_config.train_data_config)
-            .__name__,
-            batch["sample_id"].long().tolist(),
-        )
-        train_epoch_state.timing_metric.stop("insert_duck_metric")
+        if ddp.get_rank() == 0:
+            train_epoch_state.timing_metric.start("insert_duck_metric")
+            duck.insert_train_step(
+                train_epoch_state.model_id,
+                train_run.run_id,
+                train_epoch_state.batch,
+                data_factory.get_factory()
+                .get_class(train_run.train_config.train_data_config)
+                .__name__,
+                batch["sample_id"].long().tolist(),
+            )
+            train_epoch_state.timing_metric.stop("insert_duck_metric")
 
         if train_run.train_config.gradient_clipping is not None:
             torch.nn.utils.clip_grad_norm_(
@@ -199,13 +201,14 @@ def train(
                 if param.grad is not None
             ]
             norm = torch.cat(grads).norm()
-            duck.insert_train_step_metric(
-                train_epoch_state.model_id,
-                train_run.run_id,
-                "gradient_norm",
-                train_epoch_state.batch,
-                norm.item(),
-            )
+            if ddp.get_rank() == 0:
+                duck.insert_train_step_metric(
+                    train_epoch_state.model_id,
+                    train_run.run_id,
+                    "gradient_norm",
+                    train_epoch_state.batch,
+                    norm.item(),
+                )
         optimizer.zero_grad(set_to_none=True)
 
         if ddp.get_rank() > 0:
@@ -357,7 +360,7 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
     ]
 
     return TrainEpochState(
-        model_id=duck.insert_model(train_run),
+        model_id=duck.insert_model(train_run) if ddp.get_rank() == 0 else 0,
         model=init_model,
         optimizer=opt,
         train_metrics=train_metrics,
@@ -383,7 +386,8 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
     try:
         state = deserialize(config)
         if state is not None:
-            duck.insert_model_with_model_id(train_run, state.model_id)
+            if ddp.get_rank() == 0:
+                duck.insert_model_with_model_id(train_run, state.model_id)
         # duck.execute("DELETE FROM ")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
@@ -409,22 +413,24 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
     print("Serializing config...")
     serialize_config = SerializeConfig(train_run=train_run, train_epoch_state=state)
 
-    try:
-        print("Render duck")
-        duck.render_duck(train_run, state)
-    except duck.duckdb.duckdb.ConstraintException:
-        print("Probably already synced model parameters...")
+    if ddp.get_rank() == 0:
+        try:
+            print("Render duck")
+            duck.render_duck(train_run, state)
+        except duck.duckdb.duckdb.ConstraintException:
+            print("Probably already synced model parameters...")
 
     print("Sync duck")
     if ddp.get_rank() == 0:
         serialize(serialize_config)
-    duck.sync()
+        duck.sync()
     print("Run epochs...")
     while state.epoch < train_run.epochs:
         train(train_run, state, train_epoch_spec)
 
         state.epoch += 1
-        duck.insert_checkpoint(state.model_id, state.batch, None)
+        if ddp.get_rank() == 0:
+            duck.insert_checkpoint(state.model_id, state.batch, None)
 
         validate(state, train_epoch_spec, train_run)
         if ddp.get_rank() == 0:

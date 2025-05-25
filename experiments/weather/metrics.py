@@ -163,16 +163,22 @@ def anomaly_correlation_coefficient_hp(model, dataloader, device_id):
     # breakpoint()
 
     for idx, batch in enumerate(dataloader):
-        batch = {k: v.to(device_id) for k, v in batch.items()}
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
+        }
         # if traced_model is None:
         # traced_model = torch.jit.trace(
         # model_forward, (batch["input_surface"], batch["input_upper"])
         # )
         # traced_model = torch.jit.freeze(traced_model)
         # print("Model forward...")
-        with torch.no_grad():
-            output = model(batch)
-        output = {k: v.detach() for k, v in output.items()}
+        for _ in range(dataloader.dataset.config.lead_time_days):
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+
+        output = {k: v.detach() if hasattr(v, "to") else v for k, v in output.items()}
         # print("Denorming...")
         out_surface, out_upper = denormalize_sample(
             stats, output["logits_surface"].double(), output["logits_upper"].double()
@@ -290,7 +296,7 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
             batch["input_surface"] = output["logits_surface"]
             batch["input_upper"] = output["logits_upper"]
 
-        output = {k: v.detach() for k, v in output.items()}
+        output = {k: v.detach() if hasattr(v, "to") else v for k, v in output.items()}
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),
             output["logits_upper"][0].detach().cpu().numpy(),
@@ -300,11 +306,17 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
         surface = torch.from_numpy(surface).to(device_id)
         upper = torch.from_numpy(upper).to(device_id)
         # print("Denorming...")
+        # out_surface, out_upper = denormalize_sample(
+        #     stats, output["logits_surface"].double(), output["logits_upper"].double()
+        # )
+        # breakpoint()
         out_surface, out_upper = denormalize_sample(
-            stats, output["logits_surface"].double(), output["logits_upper"].double()
+            stats, surface.double()[None, ...], upper.double()[None, ...]
         )
         target_surface, target_upper = denormalize_sample(
-            stats, batch["target_surface"].double(), batch["target_upper"].double()
+            stats,
+            batch_hp["target_surface"].double(),
+            batch_hp["target_upper"].double(),
         )
         climate_surface, climate_upper = denormalize_sample(
             stats,
@@ -338,6 +350,157 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
             # breakpoint()
             nominator_surface += out_surface * target_surface  # .sum(dim=dims)
             nominator_upper += out_upper * target_upper  # .sum(dim=dims)
+            # print("nominator done")
+        # if idx > 2:
+        # break
+
+    denominator_surface = torch.sqrt(
+        logit_surface_squared.sum(dim=dims) * target_surface_squared.sum(dim=dims)
+    )
+    denominator_upper = torch.sqrt(
+        logit_upper_squared.sum(dim=dims) * target_upper_squared.sum(dim=dims)
+    )
+
+    acc_surface = nominator_surface.sum(dim=dims) / denominator_surface
+    acc_upper = nominator_upper.sum(dim=dims) / denominator_upper
+
+    return ACC(
+        acc_surface=acc_surface,
+        acc_upper=acc_upper,
+        acc_unnorm_surface=nominator_surface,
+        acc_unnorm_upper=nominator_upper,
+    )
+
+
+def calculate_latitude_weight_from_surface_tensor(out_surface):
+    weights = torch.zeros(out_surface.shape[-2:], dtype=out_surface.dtype)
+    cos_vals = torch.zeros((out_surface.shape[-2],), dtype=out_surface.dtype)
+    for lat_idx in range(out_surface.shape[-2]):
+        lat = (
+            np.pi
+            / 2.0
+            * abs(out_surface.shape[-2] // 2 - lat_idx)
+            / (out_surface.shape[-2] // 2)
+        )
+        cos_vals[lat_idx] = np.cos(lat)
+    cos_vals = out_surface.shape[-2] * cos_vals / cos_vals.sum()
+
+    # print(cos_vals)
+    weights[:] = cos_vals[:, None]
+
+    weights = weights.to(out_surface.device)
+    return weights
+
+
+def anomaly_correlation_coefficient_dh_on_dh(model, dataloader_dh, device_id):
+    # surface: B, variable, x
+    # upper: B, variable, height, x
+    ds_config = dataloader_dh.dataset.config.validation()
+    # ds_config.driscoll_healy = False
+    # ds_hp = Climatology(ds_config)
+    # ds_hp = DataHP(ds_config)
+    # dl_hp = torch.utils.data.DataLoader(
+    # ds_hp,
+    # batch_size=1,
+    # shuffle=False,
+    # drop_last=False,
+    # )
+    stats = deserialize_dataset_statistics(dataloader_dh.dataset.config.nside).item()
+    stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
+
+    initialized = False
+    logit_surface_squared = None
+    target_surface_squared = None
+    logit_upper_squared = None
+    target_upper_squared = None
+    nominator_surface = None
+    nominator_upper = None
+
+    dims = [0, -1, -2]
+    # stats = deserialize_dataset_statistics(dataloader.dataset.config.nside).item()
+    # traced_model = None
+    model = model.eval()
+
+    # def model_forward(surface, upper):
+    # return model._forward((surface, upper))
+    # template = dataloader.dataset.ds.get_template_e5s()
+    # meta = dataloader.dataset.ds.get_meta()
+    # breakpoint()
+    weights = None
+
+    for idx, batch_dh in tqdm.tqdm(enumerate(dataloader_dh)):
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
+        }
+        # if traced_model is None:
+        # traced_model = torch.jit.trace(
+        # model_forward, (batch["input_surface"], batch["input_upper"])
+        # )
+        # traced_model = torch.jit.freeze(traced_model)
+        # print("Model forward...")
+        # with torch.no_grad():
+        # output = model(batch)
+        for _ in range(ds_config.lead_time_days):
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+
+        output = {k: v.detach() if hasattr(v, "to") else v for k, v in output.items()}
+
+        out_surface, out_upper = denormalize_sample(
+            stats,
+            output["logits_surface"].double(),  # [None, ...],
+            output["logits_upper"].double(),  # [None, ...],
+        )
+        target_surface, target_upper = denormalize_sample(
+            stats,
+            batch["target_surface"].double(),
+            batch["target_upper"].double(),
+        )
+        climate_surface, climate_upper = denormalize_sample(
+            stats,
+            batch["climate_target_surface"].double(),
+            batch["climate_target_upper"].double(),
+        )
+        # print("ACC..")
+        if weights is None:
+            weights = calculate_latitude_weight_from_surface_tensor(out_surface)
+            # breakpoint()
+            # cos_sum += np.cos(lat)
+
+        # out_surface.shape = torch.Size([1, 4, 157, 314])
+        # out_upper.shape = torch.Size([1, 5, 13, 157, 314])
+        out_surface = out_surface - climate_surface
+        out_upper = out_upper - climate_upper
+        target_surface = target_surface - climate_surface
+        target_upper = target_upper - climate_upper
+        if not initialized:
+            initialized = True
+            # breakpoint()
+            logit_surface_squared = weights * out_surface**2  # .sum(dim=dims)
+            # breakpoint()
+            target_surface_squared = weights * target_surface**2  # .sum(dim=dims)
+            logit_upper_squared = weights * out_upper**2  # .sum(dim=dims)
+            target_upper_squared = weights * target_upper**2  # .sum(dim=dims)
+
+            # breakpoint()
+            nominator_surface = weights * out_surface * target_surface  # .sum(dim=dims)
+            nominator_upper = weights * out_upper * target_upper  # .sum(dim=dims)
+        else:
+            # print("surface")
+            logit_surface_squared += weights * out_surface**2  # .sum(dim=dims)
+            target_surface_squared += weights * target_surface**2  # .sum(dim=dims)
+            # print("upper")
+            logit_upper_squared += weights * out_upper**2  # .sum(dim=dims)
+            target_upper_squared += weights * target_upper**2  # .sum(dim=dims)
+
+            # print("nominator")
+            # breakpoint()
+            nominator_surface += (
+                weights * out_surface * target_surface
+            )  # .sum(dim=dims)
+            nominator_upper += weights * out_upper * target_upper  # .sum(dim=dims)
             # print("nominator done")
         # if idx > 2:
         # break
@@ -532,6 +695,94 @@ def rmse_dh(model, dataloader_dh, device_id):
     rmse_upper /= n_batches
     mean_rmse_surface = rmse_surface.sum(dim=-1) / n_pixels
     mean_rmse_upper = rmse_upper.sum(dim=-1) / n_pixels
+    return RMSE(
+        surface=rmse_surface,
+        upper=rmse_upper,
+        mean_surface=mean_rmse_surface,
+        mean_upper=mean_rmse_upper,
+    )
+    # return dict(surface=rmse_surface, upper=rmse_upper)
+
+
+def rmse_dh_on_dh(model, dataloader_dh, device_id, weighted=True):
+    # surface: B, variable, x
+    # upper: B, variable, height, x
+
+    print("[eval] RMSE Driscoll-Healy on DH grid")
+    initialized = False
+    rmse_surface = None
+    rmse_upper = None
+
+    # dims = [0, -1]
+    model.eval()
+    n_batches = 0
+    ds_config = dataloader_dh.dataset.config.validation()
+
+    stats = deserialize_dataset_statistics(dataloader_dh.dataset.config.nside).item()
+    stats = {k: torch.tensor(v).to(device_id) for k, v in stats.items()}
+
+    weights = None
+    # stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
+    for idx, batch_dh in tqdm.tqdm(enumerate(dataloader_dh)):
+        # batch = {k: v.to(device_id) for k, v in batch_dh.items()}
+        batch = {
+            k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
+        }
+        for _ in range(ds_config.lead_time_days):
+            with torch.no_grad():
+                output = model(batch)
+            batch["input_surface"] = output["logits_surface"]
+            batch["input_upper"] = output["logits_upper"]
+
+        output = {k: v.detach() for k, v in output.items() if hasattr(v, "detach")}
+
+        out_surface, out_upper = denormalize_sample(
+            stats,
+            output["logits_surface"].double(),
+            output["logits_upper"].double(),
+        )
+        target_surface, target_upper = denormalize_sample(
+            stats,
+            batch["target_surface"].double(),  # astype(np.double),
+            batch["target_upper"].double(),  # astype(np.double),
+        )
+        n_pixels = batch["target_surface"].shape[-1] * batch["target_surface"].shape[-2]
+        n_samples = batch["target_surface"].shape[0]
+        if weights is None:
+            if weighted:
+                weights = calculate_latitude_weight_from_surface_tensor(out_surface)
+            else:
+                weights = 1.0
+
+        if not initialized:
+            initialized = True
+            rmse_surface_batches = weights * torch.sqrt(
+                ((out_surface - target_surface) ** 2)
+            )  # .sum(dim=-1)) / n_pixels
+            rmse_upper_batches = weights * torch.sqrt(
+                ((out_upper - target_upper) ** 2)
+            )  # .sum(dim=-1)) / n_pixels
+            rmse_surface = rmse_surface_batches.sum(dim=0) / n_samples
+            rmse_upper = rmse_upper_batches.sum(dim=0) / n_samples
+        else:
+            rmse_surface_batches = weights * torch.sqrt(
+                ((out_surface - target_surface) ** 2)
+            )  # .sum(dim=-1)) / n_pixels
+            rmse_upper_batches = weights * torch.sqrt(
+                ((out_upper - target_upper) ** 2)
+            )  # .sum(dim=-1)) / n_pixels
+            rmse_surface += rmse_surface_batches.sum(dim=0) / n_samples
+            rmse_upper += rmse_upper_batches.sum(dim=0) / n_samples
+        n_batches += 1
+        # breakpoint()
+        # TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # if idx > 1:
+        # break
+
+    rmse_surface /= n_batches
+    rmse_upper /= n_batches
+    mean_rmse_surface = rmse_surface.sum(dim=[-1, -2]) / n_pixels
+    mean_rmse_upper = rmse_upper.sum(dim=[-1, -2]) / n_pixels
     return RMSE(
         surface=rmse_surface,
         upper=rmse_upper,

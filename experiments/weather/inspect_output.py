@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 import os
 import sys
@@ -44,6 +43,8 @@ from lib.render_duck import (
     insert_checkpoint_sample_metric,
     ensure_duck,
     attach_pg,
+    insert_artifact,
+    sync,
 )
 
 # get_parameter,
@@ -74,19 +75,14 @@ if __name__ == "__main__":
     # ensemble_config = create_ensemble_config(config_file.create_config, 1)
     train_run = config_file.create_config(0, 10)
     # train_run = ensemble_config.members[0]
+    ensure_duck(train_run, in_memory=True)
+    attach_pg()
     result_path = prepare_results(
         f"{train_run.serialize_human()["run_id"]}",
         train_run,
     )
 
-    def save_and_register(name, array):
-        path = result_path / f"{name}.npy"
-
-        np.save(
-            path,
-            array.detach().cpu().float().numpy(),
-        )
-        # add_artifact(train_run, name, path)
+    # add_artifact(train_run, name, path)
 
     ds_train = DataHP(train_run.train_config.train_data_config)
     dl_train = torch.utils.data.DataLoader(
@@ -132,6 +128,17 @@ if __name__ == "__main__":
             print("Can't deserialize")
             exit(0)
 
+        insert_model_with_model_id(train_run, deser_model.model_id)
+
+        def save_and_register(name, array):
+            path = result_path / f"{name}.npy"
+
+            np.save(
+                path,
+                array.detach().cpu().float().numpy(),
+            )
+            insert_artifact(deser_model.model_id, name, path, ".npy")
+
         model = deser_model.model
         model.eval()
         print("[eval] rmse")
@@ -143,13 +150,21 @@ if __name__ == "__main__":
                 output = model(batch)
 
             grid_str = "dh" if ds_val_config.driscoll_healy else "hp"
-            save_and_register(f"{idx}_of_surface_{grid_str}.npy", output["logits_surface"])
-            save_and_register(f"{idx}_if_surface_{grid_str}.npy", batch["input_surface"])
-            save_and_register(f"{idx}_tf_surface_{grid_str}.npy", batch["target_surface"])
+            save_and_register(
+                f"{idx}_of_surface_{grid_str}.npy", output["logits_surface"]
+            )
+            save_and_register(
+                f"{idx}_if_surface_{grid_str}.npy", batch["input_surface"]
+            )
+            save_and_register(
+                f"{idx}_tf_surface_{grid_str}.npy", batch["target_surface"]
+            )
             save_and_register(f"{idx}_of_upper_{grid_str}.npy", output["logits_upper"])
             save_and_register(f"{idx}_if_upper_{grid_str}.npy", batch["input_upper"])
             save_and_register(f"{idx}_tf_upper_{grid_str}.npy", batch["target_upper"])
+            sync(train_run)
             del output
+            break
 
     finally:
         lock.release()

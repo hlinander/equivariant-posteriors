@@ -337,9 +337,10 @@ class EarthSpecificBlock(nn.Module):
 
         shift_pl, shift_lat, shift_lon = self.shift_size
         if self.roll:
-            shifted_x = torch.roll(
-                x, shifts=(-shift_pl, -shift_lat, -shift_lon), dims=(1, 2, 3)
-            )
+            with torch.autograd.profiler.record_function("shift"):
+                shifted_x = torch.roll(
+                    x, shifts=(-shift_pl, -shift_lat, -shift_lon), dims=(1, 2, 3)
+                )
             x_windows = window_partition(shifted_x, self.window_size)
             # B*num_lon, num_pl*num_lat, win_pl, win_lat, win_lon, C
         else:
@@ -353,9 +354,10 @@ class EarthSpecificBlock(nn.Module):
         )
         # B*num_lon, num_pl*num_lat, win_pl*win_lat*win_lon, C
 
-        attn_windows = self.attn(
-            x_windows, mask=self.attn_mask
-        )  # B*num_lon, num_pl*num_lat, win_pl*win_lat*win_lon, C
+        with torch.autograd.profiler.record_function("attention"):
+            attn_windows = self.attn(
+                x_windows, mask=self.attn_mask
+            )  # B*num_lon, num_pl*num_lat, win_pl*win_lat*win_lon, C
 
         attn_windows = attn_windows.view(
             attn_windows.shape[0], attn_windows.shape[1], win_pl, win_lat, win_lon, C
@@ -366,9 +368,10 @@ class EarthSpecificBlock(nn.Module):
                 attn_windows, self.window_size, Pl_pad, Lat_pad, Lon_pad
             )
             # B * Pl * Lat * Lon * C
-            x = torch.roll(
-                shifted_x, shifts=(shift_pl, shift_lat, shift_lon), dims=(1, 2, 3)
-            )
+            with torch.autograd.profiler.record_function("shift_back"):
+                x = torch.roll(
+                    shifted_x, shifts=(shift_pl, shift_lat, shift_lon), dims=(1, 2, 3)
+                )
         else:
             shifted_x = window_reverse(
                 attn_windows, self.window_size, Pl_pad, Lat_pad, Lon_pad
@@ -439,9 +442,9 @@ class BasicLayer(nn.Module):
                     qk_scale=qk_scale,
                     drop=drop,
                     attn_drop=attn_drop,
-                    drop_path=drop_path[i]
-                    if isinstance(drop_path, list)
-                    else drop_path,
+                    drop_path=(
+                        drop_path[i] if isinstance(drop_path, list) else drop_path
+                    ),
                     norm_layer=norm_layer,
                 )
                 for i in range(depth)
@@ -559,21 +562,27 @@ class Pangu(nn.Module):
             upper_air (torch.Tensor): 3D n_pl=13, n_lat=721, n_lon=1440, chans=5.
         """
         layer_out = []
-        surface = torch.concat([surface, surface_mask.unsqueeze(0)], dim=1)
-        surface = self.patchembed2d(surface)
-        upper_air = self.patchembed3d(upper_air)
+        surface = torch.concat(
+            [surface, surface_mask.unsqueeze(0).repeat(surface.shape[0], 1, 1, 1)],
+            dim=1,
+        )
+        with torch.autograd.profiler.record_function("patch_embed"):
+            surface = self.patchembed2d(surface)
+            upper_air = self.patchembed3d(upper_air)
 
         x = torch.concat([surface.unsqueeze(2), upper_air], dim=2)
         B, C, Pl, Lat, Lon = x.shape
         # layer_out.append(("patch_embed", x[0, 0, 0, :, :].detach()))
         x = x.reshape(B, C, -1).transpose(1, 2)
 
-        x = self.layer1(x)
+        with torch.autograd.profiler.record_function("layer 1"):
+            x = self.layer1(x)
         # layer_out.append(("layer1", x[0, :, 0].detach().reshape(Pl, Lat, Lon)[0, :, :]))
 
         skip = x
 
-        x = self.downsample(x)
+        with torch.autograd.profiler.record_function("downsample"):
+            x = self.downsample(x)
         # layer_out.append(
         #     (
         #         "downsample",
@@ -582,7 +591,8 @@ class Pangu(nn.Module):
         #         .reshape(Pl, math.ceil(Lat / 2), math.ceil(Lon / 2))[0, :, :],
         #     )
         # )
-        x = self.layer2(x)
+        with torch.autograd.profiler.record_function("layer2"):
+            x = self.layer2(x)
         # layer_out.append(
         #     (
         #         "layer2",
@@ -591,7 +601,8 @@ class Pangu(nn.Module):
         #         .reshape(Pl, math.ceil(Lat / 2), math.ceil(Lon / 2))[0, :, :],
         #     )
         # )
-        x = self.layer3(x)
+        with torch.autograd.profiler.record_function("layer3"):
+            x = self.layer3(x)
         # layer_out.append(
         #     (
         #         "layer3",
@@ -600,20 +611,24 @@ class Pangu(nn.Module):
         #         .reshape(Pl, math.ceil(Lat / 2), math.ceil(Lon / 2))[0, :, :],
         #     )
         # )
-        x = self.upsample(x)
+        with torch.autograd.profiler.record_function("upsample"):
+            x = self.upsample(x)
         # layer_out.append(
         #     ("upsample", x[0, :, 0].detach().reshape(Pl, Lat, Lon)[0, :, :])
         # )
-        x = self.layer4(x)
+        with torch.autograd.profiler.record_function("layer4"):
+            x = self.layer4(x)
         # layer_out.append(("layer4", x[0, :, 0].detach().reshape(Pl, Lat, Lon)[0, :, :]))
 
-        output = torch.concat([x, skip], dim=-1)
-        output = output.transpose(1, 2).reshape(B, -1, Pl, Lat, Lon)
-        output_surface = output[:, :, 0, :, :]
-        output_upper_air = output[:, :, 1:, :, :]
+        with torch.autograd.profiler.record_function("concat"):
+            output = torch.concat([x, skip], dim=-1)
+            output = output.transpose(1, 2).reshape(B, -1, Pl, Lat, Lon)
+            output_surface = output[:, :, 0, :, :]
+            output_upper_air = output[:, :, 1:, :, :]
 
-        output_surface = self.patchrecovery2d(output_surface)
-        output_upper_air = self.patchrecovery3d(output_upper_air)
+        with torch.autograd.profiler.record_function("patchrecovery"):
+            output_surface = self.patchrecovery2d(output_surface)
+            output_upper_air = self.patchrecovery3d(output_upper_air)
         return output_surface, output_upper_air, layer_out
 
     # def forward(self, surface, surface_mask, upper_air):
