@@ -616,7 +616,6 @@ fn download_artifact(
         let rx_db_artifact = rx_artifact_mutex.lock_owned().await;
         loop {
             let rx_res = rx_db_artifact.recv();
-            // println!("[db] recv {:?}", rx_res);
             match rx_res {
                 Ok(artifact_binary_res) => match artifact_binary_res {
                     ArtifactTransfer::Done(artifact_binary) => {
@@ -653,7 +652,6 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
     let mut new_binary_artifact: Option<BinaryArtifact> = None;
     match binary_artifact {
         BinaryArtifact::Loading((join_handle, download_progress)) => {
-            // println!("[ARTIFACTS] Loading ....");
             if join_handle.is_finished() {
                 let data_res = tokio::runtime::Handle::current()
                     .block_on(join_handle)
@@ -1106,7 +1104,8 @@ fn get_train_ids_from_filter_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     gui_params: &GuiParams,
 ) -> Vec<String> {
-    let duck = pool.get().unwrap();
+    let mut duck = pool.get().unwrap();
+    let duck = duck.transaction().unwrap();
 
     let mut train_ids = Vec::new();
     for param_filter in &gui_params.filters.param_filters {
@@ -1138,16 +1137,18 @@ fn get_train_ids_from_filter_duck(
             continue;
         }
         let sql = format!(
-            "SELECT train_id, COUNT(*) FROM
-                (SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+            "
+            WITH uniq_models AS (select distinct * from local.models)
+            SELECT train_id, COUNT(*) FROM
+                (SELECT *, name as variable, value as value_text
                 FROM local.model_parameter_text
                 UNION
-                SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+                SELECT *, name as variable, format('{{:E}}', value) as value_text
                 FROM local.model_parameter_float
                 UNION
-                SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+                SELECT *, name as variable, format('{{:d}}', value) as value_text
                 FROM local.model_parameter_int)
-            JOIN local.models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
+            JOIN uniq_models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
         let res = duck.prepare(&sql);
         if let Err(err) = &res {
@@ -1166,7 +1167,6 @@ fn get_train_ids_from_filter_duck(
                 .unwrap()
                 .map(|x| x.unwrap())
                 .collect();
-            // println!("{:?}", ids);
             train_ids.extend_from_slice(&ids);
         }
     }
@@ -1384,7 +1384,6 @@ impl eframe::App for GuiRuns {
                     // {
                     //     for (k, v) in param_filter.filter.iter() {
                     //         if !v.is_empty() {
-                    //             println!("{}: {:?}", k, v);
                     //         }
                     //     }
                     // }
@@ -1847,7 +1846,6 @@ fn show_artifacts(
                                     // if let Some(binary) = binaries.get(&artifact_id) {
                                     match binary_artifact {
                                         BinaryArtifact::Loaded(binary_data) => {
-                                            // println!("len {}", binary_data.len());
                                             // let mut file = File::create("test.png").unwrap();
                                             // file.write_all(&binary_data).unwrap();
                                             // file.flush();
@@ -1894,7 +1892,6 @@ fn show_artifacts(
             let plot_width = ui.available_width() * 0.48;
             let plot_height = ui.available_width() * 0.48 * 0.5;
             let available_artifact_names: Vec<&String> = arrays.keys().map(|id| &id.name).collect();
-            // println!("render tabular");
             for (_artifact_name, filtered_arrays) in gui_params
                 .filters
                 .artifact_filters
@@ -1909,15 +1906,12 @@ fn show_artifacts(
                     )
                 })
             {
-                // println!("looper");
                 for (artifact_id, array) in filtered_arrays {
                     match &array.array {
                         NPYArray::Loading(binary_artifact) => {
                             render_artifact_download_progress(&binary_artifact, ui);
-                            // println!("loading");
                         }
                         NPYArray::Loaded(array) => {
-                            // println!("loaded");
                             // ui.allocate_ui()
                             ui.allocate_ui(
                                 egui::Vec2::from([plot_width, plot_height + 200.0]),
@@ -1939,7 +1933,6 @@ fn show_artifacts(
                             );
                         }
                         NPYArray::Error(err) => {
-                            // println!("error");
                             ui.label(err);
                             // ui.colored_label(egui::Color32::RED, err);
                             // ui.allocate_space(egui::Vec2::new(ui.available_width(), 0.0));
@@ -2689,7 +2682,6 @@ fn update_plot_map(
         };
         // for (idx, w) in x.windows(2).enumerate() {
         //     if w[1] < w[0] {
-        //         println!(
         //             "{}: {}, {} < {} [{idx} ({})]",
         //             train_id,
         //             variable,
@@ -4126,25 +4118,29 @@ fn render_param_tree(
 fn get_parameter_values_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
 ) -> HashMap<String, HashSet<String>> {
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
+
+    // conn.is_autocommit()
+    let tx = conn.transaction().unwrap();
     //"SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
-    let sql = format!("
+    let sql = format!(
+        "
         SELECT DISTINCT variable, value_text FROM (
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+        SELECT *, name as variable, value as value_text
         FROM local.model_parameter_text JOIN local.models ON id=model_id
         -- WHERE name NOT IN () 
         UNION
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+        SELECT *, name as variable, format('{{:E}}', value) as value_text
         FROM local.model_parameter_float JOIN local.models ON id=model_id
          -- WHERE name NOT IN () 
         UNION
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+        SELECT *, name as variable, format('{{:d}}', value) as value_text
         FROM local.model_parameter_int JOIN local.models ON id=model_id
         --WHERE name NOT IN ()
         )
         ORDER BY variable, value_text"
     );
-    let mut stmt = conn.prepare(sql.as_str()).unwrap();
+    let mut stmt = tx.prepare(sql.as_str()).unwrap();
     let rows = stmt
         .query_map([], |row| {
             duckdb::Result::Ok((
@@ -4272,11 +4268,12 @@ fn get_artifacts_duck(
     if active_runs.is_empty() {
         return HashMap::new();
     }
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
+    let conn = conn.transaction().unwrap();
     let query = format!(
         "
-        SELECT * EXCLUDE (id, created_at, id_serial), db.artifacts.id as id FROM db.artifacts
-        JOIN db.models ON db.artifacts.model_id=db.models.id
+        SELECT * EXCLUDE(id), local.artifacts.id as id FROM local.artifacts
+        JOIN local.models as t2 ON local.artifacts.model_id=t2.id
         WHERE train_id IN ({}) ORDER BY train_id
         ",
         repeat_vars(active_runs.len()),
@@ -4327,7 +4324,6 @@ fn get_artifacts_duck(
 }
 
 fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
-    // println!("ensure_duckdb_schema");
     let conn = pool.get().unwrap();
     for table_name in [
         "models",
@@ -4353,7 +4349,6 @@ fn ensure_duckdb_schema(pool: &r2d2::Pool<DuckdbConnectionManager>) {
             [],
         )
         .expect(format!("create table {table_name}").as_str());
-        // println!("created {table_name}");
         // conn.execute("COPY FROM DATABASE db TO local (SCHEMA)", [])
         //     .expect("copy schema");
     }
@@ -4373,19 +4368,19 @@ fn repeat_vars(count: usize) -> String {
 
 #[instrument(skip(pool))]
 fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude::DataFrame {
-    // println!("get_runs_duck");
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
+    let conn = conn.transaction().unwrap();
     let query = format!(
         "
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, value as value_text
+        SELECT * , name as variable, value as value_text
         FROM local.model_parameter_text JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         UNION
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:E}}', value) as value_text
+        SELECT * , name as variable, format('{{:E}}', value) as value_text
         FROM local.model_parameter_float JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         UNION
-        SELECT * EXCLUDE (created_at, id_serial), name as variable, format('{{:d}}', value) as value_text
+        SELECT * , name as variable, format('{{:d}}', value) as value_text
         FROM local.model_parameter_int JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         ",
@@ -4414,7 +4409,6 @@ fn get_run_params(
     let t = Instant::now();
 
     let df = get_runs_duck(pool);
-    // println!("get_runs_duck {}", t.elapsed().as_millis());
     let t = Instant::now();
 
     let train_ids = df.column("train_id").unwrap().rechunk();
@@ -4458,7 +4452,7 @@ fn get_run_params(
 
 #[instrument(skip(pool))]
 fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
-    ensure_duckdb_schema(pool);
+    // ensure_duckdb_schema(pool);
     sync_full_table(&pool, "models");
     sync_full_table(&pool, "model_parameter_float");
     sync_full_table(&pool, "model_parameter_int");
@@ -4467,7 +4461,6 @@ fn sync_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) {
 
 #[instrument(skip_all)]
 fn sync_full_table(pool: &r2d2::Pool<DuckdbConnectionManager>, table_name: &str) {
-    ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
     let max_id: i32 = conn
         .query_row(
@@ -4497,7 +4490,6 @@ fn get_metrics_duck(
     if active_runs.len() == 0 {
         return DataFrame::empty();
     }
-    // println!("get_metrics_duck");
     let conn = pool.get().unwrap();
     let query = format!(
         // "
@@ -4555,7 +4547,6 @@ fn get_metrics_duck(
         .unwrap();
     let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
     let df = large_df.unwrap_or(DataFrame::empty());
-    // println!("{}", df);
     df
 }
 
@@ -4566,7 +4557,6 @@ fn sync_table(
     active_runs: &Vec<String>,
     limit: &mut usize,
 ) -> bool {
-    ensure_duckdb_schema(pool);
     let conn = pool.get().unwrap();
     let mut updated = false;
     println!("syncing {:?}", active_runs);
@@ -4709,83 +4699,93 @@ WHERE name = 'threads';
         )
         .expect("check threads");
     println!("duckdb version {}", version);
+    conn.execute("INSTALL ducklake;", [])
+        .expect("install ducklake failed");
     conn.execute("INSTALL postgres;", [])
         .expect("install postgres failed");
-    conn.execute("LOAD postgres;", [])
-        .expect("load postgres failed");
-    conn.execute("ATTACH 'local.db' as local;", [])
-        .expect("attach to psql failed");
+    conn.execute("INSTALL aws;", [])
+        .expect("install aws failed");
+    conn.execute("CALL load_aws_credentials()", [])
+        .expect("load aws credentials");
+    // .expect("load postgres failed");
+    // conn.execute("ATTACH 'local.db' as local;", [])
+    // .expect("attach to psql failed");
+    //
+    let dburl = env::var("PG").unwrap_or("localhost".into());
+    conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqp.ducklake')").as_str(), []).expect("attach ducklake");
+    conn.execute("USE local", []).expect("attach ducklake");
     conn.execute("SET memory_limit = '1GB';", [])
         .expect("attach to psql failed");
-    if env::var("DATABASE_URL").is_ok() {
-        conn.execute(
-        "ATTACH 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as db (TYPE POSTGRES, READ_ONLY);",
-        [],
-    ).expect("attach to psql failed");
-        sync_runs_duck(&duckdb_pool);
-        // sync_runs_duck(&duckdb_pool);
-        let db_thread_pool = duckdb_pool.clone();
-        std::thread::spawn(move || {
-            let mut train_runs = Vec::new();
-            let mut limit = 1000;
-            loop {
-                let start = Instant::now();
-                sync_runs_duck(&db_thread_pool);
-                let start = Instant::now();
-                if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
-                    train_runs = new_train_ids;
-                    // limit = 1000;
-                    println!("[db] got new train runs {:?}", train_runs);
-                }
-                let t = Instant::now();
-                let updated1 = sync_table(
-                    &db_thread_pool,
-                    "train_step_metric_float",
-                    &train_runs,
-                    &mut limit,
-                );
-                let updated2 = sync_table(&db_thread_pool, "train_steps", &train_runs, &mut limit);
-                if updated1 || updated2 {
-                    println!("sync elapsed {}", t.elapsed().as_millis());
-                }
-                if start.elapsed().as_millis() < 1000 {
-                    sleep(time::Duration::from_millis(1000) - start.elapsed());
-                }
+    // if env::var("DATABASE_URL").is_ok() {
+    // conn.execute(
+    // "ATTACH 'dbname=equiv_v2 user=postgres password=herdeherde host=127.0.0.1 port=5430' as db (TYPE POSTGRES, READ_ONLY);",
+    // [],
+    // ).expect("attach to psql failed");
+    // sync_runs_duck(&duckdb_pool);
+    // sync_runs_duck(&duckdb_pool);
+    // let db_thread_pool = duckdb_pool.clone();
+    // std::thread::spawn(move || {
+    //     let mut train_runs = Vec::new();
+    //     let mut limit = 1000;
+    //     loop {
+    //         let start = Instant::now();
+    //         // sync_runs_duck(&db_thread_pool);
+    //         let start = Instant::now();
+    //         if let Ok(new_train_ids) = rx_new_train_runs_to_db.try_recv() {
+    //             train_runs = new_train_ids;
+    //             // limit = 1000;
+    //             println!("[db] got new train runs {:?}", train_runs);
+    //         }
+    //         let t = Instant::now();
+    //         // let updated1 = sync_table(
+    //         //     &db_thread_pool,
+    //         //     "train_step_metric_float",
+    //         //     &train_runs,
+    //         //     &mut limit,
+    //         // );
+    //         // let updated2 = sync_table(&db_thread_pool, "train_steps", &train_runs, &mut limit);
+    //         // if updated1 || updated2 {
+    //         //     println!("sync elapsed {}", t.elapsed().as_millis());
+    //         // }
+    //         if start.elapsed().as_millis() < 1000 {
+    //             sleep(time::Duration::from_millis(1000) - start.elapsed());
+    //         }
+    //     }
+    // });
+    use tracing::Instrument;
+    let db_artifact_pool = duckdb_pool.clone();
+    let future = async move {
+        // let database_url = env::var("DATABASE_URL")
+        //     .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
+        // let pool = PgPoolOptions::new()
+        //     .max_connections(5)
+        //     .connect(&database_url)
+        //     .await
+        //     .expect("Can't connect to database");
+        println!("Artifact loop starting...");
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
+                handle_artifact_request(artifact_id, &db_artifact_pool, &tx_db_artifact).await;
             }
-        });
-        use tracing::Instrument;
-        let db_artifact_pool = duckdb_pool.clone();
-        let future = async move {
-            // let database_url = env::var("DATABASE_URL")
-            //     .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
-            // let pool = PgPoolOptions::new()
-            //     .max_connections(5)
-            //     .connect(&database_url)
-            //     .await
-            //     .expect("Can't connect to database");
-            println!("Artifact loop starting...");
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
-                    handle_artifact_request(artifact_id, &db_artifact_pool, &tx_db_artifact).await;
-                }
-            }
-        };
-        rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
-    }
+        }
+    };
+    rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
+    // }
     let plot_map_thread_pool = duckdb_pool.clone();
     std::thread::spawn(move || loop {
         let start = Instant::now();
         if let Ok(new_active_runs) = rx_active_runs.try_recv() {
             println!("updating...");
             let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
-            let artifacts = if env::var("DATABASE_URL").is_ok() {
-                ensure_duckdb_schema(&plot_map_thread_pool);
-                sync_full_table(&plot_map_thread_pool, "artifacts");
-                get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
-            } else {
-                HashMap::new()
-            };
+            let artifacts = get_artifacts_duck(&plot_map_thread_pool, &new_active_runs);
+            // let artifacts = if env::var("DATABASE_URL").is_ok() {
+            //     ensure_duckdb_schema(&plot_map_thread_pool);
+            //     //sync_full_table(&plot_map_thread_pool, "artifacts");
+            //     get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
+            // } else {
+            //     HashMap::new()
+            // };
             tx_plot_map.send((artifacts, plot_map)).unwrap();
         }
         if start.elapsed().as_millis() < 1000 {
@@ -4857,7 +4857,6 @@ WHERE name = 'threads';
     //     .sort("x", Default::default())
     //     .collect()
     //     .expect("filter");
-    // println!("filter: {}", t.elapsed().as_millis());
     // let t = Instant::now();
     // let df = df
     //     .lazy()
@@ -4866,7 +4865,6 @@ WHERE name = 'threads';
     //     .sort("x", Default::default())
     //     .collect()
     //     .expect("filter");
-    // println!("filter: {}", t.elapsed().as_millis());
     // panic!();
     // let t = df.lazy()
     //     .filter(
@@ -4880,7 +4878,6 @@ WHERE name = 'threads';
     // t.wind
     // t.group_by_rolling(, )
     // let sampled = t.sample_n_literal(1000, false, false, None).unwrap();
-    // println!("df: {:?
     let runs2 = Runs2 {
         active_runs: Vec::new(),
         plot_map: HashMap::new(),
@@ -5016,7 +5013,8 @@ async fn handle_artifact_request(
     tx_db_artifact: &SyncSender<ArtifactTransfer>,
 ) {
     println!("[db] artifact requested: {}", artifact_id);
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
+    let conn = conn.transaction().unwrap();
     let filesize = conn
         .query_row(
             "SELECT size FROM local.artifacts WHERE id=?",
@@ -5024,9 +5022,7 @@ async fn handle_artifact_request(
             |row| row.get::<_, i64>(0),
         )
         .unwrap();
-    // println!("{}", query);
     println!("Got request for existing artifact id of size {}", filesize);
-    // println!("[f] File {} size {}", &path, &filesize);
     let mut last_seq_num: i32 = -1;
     // let mut chunk_size = 1_000_000;
     let mut batch_size: usize = 1;
@@ -5039,7 +5035,7 @@ async fn handle_artifact_request(
         println!("loop step {}, {}", batch_size, last_seq_num);
         // https://github.com/duckdb/duckdb-postgres/issues/233
         let mut stmt = conn.prepare(
-                format!("SELECT * FROM postgres_query('db', 'SELECT seq_num, data, size FROM artifact_chunks WHERE artifact_id={artifact_id} AND seq_num > {last_seq_num} ORDER BY seq_num LIMIT {batch_size}')").as_str()
+                format!("SELECT seq_num, data, size FROM local.artifact_chunks WHERE artifact_id={artifact_id} AND seq_num > {last_seq_num} ORDER BY seq_num LIMIT {batch_size}").as_str()
             ).unwrap();
         // .bind(&artifact_id)
         // .bind(&last_seq_num)

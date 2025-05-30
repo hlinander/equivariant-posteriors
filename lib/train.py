@@ -241,7 +241,7 @@ def train(
         try:
             now = time.time()
             if now > train_epoch_state.next_visualization:
-                train_epoch_state.next_visualization = time.time() + 60
+                train_epoch_state.next_visualization = time.time() + 10
                 train_epoch_state.timing_metric.start("duck")
                 # last_postgres_result = render_psql(train_run, train_epoch_state)
                 # last_duck_result = duck.render_duck(train_run, train_epoch_state)

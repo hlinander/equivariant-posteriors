@@ -15,7 +15,12 @@ from lib.generic_ablation import generic_ablation
 from lib.distributed_trainer import distributed_train
 from lib.ddp import ddp_setup
 from lib.files import prepare_results
-from lib.render_duck import ensure_duck, insert_artifact, sync
+from lib.render_duck import (
+    ensure_duck,
+    insert_artifact,
+    sync,
+    insert_model_with_model_id,
+)
 from lib.serialization import deserialize_model, DeserializeConfig
 
 
@@ -27,7 +32,7 @@ def create_config(mlp_dim, ensemble_id):
 
     train_config = TrainConfig(
         model_config=MLPClassConfig(widths=[mlp_dim, mlp_dim]),
-        train_data_config=DataSpiralsConfig(seed=0, N=1000),
+        train_data_config=DataSpiralsConfig(seed=0, N=1002),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
         loss=ce_loss,
         optimizer=OptimizerConfig(
@@ -41,7 +46,7 @@ def create_config(mlp_dim, ensemble_id):
         compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=1,
+        epochs=4,
         save_nth_epoch=20,
         validate_nth_epoch=20,
     )
@@ -57,6 +62,7 @@ if __name__ == "__main__":
 
     device = ddp_setup()
     dsm = deserialize_model(DeserializeConfig(train_run=configs[0], device_id=device))
+    insert_model_with_model_id(configs[0], dsm.model_id)
     path = prepare_results("test", configs[0])
     # open(path / "test.npy", "wb").write(b"0" * 1024 * 1024 * 10)
     # print(path)
@@ -72,4 +78,4 @@ if __name__ == "__main__":
     plt.plot([0, 1], [0, 1])
     plt.savefig(path / "plot.png")
     insert_artifact(dsm.model_id, "plot.png", path / "plot.png", "png")
-    sync(configs[0].train_config)
+    sync(configs[0])

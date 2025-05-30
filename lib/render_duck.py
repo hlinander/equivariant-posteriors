@@ -78,14 +78,11 @@ def sql_create_table_artifacts():
     return """
                 CREATE TABLE IF NOT EXISTS artifacts (
                     id BIGINT,
-                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                    model_id BIGINT REFERENCES models(id),
+                    model_id BIGINT,
                     name text,
                     path text,
                     type text,
-                    size int,
-                    UNIQUE(model_id, name),
-                    PRIMARY KEY (id)
+                    size int
                 )
     """
 
@@ -93,8 +90,7 @@ def sql_create_table_artifacts():
 def sql_create_table_artifact_chunks():
     return """
                 CREATE TABLE IF NOT EXISTS artifact_chunks (
-                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                    artifact_id bigint references artifacts(id),
+                    artifact_id bigint,
                     seq_num int,
                     data bytea,
                     size int
@@ -156,11 +152,9 @@ def get_artifact(artifact_id):
 def sql_create_table_model_parameter(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(MODEL_PARAMETER, type_def.name)} (
-            model_id BIGINT REFERENCES models(id),
+            model_id BIGINT,
             name TEXT,
-            value {type_def.sql_type},
-            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-            UNIQUE (model_id, name)
+            value {type_def.sql_type}
         )"""
 
 
@@ -186,10 +180,7 @@ def sql_create_table_train_step_metric(type_def):
             run_id BIGINT,
             name TEXT,
             step INTEGER,
-            value {type_def.sql_type},
-            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-            FOREIGN KEY (model_id) REFERENCES models(id),
-            UNIQUE (model_id, run_id, name, step)
+            value {type_def.sql_type}
         )"""
 
 
@@ -229,9 +220,7 @@ def sql_create_table_checkpoint_sample_metric(type_def):
             dataset TEXT,
             sample_ids INTEGER[],
             mean {type_def.sql_type},
-            value_per_sample {type_def.sql_type}[],
-            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-            FOREIGN KEY (model_id, step) REFERENCES checkpoints(model_id, step)
+            value_per_sample {type_def.sql_type}[]
         )"""
 
 
@@ -261,9 +250,7 @@ def sql_create_table_models():
     return f"""
     CREATE TABLE IF NOT EXISTS {MODELS_TABLE_NAME} (
         id BIGINT,
-        train_id TEXT,
-        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-        UNIQUE(id)
+        train_id TEXT
     )"""
 
 
@@ -274,6 +261,7 @@ def insert_model(train_run: TrainRun):
 
 def insert_model_with_model_id(train_run: TrainRun, model_id: int):
     ensure_duck(train_run)
+    insert_or_update_train_run(train_run, model_id)
     train_id = stable_hash_str(train_run.train_config)
 
     sql_insert_model = """
@@ -286,13 +274,11 @@ def insert_model_with_model_id(train_run: TrainRun, model_id: int):
 def sql_create_table_train_steps():
     return f"""
     CREATE TABLE IF NOT EXISTS {TRAIN_STEPS_TABLE_NAME} (
-        model_id BIGINT REFERENCES models(id),
+        model_id BIGINT,
         run_id BIGINT,
         step INTEGER,
         dataset TEXT,
-        sample_ids INTEGER[],
-        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-        PRIMARY KEY (model_id, run_id, step, dataset)
+        sample_ids INTEGER[]
     )
     """
 
@@ -316,10 +302,7 @@ def sql_create_table_checkpoints():
     CREATE TABLE IF NOT EXISTS {CHECKPOINTS_TABLE_NAME} (
         model_id BIGINT ,
         step INTEGER ,
-        path TEXT,
-        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-        FOREIGN KEY (model_id) REFERENCES models(id),
-        PRIMARY KEY (model_id, step)
+        path TEXT
     )
     """
 
@@ -328,8 +311,8 @@ def insert_checkpoint(model_id: int, step: int, path: str, db_prefix=""):
     sql_insert_train_step = f"""
         INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path)
         VALUES (?, ?, ?)
-        ON CONFLICT (model_id, step)
-        DO UPDATE SET path=EXCLUDED.path
+       -- ON CONFLICT (model_id, step)
+       -- DO UPDATE SET path=EXCLUDED.path
     """
     # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
     execute(
@@ -366,8 +349,8 @@ def sql_create_table_sync():
     return """
     CREATE TABLE IF NOT EXISTS sync (
         table_name TEXT,
-        synced_time TIMESTAMP WITHOUT TIME ZONE,
-        PRIMARY KEY (table_name)
+        row_id BIGINT
+        -- synced_time TIMESTAMP WITHOUT TIME ZONE
     )
     """
 
@@ -376,11 +359,18 @@ def attach_pg(db="equiv_v2"):
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
     pw = env().postgres_password
-    execute("INSTALL postgres")
-    execute("LOAD postgres")
-    execute(
-        f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
+    # execute("INSTALL postgres")
+    # execute("LOAD postgres")
+    # execute(
+    #     f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
+    # )
+    CONN.sql("INSTALL ducklake")
+    CONN.sql("INSTALL aws")
+    CONN.sql("CALL load_aws_credentials()")
+    CONN.sql(
+        f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqp.ducklake')"
     )
+    # CONN.sql("use ducklake")
 
 
 def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
@@ -401,53 +391,53 @@ def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
 
     if not PG_SCHEMA_ENSURED:
         # pg_stime = time.time()
-        _ensure_schema(execute_pg)
+        _ensure_schema(execute_ducklake)
         # print(f"pg schema {time.time() - pg_stime}")
-        for table_name in ALL_TABLES:
-            # alter_time = time.time()
-            execute_pg(
-                f"""
-                ALTER TABLE {table_name}
-                    ADD COLUMN IF NOT EXISTS id_serial SERIAL;
-               """
-            )
-            # print(f"alter {table_name} {time.time() - alter_time}")
+        # for table_name in ALL_TABLES:
+        #     # alter_time = time.time()
+        #     execute_ducklake(
+        #         f"""
+        #         ALTER TABLE {table_name}
+        #             ADD COLUMN IF NOT EXISTS id_serial SERIAL;
+        #        """
+        #     )
+        # print(f"alter {table_name} {time.time() - alter_time}")
 
         PG_SCHEMA_ENSURED = True
 
     for table_name in ALL_TABLES:
         # table_time = time.time()
-        last_sync_time = execute_and_fetch(
-            "SELECT synced_time FROM sync WHERE table_name=?", (table_name,)
+        last_row_id = execute_and_fetch(
+            "SELECT row_id FROM sync WHERE table_name=?", (table_name,)
         )
-        if len(last_sync_time) == 0:
-            synced_timestamp = execute_and_fetch(
-                f"SELECT MIN(created_at) - INTERVAL 1 DAY as min_time FROM {table_name}"
+        if len(last_row_id) == 0:
+            synced_row_id = execute_and_fetch(
+                f"SELECT MIN(rowid) - 1 as min_row FROM {table_name}"
             )
-            if len(synced_timestamp) == 1 and synced_timestamp[0] != (None,):
-                synced_timestamp = synced_timestamp[0][0]
+            if len(synced_row_id) == 1 and synced_row_id[0] != (None,):
+                synced_row_id = int(synced_row_id[0][0])
             else:
-                synced_timestamp = None
+                synced_row_id = None
         else:
-            synced_timestamp = last_sync_time[0][0]
+            synced_row_id = int(last_row_id[0][0])
 
-        next_synced_timestamp = execute_and_fetch(
-            f"SELECT MAX(created_at) as max_time FROM {table_name}"
+        next_synced_row_id = execute_and_fetch(
+            f"SELECT MAX(rowid) as max_row FROM {table_name}"
         )
-        if len(next_synced_timestamp) == 1 and next_synced_timestamp[0] != (None,):
-            next_synced_timestamp = next_synced_timestamp[0][0]
+        if len(next_synced_row_id) == 1 and next_synced_row_id[0] != (None,):
+            next_synced_row_id = int(next_synced_row_id[0][0])
 
-        if synced_timestamp is not None:
+        if synced_row_id is not None:
             try:
                 execute(
                     f"""
                     INSERT INTO pg.{table_name} BY NAME SELECT * FROM {table_name}
-                    WHERE created_at > '{synced_timestamp.isoformat()}'
-                    AND created_at <= '{next_synced_timestamp.isoformat()}';
-                    INSERT INTO sync (synced_time, table_name)
-                    VALUES ('{next_synced_timestamp.isoformat()}', '{table_name}')
-                    ON CONFLICT (table_name)
-                    DO UPDATE SET synced_time='{next_synced_timestamp.isoformat()}'
+                    WHERE rowid > '{synced_row_id}'
+                    AND rowid <= '{next_synced_row_id}';
+                    INSERT INTO sync (row_id, table_name)
+                    VALUES ('{next_synced_row_id}', '{table_name}')
+                    -- ON CONFLICT (table_name)
+                    -- DO UPDATE SET row_id='{next_synced_row_id}'
                     """,
                 )
             except duckdb.duckdb.Error as e:
@@ -463,6 +453,17 @@ def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
 def execute_pg(sql, params=None):
     try:
         return CONN.execute(f"CALL postgres_execute('pg', '{sql}')")
+    except Exception as e:
+        # print(sql)
+        raise e
+
+
+def execute_ducklake(sql, params=None):
+    try:
+        CONN.sql("USE pg")
+        res = CONN.execute(sql)
+        CONN.sql("USE local")
+        return res
     except Exception as e:
         # print(sql)
         raise e
@@ -519,7 +520,11 @@ def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
         )
     if CONN is None:
         print("Connecting to duck...")
-        CONN = duckdb.connect(db_path)
+        CONN = duckdb.connect()
+        CONN.sql(f"ATTACH '{db_path}' as local")
+        CONN.sql("USE local")
+        # CONN = duckdb.connect(db_path)
+        # CONN = duckdb.connect()
         print("Connected.")
 
     if not SCHEMA_ENSURED:

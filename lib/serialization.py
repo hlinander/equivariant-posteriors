@@ -200,6 +200,7 @@ def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
 
     try:
         model_epoch = torch.load(checkpoint_path / "epoch")
+        print("model_epoch", model_epoch)
         model_id = torch.load(checkpoint_path / "model_id")
 
         if model_epoch != config.train_run.epochs:
