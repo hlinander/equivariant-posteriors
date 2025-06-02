@@ -1058,6 +1058,13 @@ fn min_max_driscoll_healy(
     (*min, *max)
 }
 
+#[derive(Debug)]
+enum Progress {
+    Started,
+    Progress(f32),
+    Finished,
+}
+
 struct GuiRuns {
     duckdb: r2d2::Pool<DuckdbConnectionManager>,
     // runs: Runs,
@@ -1095,6 +1102,7 @@ struct GuiRuns {
     custom_plot_data: Option<DataFrame>,
     custom_plot_handle: Option<JoinHandle<Result<DataFrame>>>,
     new_filtered_values_handle: Option<JoinHandle<HashMap<String, HashSet<String>>>>,
+    progress: Arc<std::sync::Mutex<HashMap<String, Progress>>>,
 
     args: Args, // texture: Option<egui::TextureHandle>,
 }
@@ -1438,7 +1446,12 @@ impl eframe::App for GuiRuns {
                     );
                 }
             });
-
+            ui.vertical(|ui| {
+                let progress = self.progress.lock().unwrap();
+                for key in progress.keys().sorted() {
+                    ui.label(format!("{}: {:?}", key, progress.get(key).unwrap()));
+                }
+            });
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_width(f32::INFINITY)
@@ -4122,6 +4135,7 @@ fn get_parameter_values_duck(
 
     // conn.is_autocommit()
     let tx = conn.transaction().unwrap();
+    // tx.set_drop_behavior(duckdb::DropBehavior::Commit);
     //"SELECT DISTINCT name as variable, value FROM local.{table_name} ORDER BY name, value"
     let sql = format!(
         "
@@ -4269,7 +4283,8 @@ fn get_artifacts_duck(
         return HashMap::new();
     }
     let mut conn = pool.get().unwrap();
-    let conn = conn.transaction().unwrap();
+    let mut conn = conn.transaction().unwrap();
+    // conn.set_drop_behavior(duckdb::DropBehavior::Commit);
     let query = format!(
         "
         SELECT * EXCLUDE(id), local.artifacts.id as id FROM local.artifacts
@@ -4369,7 +4384,8 @@ fn repeat_vars(count: usize) -> String {
 #[instrument(skip(pool))]
 fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude::DataFrame {
     let mut conn = pool.get().unwrap();
-    let conn = conn.transaction().unwrap();
+    let mut conn = conn.transaction().unwrap();
+    // conn.set_drop_behavior(duckdb::DropBehavior::Commit);
     let query = format!(
         "
         SELECT * , name as variable, value as value_text
@@ -4490,8 +4506,116 @@ fn get_metrics_duck(
     if active_runs.len() == 0 {
         return DataFrame::empty();
     }
-    let conn = pool.get().unwrap();
-    let query = format!(
+    let mut conn = pool.get().unwrap();
+    let conn = conn.transaction().unwrap();
+    let query = format!("
+-- CTE to prepare the base data: join metrics with models and filter by train_id
+WITH metrics_with_train_id AS (
+    SELECT
+        t.model_id,
+        m.train_id,
+        t.name,
+        t.step,
+        t.value
+    FROM local.train_step_metric_float t
+    JOIN local.models m ON t.model_id = m.id
+    WHERE m.train_id IN ({}) 
+),
+
+-- CTE to identify the distinct groups for which we want to sample
+distinct_groups AS (
+    SELECT DISTINCT
+        model_id,
+        train_id,
+        name
+    FROM metrics_with_train_id
+),
+
+-- CTE to perform sampling for each group using LATERAL JOIN
+sampled_per_group AS (
+    SELECT
+        dg.model_id,
+        dg.train_id,
+        dg.name,
+        s_metrics.step :: DOUBLE as step,
+        s_metrics.value :: DOUBLE as value
+    FROM distinct_groups dg
+    -- For each distinct group (dg), join LATERALly to a subquery that samples from that group's data
+    JOIN LATERAL (
+        SELECT
+            mwt.step,
+            mwt.value
+        FROM metrics_with_train_id mwt
+        WHERE
+            mwt.model_id = dg.model_id
+            AND mwt.name = dg.name
+            AND mwt.train_id = dg.train_id -- Ensure we're sampling from the exact group
+        USING SAMPLE 1000 ROWS -- Apply DuckDB's native sampling (reservoir for N ROWS)
+                               -- This will take up to 1000 rows from the current group's subset.
+                               -- If a group has fewer than 1000 rows, all rows will be returned.
+    ) s_metrics ON TRUE -- ON TRUE is standard for LATERAL when the correlation is in the subquery's WHERE
+)
+
+-- Final SELECT statement to aggregate the sampled data into arrays
+SELECT
+    model_id,
+    train_id,
+    name,
+    ARRAY_AGG(step ORDER BY step) AS xs,
+    ARRAY_AGG(value ORDER BY step) AS values
+FROM sampled_per_group
+GROUP BY model_id, train_id, name
+ORDER BY model_id, train_id, name;
+
+        ",
+        repeat_vars(active_runs.len())
+    );
+    let query2 = format!(
+        "
+            -- Common Table Expression (CTE) to join metrics with models and filter by train_id
+WITH metrics_with_train_id AS (
+    SELECT
+        t.model_id,
+        m.train_id,
+        t.name,
+        t.step,  -- This will be used as the 'x' value
+        t.value  -- This will be used as the 'y' value
+    FROM local.train_step_metric_float t
+    JOIN local.models m ON t.model_id = m.id
+    WHERE m.train_id IN ({}) 
+),
+
+-- CTE to rank samples randomly within each group
+ranked_samples AS (
+    SELECT
+        model_id,
+        train_id,
+        name,
+        step :: DOUBLE as step, 
+        value :: DOUBLE as value,
+        -- Assign a row number to each record within its group (model_id, name),
+        -- ordered randomly. This allows us to pick N random samples per group.
+        ROW_NUMBER() OVER (PARTITION BY model_id, name ORDER BY RANDOM()) as rn
+    FROM metrics_with_train_id
+)
+
+-- Final SELECT statement to aggregate the sampled data into arrays
+SELECT
+    model_id,
+    ANY_VALUE(train_id) AS train_id, -- train_id is constant for a given model_id due to the join
+    name,
+    -- Aggregate the 'step' values of the samples into an array, ordered by step
+    ARRAY_AGG(step ORDER BY step) AS xs,
+    -- Aggregate the 'value' values of the samples into an array, ordered by step
+    ARRAY_AGG(value ORDER BY step) AS values
+FROM ranked_samples
+WHERE rn <= 1000 -- Select up to 1000 random samples for each (model_id, name) group
+GROUP BY model_id, name
+ORDER BY model_id, name;
+        ",
+        repeat_vars(active_runs.len())
+    );
+    let query_old = format!(
         // "
         // SELECT train_id, variable, FLOOR(x / 1000.0) as bucket, AVG(x) as x, AVG(value) FROM local.metrics
         // WHERE xaxis='batch' AND train_id IN ({})
@@ -4705,14 +4829,26 @@ WHERE name = 'threads';
         .expect("install postgres failed");
     conn.execute("INSTALL aws;", [])
         .expect("install aws failed");
-    conn.execute("CALL load_aws_credentials()", [])
-        .expect("load aws credentials");
+    conn.execute("LOAD aws;", []).expect("install aws failed");
+    conn.execute("LOAD httpfs;", [])
+        .expect("install aws failed");
+    // conn.execute("CALL load_aws_credentials()", [])
+    // .expect("load aws credentials");
+    // conn.execute("INSTALL cache_httpfs FROM community;", [])
+    // .expect("install cache https failed");
+    conn.execute("update extensions;", [])
+        .expect("update extensions failed");
+    conn.execute("LOAD cache_httpfs;", [])
+        .expect("load cache https failed");
+    conn.execute(include_str!("../duck_secret.txt"), [])
+        .expect("create s3 secret");
+
     // .expect("load postgres failed");
     // conn.execute("ATTACH 'local.db' as local;", [])
     // .expect("attach to psql failed");
     //
     let dburl = env::var("PG").unwrap_or("localhost".into());
-    conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqp.ducklake')").as_str(), []).expect("attach ducklake");
+    conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
     conn.execute("USE local", []).expect("attach ducklake");
     conn.execute("SET memory_limit = '1GB';", [])
         .expect("attach to psql failed");
@@ -4753,7 +4889,9 @@ WHERE name = 'threads';
     //     }
     // });
     use tracing::Instrument;
+    let progress = Arc::new(std::sync::Mutex::new(HashMap::<String, Progress>::new()));
     let db_artifact_pool = duckdb_pool.clone();
+    let artifact_progress = progress.clone();
     let future = async move {
         // let database_url = env::var("DATABASE_URL")
         //     .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
@@ -4766,18 +4904,43 @@ WHERE name = 'threads';
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
+                {
+                    let mut mg = artifact_progress.lock().unwrap();
+                    mg.entry("handle_artifact_request".into())
+                        .and_modify(|x| *x = Progress::Started)
+                        .or_insert(Progress::Started);
+                }
                 handle_artifact_request(artifact_id, &db_artifact_pool, &tx_db_artifact).await;
+                {
+                    let mut mg = artifact_progress.lock().unwrap();
+                    mg.entry("handle_artifact_request".into())
+                        .and_modify(|x| *x = Progress::Finished)
+                        .or_insert(Progress::Finished);
+                }
             }
         }
     };
     rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
     // }
     let plot_map_thread_pool = duckdb_pool.clone();
+    let plot_progress = progress.clone();
     std::thread::spawn(move || loop {
         let start = Instant::now();
         if let Ok(new_active_runs) = rx_active_runs.try_recv() {
             println!("updating...");
+            {
+                let mut mg = plot_progress.lock().unwrap();
+                mg.entry("update_plot_map".into())
+                    .and_modify(|x| *x = Progress::Started)
+                    .or_insert(Progress::Started);
+            }
             let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
+            {
+                let mut mg = plot_progress.lock().unwrap();
+                mg.entry("update_plot_map".into())
+                    .and_modify(|x| *x = Progress::Finished)
+                    .or_insert(Progress::Finished);
+            }
             let artifacts = get_artifacts_duck(&plot_map_thread_pool, &new_active_runs);
             // let artifacts = if env::var("DATABASE_URL").is_ok() {
             //     ensure_duckdb_schema(&plot_map_thread_pool);
@@ -4794,9 +4957,22 @@ WHERE name = 'threads';
     });
 
     let run_params_thread_pool = duckdb_pool.clone();
+    let run_params_progress = progress.clone();
     std::thread::spawn(move || loop {
         let start = Instant::now();
+        {
+            let mut mg = run_params_progress.lock().unwrap();
+            mg.entry("update_plot_map".into())
+                .and_modify(|x| *x = Progress::Started)
+                .or_insert(Progress::Started);
+        }
         let params = get_run_params(&run_params_thread_pool);
+        {
+            let mut mg = run_params_progress.lock().unwrap();
+            mg.entry("update_plot_map".into())
+                .and_modify(|x| *x = Progress::Finished)
+                .or_insert(Progress::Finished);
+        }
         tx_run_params.send(params).expect("send run params");
         if start.elapsed().as_millis() < 1000 {
             sleep(time::Duration::from_millis(1000) - start.elapsed());
@@ -4990,6 +5166,7 @@ WHERE name = 'threads';
                 custom_plot_handle: None,
                 filter_name_filter: String::new(),
                 new_filtered_values_handle: None,
+                progress: progress.clone(),
             };
             gui_runs.update_filtered_runs();
             gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs2.active_runs.clone());

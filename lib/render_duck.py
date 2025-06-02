@@ -366,9 +366,20 @@ def attach_pg(db="equiv_v2"):
     # )
     CONN.sql("INSTALL ducklake")
     CONN.sql("INSTALL aws")
-    CONN.sql("CALL load_aws_credentials()")
     CONN.sql(
-        f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqp.ducklake')"
+        f"""CREATE OR REPLACE SECRET (
+             TYPE s3,
+    PROVIDER config,
+    KEY_ID '{env().s3_key}',
+    SECRET '{env().s3_secret}',
+    REGION '{env().s3_region}',
+    ENDPOINT '{env().s3_endpoint}'
+             )
+        """
+    )
+    # CONN.sql("CALL load_aws_credentials()")
+    CONN.sql(
+        f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqpducklake')"
     )
     # CONN.sql("use ducklake")
 

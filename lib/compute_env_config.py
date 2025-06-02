@@ -38,3 +38,7 @@ class ComputeEnvironment:
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_password: str = "postgres"
+    s3_key: str = ""
+    s3_secret: str = ""
+    s3_region: str = ""
+    s3_endpoint: str = ""

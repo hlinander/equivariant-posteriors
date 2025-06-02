@@ -38,6 +38,7 @@ def create_config(mlp_dim, ensemble_id):
         ),
         batch_size=256,
         ensemble_id=ensemble_id,
+        _version=1,
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
