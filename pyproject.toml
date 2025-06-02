@@ -1,0 +1,37 @@
+[project]
+name = "equivariant-posteriors"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "black>=25.1.0",
+    "cdsapi>=0.7.5",
+    "datasets>=2.2.1",
+    "dill>=0.3.9",
+    "duckdb>=1.2.0",
+    "einops>=0.8.1",
+    "filelock>=3.17.0",
+    "gitpython>=3.1.44",
+    "healpix>=2024.2",
+    "healpy>=1.18.1",
+    "ipdb>=0.13.13",
+    "ipython>=8.32.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.2",
+    "peft>=0.14.0",
+    "plotext==5.2.8",
+    "psycopg>=3.2.4",
+    "psycopg2>=2.9.10",
+    "pytest>=8.3.4",
+    "python-lsp-ruff>=2.2.2",
+    "ruff>=0.9.6",
+    "seaborn>=0.13.2",
+    "timm>=1.0.14",
+    "torch==2.5.1",
+    "torchmetrics>=1.6.1",
+    "tqdm>=4.67.1",
+    "transformers>=4.48.3",
+    "xarray>=2025.1.2",
+]
