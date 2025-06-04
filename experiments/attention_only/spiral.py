@@ -12,19 +12,15 @@ from lib.metric import Metric
 from lib.models.transformer import TransformerConfig
 from lib.data_registry import DataSpiralsConfig
 from lib.ablation import ablation
-
-
-def loss(preds, target):
-    return torch.nn.functional.binary_cross_entropy(preds, target, reduction="none")
-
-
-def bce(preds, target):
-    return tm.functional.classification.binary_calibration_error(
-        preds, target, n_bins=15
-    )
+from lib.classification_metrics import create_classification_metrics
 
 
 def create_config(embed_d):
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    def loss(outputs, batch):
+        return ce_loss(outputs["logits"], batch["target"])
+
     train_config = TrainConfig(
         model_config=TransformerConfig(
             embed_d=embed_d,
@@ -33,31 +29,23 @@ def create_config(embed_d):
             batch_size=500,
             num_layers=2,
             num_heads=1,
+            softmax=True,
         ),
-        data_config=DataSpiralsConfig(),
+        train_data_config=DataSpiralsConfig(N=1000, seed=0),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
         ),
-        loss=torch.nn.BCELoss(),
+        loss=loss,
         batch_size=500,
         ensemble_id=0,
-    )
-    train_eval = TrainEval(
-        metrics=[
-            lambda: Metric(
-                tm.functional.accuracy,
-                metric_kwargs=dict(task="binary", multidim_average="samplewise"),
-            ),
-            lambda: Metric(bce),
-            lambda: Metric(loss),
-        ],
     )
     train_run = TrainRun(
         compute_config=ComputeConfig(distributed=False),
         train_config=train_config,
-        train_eval=train_eval,
+        train_eval=create_classification_metrics(None, 2),
         epochs=500,
         save_nth_epoch=20,
+        validate_nth_epoch=1,
     )
     return train_run
 

@@ -418,10 +418,10 @@ def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
 
     for table_name in ALL_TABLES:
         # table_time = time.time()
-        last_row_id = execute_and_fetch(
-            "SELECT row_id FROM sync WHERE table_name=?", (table_name,)
-        )
-        if len(last_row_id) == 0:
+        last_row_id = execute(
+            "SELECT MAX(row_id) FROM sync WHERE table_name=?", (table_name,)
+        ).fetchone()
+        if last_row_id[0] is None:
             synced_row_id = execute_and_fetch(
                 f"SELECT MIN(rowid) - 1 as min_row FROM {table_name}"
             )
@@ -430,7 +430,7 @@ def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
             else:
                 synced_row_id = None
         else:
-            synced_row_id = int(last_row_id[0][0])
+            synced_row_id = int(last_row_id[0])
 
         next_synced_row_id = execute_and_fetch(
             f"SELECT MAX(rowid) as max_row FROM {table_name}"
@@ -454,9 +454,15 @@ def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
             except duckdb.duckdb.Error as e:
                 print(e)
 
-        # t = time.time() - table_time
-        # print(f"{t} for table {table_name}")
-        # total_time += t
+    print(
+        execute(
+            "SELECT table_name, MAX(row_id) from sync group by table_name"
+        ).fetch_df()
+    )
+
+    # t = time.time() - table_time
+    # print(f"{t} for table {table_name}")
+    # total_time += t
 
     print("Sync time", time.time() - start, total_time)
 

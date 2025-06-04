@@ -26,6 +26,7 @@ use std::hash::Hash;
 use std::io::{Read, Write};
 use std::num::NonZeroU64;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Instant;
@@ -4615,7 +4616,7 @@ ORDER BY model_id, name;
         ",
         repeat_vars(active_runs.len())
     );
-    let query_old = format!(
+    let query = format!(
         // "
         // SELECT train_id, variable, FLOOR(x / 1000.0) as bucket, AVG(x) as x, AVG(value) FROM local.metrics
         // WHERE xaxis='batch' AND train_id IN ({})
@@ -4829,28 +4830,23 @@ WHERE name = 'threads';
         .expect("install postgres failed");
     conn.execute("INSTALL aws;", [])
         .expect("install aws failed");
-    conn.execute("LOAD aws;", []).expect("install aws failed");
     conn.execute("LOAD httpfs;", [])
         .expect("install aws failed");
-    // conn.execute("CALL load_aws_credentials()", [])
-    // .expect("load aws credentials");
-    // conn.execute("INSTALL cache_httpfs FROM community;", [])
-    // .expect("install cache https failed");
-    conn.execute("update extensions;", [])
-        .expect("update extensions failed");
-    conn.execute("LOAD cache_httpfs;", [])
-        .expect("load cache https failed");
     conn.execute(include_str!("../duck_secret.txt"), [])
         .expect("create s3 secret");
 
-    // .expect("load postgres failed");
-    // conn.execute("ATTACH 'local.db' as local;", [])
-    // .expect("attach to psql failed");
-    //
     let dburl = env::var("PG").unwrap_or("localhost".into());
     conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
     conn.execute("USE local", []).expect("attach ducklake");
     conn.execute("SET memory_limit = '1GB';", [])
+        .expect("attach to psql failed");
+    conn.execute("set parquet_metadata_cache=true;", [])
+        .expect("attach to psql failed");
+    conn.execute("set external_file_cache=true;", [])
+        .expect("attach to psql failed");
+    conn.execute("set enable_http_metadata_cache=true;", [])
+        .expect("attach to psql failed");
+    conn.execute("SET disabled_optimizers TO 'late_materialization';", [])
         .expect("attach to psql failed");
     // if env::var("DATABASE_URL").is_ok() {
     // conn.execute(
@@ -4889,9 +4885,11 @@ WHERE name = 'threads';
     //     }
     // });
     use tracing::Instrument;
+    let exit = Arc::new(AtomicBool::new(false));
     let progress = Arc::new(std::sync::Mutex::new(HashMap::<String, Progress>::new()));
     let db_artifact_pool = duckdb_pool.clone();
     let artifact_progress = progress.clone();
+    let exit_ = exit.clone();
     let future = async move {
         // let database_url = env::var("DATABASE_URL")
         //     .unwrap_or("postgres://postgres:herdeherde@localhost:5431/equiv".to_string());
@@ -4902,6 +4900,9 @@ WHERE name = 'threads';
         //     .expect("Can't connect to database");
         println!("Artifact loop starting...");
         loop {
+            if exit_.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             if let Ok(artifact_id) = rx_db_artifact_path.try_recv() {
                 {
@@ -4920,11 +4921,16 @@ WHERE name = 'threads';
             }
         }
     };
-    rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
+    let artifact_request_handle =
+        rt_handle.spawn(future.instrument(tracing::info_span!("handle_artifacts")));
     // }
     let plot_map_thread_pool = duckdb_pool.clone();
     let plot_progress = progress.clone();
-    std::thread::spawn(move || loop {
+    let exit_ = exit.clone();
+    let artifact_thread_handle = std::thread::spawn(move || loop {
+        if exit_.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
         let start = Instant::now();
         if let Ok(new_active_runs) = rx_active_runs.try_recv() {
             println!("updating...");
@@ -4949,7 +4955,10 @@ WHERE name = 'threads';
             // } else {
             //     HashMap::new()
             // };
-            tx_plot_map.send((artifacts, plot_map)).unwrap();
+            match tx_plot_map.send((artifacts, plot_map)) {
+                Ok(_) => {}
+                Err(_) => println!("Plot map send error"),
+            }
         }
         if start.elapsed().as_millis() < 1000 {
             sleep(time::Duration::from_millis(1000) - start.elapsed());
@@ -4958,22 +4967,29 @@ WHERE name = 'threads';
 
     let run_params_thread_pool = duckdb_pool.clone();
     let run_params_progress = progress.clone();
-    std::thread::spawn(move || loop {
+    let exit_ = exit.clone();
+    let plot_thread_handle = std::thread::spawn(move || loop {
+        if exit_.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
         let start = Instant::now();
         {
             let mut mg = run_params_progress.lock().unwrap();
-            mg.entry("update_plot_map".into())
+            mg.entry("get_run_params".into())
                 .and_modify(|x| *x = Progress::Started)
                 .or_insert(Progress::Started);
         }
         let params = get_run_params(&run_params_thread_pool);
         {
             let mut mg = run_params_progress.lock().unwrap();
-            mg.entry("update_plot_map".into())
+            mg.entry("get_run_params".into())
                 .and_modify(|x| *x = Progress::Finished)
                 .or_insert(Progress::Finished);
         }
-        tx_run_params.send(params).expect("send run params");
+        match tx_run_params.send(params) {
+            Ok(_) => {}
+            Err(_) => println!("run_params send error"),
+        }
         if start.elapsed().as_millis() < 1000 {
             sleep(time::Duration::from_millis(1000) - start.elapsed());
         }
@@ -5177,6 +5193,11 @@ WHERE name = 'threads';
         }),
     )
     .unwrap();
+    exit.store(true, std::sync::atomic::Ordering::Relaxed);
+    artifact_thread_handle.join().unwrap();
+    rt.block_on(artifact_request_handle).unwrap();
+    // artifact_request_handle.join().unwrap();
+    plot_thread_handle.join().unwrap();
 
     Ok(())
 }

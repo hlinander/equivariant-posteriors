@@ -6,6 +6,7 @@ import lib.git as git
 import lib.stable_hash as stable_hash
 from lib.compute_env import env
 from lib.serialize_human import serialize_human
+import os
 
 
 def create_result_path(name: str, config: object):
@@ -89,7 +90,8 @@ def prepare_results(name: str, config: object) -> Path:
     try:
         with FileLock(get_results_lock_path(name), 5):
             result_path = create_result_path(name, config)
-            copy_tracked_and_untracked_to_destination(result_path / "code")
+            if "NOCOPY" not in os.environ:
+                copy_tracked_and_untracked_to_destination(result_path / "code")
             write_config_human(config, result_path / "config.json")
             return result_path
     except Timeout:
