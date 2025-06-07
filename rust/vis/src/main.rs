@@ -1,3 +1,8 @@
+use jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 use chrono::NaiveDateTime;
 use clap::Parser;
 use duckdb::arrow2::legacy::utils::CustomIterTools;
@@ -19,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::borrow::{Borrow, BorrowMut};
+use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::{create_dir_all, File};
@@ -76,6 +82,12 @@ struct PlotMapKey {
     train_id: String,
     variable: String,
     xaxis: String,
+}
+
+#[derive(Default, Clone, Debug)]
+struct PlotSettings {
+    log_x: bool,
+    log_y: bool,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -1073,7 +1085,7 @@ struct GuiRuns {
     plot_timer: Instant,
     rx_plot_map: Receiver<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>,
+        Option<HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>>,
     )>,
     tx_active_runs: SyncSender<Vec<String>>,
     // dirty: bool,
@@ -1104,6 +1116,7 @@ struct GuiRuns {
     custom_plot_handle: Option<JoinHandle<Result<DataFrame>>>,
     new_filtered_values_handle: Option<JoinHandle<HashMap<String, HashSet<String>>>>,
     progress: Arc<std::sync::Mutex<HashMap<String, Progress>>>,
+    plot_settings: HashMap<String, PlotSettings>,
 
     args: Args, // texture: Option<egui::TextureHandle>,
 }
@@ -1147,8 +1160,8 @@ fn get_train_ids_from_filter_duck(
         }
         let sql = format!(
             "
-            WITH uniq_models AS (select distinct * from local.models)
-            SELECT train_id, COUNT(*) FROM
+            WITH uniq_models AS (select distinct * EXCLUDE(timestamp) from local.models),
+                 all_params AS 
                 (SELECT *, name as variable, value as value_text
                 FROM local.model_parameter_text
                 UNION
@@ -1157,8 +1170,10 @@ fn get_train_ids_from_filter_duck(
                 UNION
                 SELECT *, name as variable, format('{{:d}}', value) as value_text
                 FROM local.model_parameter_int)
+            SELECT train_id, COUNT(*) FROM (SELECT DISTINCT ON (model_id, variable) * FROM all_params ORDER BY timestamp DESC)
             JOIN uniq_models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
+        println!("{sql}");
         let res = duck.prepare(&sql);
         if let Err(err) = &res {
             println!("{:?}", err);
@@ -1230,7 +1245,12 @@ impl eframe::App for GuiRuns {
         if let Ok(new_data) = self.rx_plot_map.try_recv() {
             let s = tracing::span!(Level::TRACE, "main: plot_map recv");
             let _enter = s.enter();
-            (self.runs2.artifacts, self.runs2.plot_map) = new_data;
+            let (artifacts, maybe_plot_map) = new_data;
+            self.runs2.artifacts = artifacts;
+            match maybe_plot_map {
+                Some(plot_map) => self.runs2.plot_map = plot_map,
+                None => {}
+            }
             self.runs2.artifacts_by_run = self
                 .runs2
                 .artifacts
@@ -1422,6 +1442,7 @@ impl eframe::App for GuiRuns {
                 ui.separator();
                 self.render_artifact_selector(ui);
                 ui.separator();
+                self.render_table2(ui, &run_ensemble_color, "params");
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -2603,11 +2624,11 @@ enum Group {
 fn update_plot_map(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
-) -> HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>> {
+) -> Option<HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>> {
     // self.runs2.plot_map.clear();
     let mut plot_map = HashMap::new();
     if active_runs.len() == 0 {
-        return HashMap::new();
+        return None;
     }
     // let duck = pool.get().unwrap();
     // let metrics_sql = format!(
@@ -2625,197 +2646,131 @@ fn update_plot_map(
     //     .unwrap();
     // let metric_names: Vec<_> = rows.map(|x| x.unwrap()).collect();
 
-    let mut df = get_metrics_duck(pool, active_runs);
-    // df.writejkj
-    // polars::io::csv::CsvWriter::new()
-
-    if df.height() == 0 {
-        return HashMap::new();
-    }
-    // for (name, data) in df.group_by(["train_id", "variable"]).unwrap() {}
-    let model_ids = df.column("model_id").unwrap().rechunk();
-    let mut model_ids = model_ids.as_materialized_series().iter();
-    let train_ids = df.column("train_id").unwrap().rechunk();
-    let mut train_ids = train_ids.as_materialized_series().iter();
-    let variables = df.column("name").unwrap().rechunk();
-    let mut variables = variables.as_materialized_series().iter();
-    // let xaxis = df.column("xaxis").unwrap().rechunk();
-    // let mut xaxis = xaxis.as_materialized_series().iter();
-    let xs = df.column("xs").unwrap().rechunk();
-    let mut xs = xs.as_materialized_series().iter();
-    let values = df.column("values").unwrap().rechunk();
-    // let y_mean = values.mean().unwrap();
-    // let y_std = match values.std_as_series(0).get(0).unwrap() {
-    // AnyValue::Float32(v) => v as f64,
-    // AnyValue::Float64(v) => v,
-    // _ => panic!(),
-    // };
-    let mut values = values.as_materialized_series().iter();
-    // let mut iters = df
-    //     .columns(["train_id", "variable", "x", "value"])
-    //     .unwrap()
-    //     .iter()
-    //     .map(|c| c.iter())
-    //     .collect::<Vec<_>>();
-    // let mut last_train_id = String::new();
-    for row in 0..df.height() {
-        let mid = model_ids.next().unwrap();
-        let tid = train_ids.next().unwrap();
-        let train_id = tid.get_str().unwrap();
-        let var = variables.next().unwrap();
-        let variable = var.get_str().unwrap();
-        // let xaxis = xaxis.next().unwrap();
-        // let xaxis = xaxis.get_str().unwrap();
-        let x = xs.next().unwrap();
-        let x = match x {
-            AnyValue::List(sx) => sx
-                .f64()
-                .unwrap()
-                .to_vec()
-                .into_iter()
-                .flatten()
-                .map(|x| x as f32)
-                .collect::<Vec<f32>>(),
-            _ => {
-                panic!()
+    match get_metrics_duck(pool, active_runs) {
+        Some(df) => {
+            if df.height() == 0 {
+                return None;
             }
-        };
-        let y = values.next().unwrap();
-        let y = match y {
-            AnyValue::List(sy) => sy
-                .f64()
-                .unwrap()
-                .to_vec()
-                .into_iter()
-                .flatten()
-                .map(|x| x.log10() as f32)
-                .collect::<Vec<f32>>(),
-            _ => {
-                panic!()
+            // for (name, data) in df.group_by(["train_id", "variable"]).unwrap() {}
+            let model_ids = df.column("model_id").unwrap().rechunk();
+            let mut model_ids = model_ids.as_materialized_series().iter();
+            let train_ids = df.column("train_id").unwrap().rechunk();
+            let mut train_ids = train_ids.as_materialized_series().iter();
+            let variables = df.column("name").unwrap().rechunk();
+            let mut variables = variables.as_materialized_series().iter();
+            // let xaxis = df.column("xaxis").unwrap().rechunk();
+            // let mut xaxis = xaxis.as_materialized_series().iter();
+            let xs = df.column("xs").unwrap().rechunk();
+            let mut xs = xs.as_materialized_series().iter();
+            let values = df.column("values").unwrap().rechunk();
+            // let y_mean = values.mean().unwrap();
+            // let y_std = match values.std_as_series(0).get(0).unwrap() {
+            // AnyValue::Float32(v) => v as f64,
+            // AnyValue::Float64(v) => v,
+            // _ => panic!(),
+            // };
+            let mut values = values.as_materialized_series().iter();
+            // let mut iters = df
+            //     .columns(["train_id", "variable", "x", "value"])
+            //     .unwrap()
+            //     .iter()
+            //     .map(|c| c.iter())
+            //     .collect::<Vec<_>>();
+            // let mut last_train_id = String::new();
+            for row in 0..df.height() {
+                let mid = model_ids.next().unwrap();
+                let tid = train_ids.next().unwrap();
+                let train_id = tid.get_str().unwrap();
+                let var = variables.next().unwrap();
+                let variable = var.get_str().unwrap();
+                // let xaxis = xaxis.next().unwrap();
+                // let xaxis = xaxis.get_str().unwrap();
+                let x = xs.next().unwrap();
+                let x = match x {
+                    AnyValue::List(sx) => sx
+                        .f64()
+                        .unwrap()
+                        .to_vec()
+                        .into_iter()
+                        .flatten()
+                        .map(|x| x as f32)
+                        .collect::<Vec<f32>>(),
+                    _ => {
+                        panic!()
+                    }
+                };
+                let y = values.next().unwrap();
+                let y = match y {
+                    AnyValue::List(sy) => sy
+                        .f64()
+                        .unwrap()
+                        .to_vec()
+                        .into_iter()
+                        .flatten()
+                        .map(|x| x as f32)
+                        .collect::<Vec<f32>>(),
+                    _ => {
+                        panic!()
+                    }
+                };
+                // for (idx, w) in x.windows(2).enumerate() {
+                //     if w[1] < w[0] {
+                //             "{}: {}, {} < {} [{idx} ({})]",
+                //             train_id,
+                //             variable,
+                //             w[1],
+                //             w[0],
+                //             x.len()
+                //         );
+                //         // panic!();
+                //         let output_file: File =
+                //             File::create("out.json").expect("Failed to create an output file.");
+
+                //         let mut writer: polars::io::json::JsonWriter<File> = JsonWriter::new(output_file);
+
+                //         writer
+                //             .finish(&mut df)
+                //             .expect("Failed to write the CSV file.");
+                //         panic!();
+                //     }
+                // }
+                let xy = x
+                    .into_iter()
+                    .zip(y)
+                    .filter_map(|(x, y)| {
+                        // let z = (y as f64 - y_mean) / y_std;
+                        if y.abs() < 10000.0 {
+                            Some([x, y])
+                        } else {
+                            None
+                        }
+                    })
+                    .collect_vec();
+                let AnyValue::Int64(mid) = mid else { panic!() };
+                plot_map
+                    .entry(PlotMapKey {
+                        train_id: train_id.into(),
+                        variable: variable.into(),
+                        xaxis: "batch".to_string(), // xaxis: xaxis.into(),
+                    })
+                    .or_insert(vec![])
+                    .push(xy);
+                //         plot_map.insert(
+                // ,
+                //             // (
+                //             //     variable.to_string(),
+                //             //     train_id.to_string(),
+                //             //     xaxis.to_string(),
+                //             // ),
+                //             xy,
+                //         );
             }
-        };
-        // for (idx, w) in x.windows(2).enumerate() {
-        //     if w[1] < w[0] {
-        //             "{}: {}, {} < {} [{idx} ({})]",
-        //             train_id,
-        //             variable,
-        //             w[1],
-        //             w[0],
-        //             x.len()
-        //         );
-        //         // panic!();
-        //         let output_file: File =
-        //             File::create("out.json").expect("Failed to create an output file.");
-
-        //         let mut writer: polars::io::json::JsonWriter<File> = JsonWriter::new(output_file);
-
-        //         writer
-        //             .finish(&mut df)
-        //             .expect("Failed to write the CSV file.");
-        //         panic!();
-        //     }
-        // }
-        let xy = x
-            .into_iter()
-            .zip(y)
-            .filter_map(|(x, y)| {
-                // let z = (y as f64 - y_mean) / y_std;
-                if y.abs() < 10000.0 {
-                    Some([x, y])
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-        let AnyValue::Int64(mid) = mid else { panic!() };
-        plot_map
-            .entry(PlotMapKey {
-                train_id: train_id.into(),
-                variable: variable.into(),
-                xaxis: "batch".to_string(), // xaxis: xaxis.into(),
-            })
-            .or_insert(vec![])
-            .push(xy);
-        //         plot_map.insert(
-        // ,
-        //             // (
-        //             //     variable.to_string(),
-        //             //     train_id.to_string(),
-        //             //     xaxis.to_string(),
-        //             // ),
-        //             xy,
-        //         );
+            // drop(df);
+            // for x in df.group_by(["train_id", "variable"]).unwrap() {}
+            Some(plot_map)
+        }
+        None => None,
     }
-    // for x in df.group_by(["train_id", "variable"]).unwrap() {}
-    return plot_map;
-    // return HashMap::new();
-
-    let sql = format!(
-        "
-WITH range_info AS (
-    SELECT 
-        MIN(x) AS min_x, 
-        MAX(x) AS max_x 
-    FROM local.metrics
-    WHERE train_id = $2 AND variable = $1
-),
-bucket_size AS (
-    SELECT 
-        (max_x - min_x) / 10 AS size 
-    FROM range_info
-)
-SELECT 
-    t.train_id as train_id, 
-    t.variable as variable,
-    FLOOR(x / bs.size) AS bucket, 
-    AVG(value) AS value,
-    AVG(x) AS x
-FROM local.metrics t
-JOIN bucket_size bs 
-ON t.train_id = $2 AND t.variable = $1
-WHERE t.train_id = $2 AND t.variable = $1
-GROUP BY train_id, variable, bucket
-ORDER BY x;
-        "
-    );
-    // let sql = format!("select x, value from local.metrics where xaxis='batch' AND variable=$1 AND train_id=$2 ORDER BY x");
-    // let mut stmt = duck.prepare(&sql).expect("plotmap");
-    // for metric_name in metric_names.iter().sorted() {
-    //     for train_id in active_runs.iter().sorted() {
-    //         let polars = stmt.query_polars([metric_name, train_id]).expect("plotmap");
-    //         if let Some(df) = polars.reduce(|acc, e| acc.vstack(&e).unwrap()) {
-    //             // df.column("x").unwrap().iter()
-    //             let n = df.shape().0;
-    //             let window_size = 1.max(n / 1000) as i64;
-    //             // let df = df
-    //             //     .lazy()
-    //             //     .with_columns([
-    //             //         col("x").rolling_mean(RollingOptions {
-    //             //             window_size: Duration::new(window_size),
-    //             //             min_periods: 1,
-    //             //             ..Default::default()
-    //             //         }),
-    //             //         col("value").rolling_mean(RollingOptions {
-    //             //             window_size: Duration::new(window_size),
-    //             //             min_periods: 1,
-    //             //             ..Default::default()
-    //             //         }),
-    //             //     ])
-    //             //     .collect()
-    //             //     .unwrap();
-    //             let x = df.column("x").unwrap().f32().unwrap();
-    //             let x = x.to_vec().into_iter().step_by(window_size as usize);
-    //             let y = df.column("value").unwrap().f32().unwrap().rechunk();
-    //             let y = y.to_vec().into_iter().step_by(window_size as usize);
-    //             let xy = x
-    //                 .zip(y)
-    //                 .map(|(x, y)| [x.unwrap_or(0.0) as f64, y.unwrap_or(0.0) as f64])
-    //                 .collect_vec();
-    //             plot_map.insert((metric_name.clone(), train_id.clone()), xy);
-    //         }
-    //     }
-    // }
-    // plot_map
 }
 // fn update_plot_map2(
 //     pool: &r2d2::Pool<DuckdbConnectionManager>,
@@ -2851,6 +2806,101 @@ ORDER BY x;
 //     plot_map
 // }
 impl GuiRuns {
+    fn render_table2(
+        &mut self,
+        ui: &mut egui::Ui,
+        run_ensemble_color: &HashMap<String, egui::Color32>,
+        table_name: &str,
+    ) {
+        let df = {
+            let conn = self.duckdb.get().unwrap();
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT is_active, date_trunc('second', runtime) :: text as runtime, argv, date_trunc('minute', age(now(), timestamp)) :: text as age, * EXCLUDE(argv, is_active, runtime) FROM {}",
+                    table_name
+                ))
+                .unwrap();
+            let polars = stmt.query_polars([]).unwrap();
+            polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap()
+        };
+
+        let column_names = df.get_column_names();
+        let height = df.height();
+
+        // Filter out is_active column from display
+        let visible_columns: Vec<_> = df
+            .get_columns()
+            .iter()
+            .filter(|col| col.name() != "is_active")
+            .collect();
+        let visible_column_names: Vec<_> = visible_columns.iter().map(|col| col.name()).collect();
+
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            egui_extras::TableBuilder::new(ui)
+                .columns(
+                    egui_extras::Column::auto().resizable(true),
+                    visible_columns.len(),
+                )
+                .striped(true)
+                .sense(egui::Sense::click())
+                .header(20.0, |mut header| {
+                    for column_name in &visible_column_names {
+                        header.col(|ui| {
+                            ui.heading(egui::RichText::new(column_name.to_string()).size(10.0));
+                        });
+                    }
+                })
+                .body(|mut table| {
+                    for row_idx in 0..height {
+                        // Get is_active value for this row
+                        let is_active = if let Ok(is_active_col) = df.column("is_active") {
+                            match is_active_col.get(row_idx).unwrap() {
+                                polars::prelude::AnyValue::Boolean(b) => b,
+                                _ => false,
+                            }
+                        } else {
+                            false
+                        };
+
+                        table.row(20.0, |mut table_row| {
+                            for col in &visible_columns {
+                                table_row.col(|ui| {
+                                    let cell_value = col.get(row_idx).unwrap();
+                                    let value = match cell_value {
+                                        polars::prelude::AnyValue::String(s) => s.to_string(),
+                                        _ => cell_value.to_string(),
+                                    };
+
+                                    // Color runtime column background if active
+                                    if col.name() == "runtime" && is_active {
+                                        let (rect, _response) = ui.allocate_exact_size(
+                                            ui.available_size(),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            egui::Rounding::same(2),
+                                            egui::Color32::from_rgb(0, 100, 0),
+                                        );
+                                        ui.allocate_ui_at_rect(rect, |ui| {
+                                            ui.add(
+                                                egui::Label::new(value)
+                                                    .truncate()
+                                                    .sense(egui::Sense::hover()),
+                                            );
+                                        });
+                                    } else {
+                                        ui.add(
+                                            egui::Label::new(value).truncate(), // .sense(egui::Sense::hover()),
+                                        );
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+        });
+    }
     fn render_table(
         &mut self,
         ui: &mut egui::Ui,
@@ -3240,9 +3290,27 @@ impl GuiRuns {
         ui.horizontal_wrapped(|ui| {
             for (metric_name_and_axis, plot) in plots.into_iter().sorted_by_key(|(k, _v)| k.clone())
             {
-                ui.allocate_ui(egui::Vec2::from([plot_width, plot_height]), |ui| {
+                ui.allocate_ui(egui::Vec2::from([plot_width, plot_height + 30.0]), |ui| {
                     ui.vertical_centered(|ui| {
                         ui.label(metric_name_and_axis.0.clone());
+
+                        // Get or create plot settings for this metric
+                        let plot_settings = self
+                            .plot_settings
+                            .entry(metric_name_and_axis.0.clone())
+                            .or_default();
+
+                        // Collapsing header for log controls
+                        egui::CollapsingHeader::new("controls")
+                            .id_source(format!("log_controls_{}", metric_name_and_axis.0))
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut plot_settings.log_x, "log x");
+                                    ui.checkbox(&mut plot_settings.log_y, "log y");
+                                });
+                            });
+
                         let plot_res = plot.show(ui, |plot_ui| {
                             for train_id in self.runs2.active_runs.iter().sorted() {
                                 if let Some(xys) = self.runs2.plot_map.get(&PlotMapKey {
@@ -3251,11 +3319,37 @@ impl GuiRuns {
                                     xaxis: metric_name_and_axis.1.clone(),
                                 }) {
                                     for xy in xys {
+                                        // Get plot settings for this metric
+                                        let settings = self
+                                            .plot_settings
+                                            .get(&metric_name_and_axis.0)
+                                            .cloned()
+                                            .unwrap_or_default();
+
                                         let xy = xy
                                             .clone()
                                             .iter()
-                                            // .map(|[x, y]| [*x, y.max(f64::MIN).log10()])
-                                            .map(|[x, y]| [*x as f64, *y as f64])
+                                            .map(|[x, y]| {
+                                                let x_transformed = if settings.log_x {
+                                                    if *x > 0.000001 {
+                                                        (*x as f64).log10()
+                                                    } else {
+                                                        0.0
+                                                    }
+                                                } else {
+                                                    *x as f64
+                                                };
+                                                let y_transformed = if settings.log_y {
+                                                    if *y > 0.000001 {
+                                                        (*y as f64).log10()
+                                                    } else {
+                                                        0.0
+                                                    }
+                                                } else {
+                                                    *y as f64
+                                                };
+                                                [x_transformed, y_transformed]
+                                            })
                                             .collect::<Vec<_>>();
                                         let stroke_width = if let Some(selected_runs) =
                                             &self.gui_params.selected_runs
@@ -4383,49 +4477,93 @@ fn repeat_vars(count: usize) -> String {
 }
 
 #[instrument(skip(pool))]
-fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> polars::prelude::DataFrame {
+fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::prelude::DataFrame> {
     let mut conn = pool.get().unwrap();
     let mut conn = conn.transaction().unwrap();
-    // conn.set_drop_behavior(duckdb::DropBehavior::Commit);
-    let query = format!(
+    conn.set_drop_behavior(duckdb::DropBehavior::Commit);
+    let current_snapshot_id: i32 = conn
+        .query_row(
+            "SELECT max(snapshot_id) FROM ducklake_snapshots('local')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let last_update_id: i32 = conn
+        .query_row(
+            "
+            SELECT max(snapshot_id) :: integer FROM last_snapshot WHERE table_name LIKE 'model_parameter%'
+            ",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(15);
+
+    let res: Result<i32> = conn.query_row(
         "
-        SELECT * , name as variable, value as value_text
+            SELECT max(snapshot_id) FROM local.table_changes('model_parameter_text', ?, ?)
+            ",
+        [last_update_id, current_snapshot_id],
+        |row| row.get(0),
+    );
+    match res {
+        Ok(_) => {
+            let query = format!(
+                "
+        SELECT * EXCLUDE(timestamp), name as variable, value as value_text
         FROM local.model_parameter_text JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         UNION
-        SELECT * , name as variable, format('{{:E}}', value) as value_text
+        SELECT * EXCLUDE(timestamp), name as variable, format('{{:E}}', value) as value_text
         FROM local.model_parameter_float JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         UNION
-        SELECT * , name as variable, format('{{:d}}', value) as value_text
+        SELECT * EXCLUDE(timestamp), name as variable, format('{{:d}}', value) as value_text
         FROM local.model_parameter_int JOIN local.models ON id=model_id
         WHERE name NOT IN ({}) 
         ",
-        repeat_vars(HIDDEN_PARAMS.len()),
-        repeat_vars(HIDDEN_PARAMS.len()),
-        repeat_vars(HIDDEN_PARAMS.len()),
-    );
-    let mut stmt = conn.prepare(&query).unwrap();
-    let polars = stmt
-        .query_polars(duckdb::params_from_iter(
-            HIDDEN_PARAMS
-                .iter()
-                .chain(HIDDEN_PARAMS.iter())
-                .chain(HIDDEN_PARAMS.iter()),
-        ))
-        .expect("duck runs");
-    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
-    large_df
-        .sort(vec!["variable", "train_id"], Default::default())
-        .unwrap()
+                repeat_vars(HIDDEN_PARAMS.len()),
+                repeat_vars(HIDDEN_PARAMS.len()),
+                repeat_vars(HIDDEN_PARAMS.len()),
+            );
+            let mut stmt = conn.prepare(&query).unwrap();
+            let polars = stmt
+                .query_polars(duckdb::params_from_iter(
+                    HIDDEN_PARAMS
+                        .iter()
+                        .chain(HIDDEN_PARAMS.iter())
+                        .chain(HIDDEN_PARAMS.iter()),
+                ))
+                .expect("duck runs");
+            conn.execute("INSERT INTO last_snapshot (table_name, snapshot_id) VALUES ('model_parameter_text', ?)", [current_snapshot_id]).unwrap();
+            dbg!(conn
+                .prepare(
+                    "
+            SELECT max(snapshot_id) FROM last_snapshot WHERE table_name LIKE 'model_parameter%'
+
+                        
+                    "
+                )
+                .unwrap()
+                .query_polars([])
+                .unwrap()
+                .collect::<Vec<DataFrame>>());
+            // conn.commit();
+            let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap();
+            let large_df = large_df
+                .sort(vec!["variable", "train_id"], Default::default())
+                .unwrap();
+            Some(large_df)
+        }
+        Err(_) => None,
+    }
 }
 
 fn get_run_params(
-    pool: &r2d2::Pool<DuckdbConnectionManager>,
+    df: &polars::prelude::DataFrame, // pool: &r2d2::Pool<DuckdbConnectionManager>,
 ) -> HashMap<RunParamKey, HashSet<String>> {
     let t = Instant::now();
 
-    let df = get_runs_duck(pool);
+    // let df = get_runs_duck(pool);
     let t = Instant::now();
 
     let train_ids = df.column("train_id").unwrap().rechunk();
@@ -4503,126 +4641,41 @@ fn sync_full_table(pool: &r2d2::Pool<DuckdbConnectionManager>, table_name: &str)
 fn get_metrics_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
-) -> polars::prelude::DataFrame {
+) -> Option<polars::prelude::DataFrame> {
     if active_runs.len() == 0 {
-        return DataFrame::empty();
+        return None;
     }
     let mut conn = pool.get().unwrap();
-    let conn = conn.transaction().unwrap();
-    let query = format!("
--- CTE to prepare the base data: join metrics with models and filter by train_id
-WITH metrics_with_train_id AS (
-    SELECT
-        t.model_id,
-        m.train_id,
-        t.name,
-        t.step,
-        t.value
-    FROM local.train_step_metric_float t
-    JOIN local.models m ON t.model_id = m.id
-    WHERE m.train_id IN ({}) 
-),
+    let mut conn = conn.transaction().unwrap();
+    conn.set_drop_behavior(duckdb::DropBehavior::Commit);
+    let current_snapshot_id: i32 = conn
+        .query_row(
+            "SELECT max(snapshot_id) FROM ducklake_snapshots('local')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
--- CTE to identify the distinct groups for which we want to sample
-distinct_groups AS (
-    SELECT DISTINCT
-        model_id,
-        train_id,
-        name
-    FROM metrics_with_train_id
-),
+    let last_update_id: i32 = conn
+        .query_row(
+            "
+            SELECT max(snapshot_id) :: integer FROM last_snapshot WHERE table_name LIKE 'train_step_metric%'
+            ",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(15);
 
--- CTE to perform sampling for each group using LATERAL JOIN
-sampled_per_group AS (
-    SELECT
-        dg.model_id,
-        dg.train_id,
-        dg.name,
-        s_metrics.step :: DOUBLE as step,
-        s_metrics.value :: DOUBLE as value
-    FROM distinct_groups dg
-    -- For each distinct group (dg), join LATERALly to a subquery that samples from that group's data
-    JOIN LATERAL (
-        SELECT
-            mwt.step,
-            mwt.value
-        FROM metrics_with_train_id mwt
-        WHERE
-            mwt.model_id = dg.model_id
-            AND mwt.name = dg.name
-            AND mwt.train_id = dg.train_id -- Ensure we're sampling from the exact group
-        USING SAMPLE 1000 ROWS -- Apply DuckDB's native sampling (reservoir for N ROWS)
-                               -- This will take up to 1000 rows from the current group's subset.
-                               -- If a group has fewer than 1000 rows, all rows will be returned.
-    ) s_metrics ON TRUE -- ON TRUE is standard for LATERAL when the correlation is in the subquery's WHERE
-)
-
--- Final SELECT statement to aggregate the sampled data into arrays
-SELECT
-    model_id,
-    train_id,
-    name,
-    ARRAY_AGG(step ORDER BY step) AS xs,
-    ARRAY_AGG(value ORDER BY step) AS values
-FROM sampled_per_group
-GROUP BY model_id, train_id, name
-ORDER BY model_id, train_id, name;
-
-        ",
-        repeat_vars(active_runs.len())
-    );
-    let query2 = format!(
+    let res: Result<i32> = conn.query_row(
         "
-            -- Common Table Expression (CTE) to join metrics with models and filter by train_id
-WITH metrics_with_train_id AS (
-    SELECT
-        t.model_id,
-        m.train_id,
-        t.name,
-        t.step,  -- This will be used as the 'x' value
-        t.value  -- This will be used as the 'y' value
-    FROM local.train_step_metric_float t
-    JOIN local.models m ON t.model_id = m.id
-    WHERE m.train_id IN ({}) 
-),
-
--- CTE to rank samples randomly within each group
-ranked_samples AS (
-    SELECT
-        model_id,
-        train_id,
-        name,
-        step :: DOUBLE as step, 
-        value :: DOUBLE as value,
-        -- Assign a row number to each record within its group (model_id, name),
-        -- ordered randomly. This allows us to pick N random samples per group.
-        ROW_NUMBER() OVER (PARTITION BY model_id, name ORDER BY RANDOM()) as rn
-    FROM metrics_with_train_id
-)
-
--- Final SELECT statement to aggregate the sampled data into arrays
-SELECT
-    model_id,
-    ANY_VALUE(train_id) AS train_id, -- train_id is constant for a given model_id due to the join
-    name,
-    -- Aggregate the 'step' values of the samples into an array, ordered by step
-    ARRAY_AGG(step ORDER BY step) AS xs,
-    -- Aggregate the 'value' values of the samples into an array, ordered by step
-    ARRAY_AGG(value ORDER BY step) AS values
-FROM ranked_samples
-WHERE rn <= 1000 -- Select up to 1000 random samples for each (model_id, name) group
-GROUP BY model_id, name
-ORDER BY model_id, name;
-        ",
-        repeat_vars(active_runs.len())
+            SELECT max(snapshot_id) FROM local.table_changes('train_step_metric_float', ?, ?)
+            ",
+        [last_update_id, current_snapshot_id],
+        |row| row.get(0),
     );
-    let query = format!(
-        // "
-        // SELECT train_id, variable, FLOOR(x / 1000.0) as bucket, AVG(x) as x, AVG(value) FROM local.metrics
-        // WHERE xaxis='batch' AND train_id IN ({})
-        // GROUP BY (train_id, variable, bucket)
-        // ORDER BY train_id, variable, x, value
-        // ",
+
+    match res {
+        Ok(_) => {
+            let query = format!(
         "
             WITH range_info AS (
              SELECT
@@ -4666,13 +4719,17 @@ ORDER BY model_id, name;
         ",
         repeat_vars(active_runs.len()),
     );
-    let mut stmt = conn.prepare(&query).unwrap();
-    let polars = stmt
-        .query_polars(duckdb::params_from_iter(active_runs.iter()))
-        .unwrap();
-    let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
-    let df = large_df.unwrap_or(DataFrame::empty());
-    df
+            let mut stmt = conn.prepare(&query).unwrap();
+            conn.execute("INSERT INTO last_snapshot (table_name, snapshot_id) VALUES ('train_step_metric_float', ?)", [current_snapshot_id]).unwrap();
+            let polars = stmt
+                .query_polars(duckdb::params_from_iter(active_runs.iter()))
+                .unwrap();
+            let large_df = polars.reduce(|acc, e| acc.vstack(&e).unwrap());
+            let df = large_df.unwrap_or(DataFrame::empty());
+            Some(df)
+        }
+        Err(_) => None,
+    }
 }
 
 #[instrument(skip_all)]
@@ -4760,6 +4817,30 @@ fn sync_table(
     updated
 }
 
+fn log_jemalloc_stats() {
+    use jemalloc_ctl::{epoch, stats};
+
+    if let Err(e) = epoch::advance() {
+        eprintln!("Failed to advance jemalloc epoch: {:?}", e);
+        return;
+    }
+
+    let allocated = stats::allocated::read().unwrap_or(0);
+    let active = stats::active::read().unwrap_or(0);
+    let resident = stats::resident::read().unwrap_or(0); // This is jemalloc's view of its resident pages
+    let mapped = stats::mapped::read().unwrap_or(0);
+    let retained = stats::retained::read().unwrap_or(0);
+
+    println!(
+        "jemalloc stats: Allocated: {} MB, Active: {} MB, Resident (jemalloc portion): {} MB, Mapped: {} MB, Retained: {} MB",
+        allocated / (1024 * 1024),
+        active / (1024 * 1024),
+        resident / (1024 * 1024),
+        mapped / (1024 * 1024),
+        retained / (1024 * 1024)
+    );
+}
+
 #[derive(Debug)]
 enum ArtifactTransfer {
     Done(Vec<u8>),
@@ -4768,13 +4849,13 @@ enum ArtifactTransfer {
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
-    use tracing_subscriber::layer::SubscriberExt;
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-    )
-    .expect("setup tracy layer");
-    use tracy_client::Client;
-    let _profile_guard = Client::start();
+    // use tracing_subscriber::layer::SubscriberExt;
+    // tracing::subscriber::set_global_default(
+    //     tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+    // )
+    // .expect("setup tracy layer");
+    // use tracy_client::Client;
+    // let _profile_guard = Client::start();
     // console_subscriber::init();
     // Load environment variables
     // dotenv::dotenv().ok();
@@ -4787,7 +4868,7 @@ fn main() -> Result<(), sqlx::Error> {
     let (tx_active_runs, rx_active_runs) = mpsc::sync_channel::<Vec<String>>(1);
     let (tx_plot_map, rx_plot_map) = mpsc::sync_channel::<(
         HashMap<ArtifactKey, ArtifactId>,
-        HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>,
+        Option<HashMap<PlotMapKey, Vec<Vec<[f32; 2]>>>>,
     )>(1);
     let (tx_run_params, rx_run_params) =
         mpsc::sync_channel::<HashMap<RunParamKey, HashSet<String>>>(1);
@@ -4835,14 +4916,31 @@ WHERE name = 'threads';
     conn.execute(include_str!("../duck_secret.txt"), [])
         .expect("create s3 secret");
 
-    let dburl = env::var("PG").unwrap_or("localhost".into());
-    conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
-    conn.execute("USE local", []).expect("attach ducklake");
+    match env::var("DUCKLAKE") {
+        Ok(ducklake) => {
+            conn.execute(
+                format!("ATTACH 'ducklake:{ducklake}' as local (data_path './{ducklake}_data')")
+                    .as_str(),
+                [],
+            )
+            .expect("attach local ducklake");
+        }
+        Err(_) => {
+            let dburl = env::var("PG").unwrap_or("localhost".into());
+            conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
+        }
+    }
+    conn.execute(
+        "CREATE TABLE last_snapshot (table_name text, snapshot_id integer)",
+        [],
+    )
+    .expect("create last snapshot_id table");
+    // conn.execute("USE local", []).expect("attach ducklake");
     conn.execute("SET memory_limit = '1GB';", [])
         .expect("attach to psql failed");
     conn.execute("set parquet_metadata_cache=true;", [])
         .expect("attach to psql failed");
-    conn.execute("set external_file_cache=true;", [])
+    conn.execute("set enable_external_file_cache=true;", [])
         .expect("attach to psql failed");
     conn.execute("set enable_http_metadata_cache=true;", [])
         .expect("attach to psql failed");
@@ -4941,6 +5039,7 @@ WHERE name = 'threads';
                     .or_insert(Progress::Started);
             }
             let plot_map = update_plot_map(&plot_map_thread_pool, &new_active_runs);
+            // let plot_map = HashMap::new();
             {
                 let mut mg = plot_progress.lock().unwrap();
                 mg.entry("update_plot_map".into())
@@ -4948,13 +5047,16 @@ WHERE name = 'threads';
                     .or_insert(Progress::Finished);
             }
             let artifacts = get_artifacts_duck(&plot_map_thread_pool, &new_active_runs);
-            // let artifacts = if env::var("DATABASE_URL").is_ok() {
-            //     ensure_duckdb_schema(&plot_map_thread_pool);
-            //     //sync_full_table(&plot_map_thread_pool, "artifacts");
-            //     get_artifacts_duck(&plot_map_thread_pool, &new_active_runs)
-            // } else {
-            //     HashMap::new()
-            // };
+            let mut conn = plot_map_thread_pool.get().unwrap();
+            let conn = conn.transaction().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT * FROM duckdb_memory() ORDER BY memory_usage_bytes DESC")
+                .unwrap();
+            let df: Vec<DataFrame> = stmt.query_polars([]).unwrap().collect();
+            for df in df {
+                println!("{:?}", df);
+            }
+            log_jemalloc_stats();
             match tx_plot_map.send((artifacts, plot_map)) {
                 Ok(_) => {}
                 Err(_) => println!("Plot map send error"),
@@ -4968,6 +5070,7 @@ WHERE name = 'threads';
     let run_params_thread_pool = duckdb_pool.clone();
     let run_params_progress = progress.clone();
     let exit_ = exit.clone();
+    // let mut run_params_df: polars::prelude::DataFrame = DataFrame::empty();
     let plot_thread_handle = std::thread::spawn(move || loop {
         if exit_.load(std::sync::atomic::Ordering::Relaxed) {
             break;
@@ -4979,16 +5082,58 @@ WHERE name = 'threads';
                 .and_modify(|x| *x = Progress::Started)
                 .or_insert(Progress::Started);
         }
-        let params = get_run_params(&run_params_thread_pool);
+        match get_runs_duck(&run_params_thread_pool) {
+            Some(df) => {
+                let params = get_run_params(&df);
+
+                // Create/update params table
+                if let Ok(conn) = run_params_thread_pool.get() {
+                    let query = "
+                        CREATE OR REPLACE TABLE params AS (
+                            WITH params AS (
+                                PIVOT local.model_parameter_text ON name 
+                                USING arg_max(value, timestamp) 
+                                GROUP BY model_id
+                            ),
+                            active_models AS (
+                                SELECT DISTINCT model_id 
+                                FROM local.train_steps 
+                                WHERE timestamp > now() - INTERVAL 2 minutes
+                            ),
+                            latest_steps AS (
+                                SELECT model_id, 
+                                       max(timestamp) as latest_step_time
+                                FROM local.train_steps 
+                                GROUP BY model_id
+                            )
+                            SELECT m.*, p.* EXCLUDE(model_id), 
+                                   (a.model_id IS NOT NULL) AS is_active,
+                                   (ls.latest_step_time - m.timestamp) AS runtime
+                            FROM local.models m 
+                            JOIN params p ON m.id = p.model_id 
+                            LEFT JOIN active_models a ON m.id = a.model_id
+                            LEFT JOIN latest_steps ls ON m.id = ls.model_id
+                            ORDER BY timestamp DESC
+                        )
+                    ";
+                    match conn.execute_batch(query) {
+                        Ok(_) => {}
+                        Err(e) => println!("Error creating params table: {}", e),
+                    }
+                }
+
+                match tx_run_params.send(params) {
+                    Ok(_) => {}
+                    Err(_) => println!("run_params send error"),
+                }
+            }
+            None => println!("No new run params"),
+        }
         {
             let mut mg = run_params_progress.lock().unwrap();
             mg.entry("get_run_params".into())
                 .and_modify(|x| *x = Progress::Finished)
                 .or_insert(Progress::Finished);
-        }
-        match tx_run_params.send(params) {
-            Ok(_) => {}
-            Err(_) => println!("run_params send error"),
         }
         if start.elapsed().as_millis() < 1000 {
             sleep(time::Duration::from_millis(1000) - start.elapsed());
@@ -5183,6 +5328,7 @@ WHERE name = 'threads';
                 filter_name_filter: String::new(),
                 new_filtered_values_handle: None,
                 progress: progress.clone(),
+                plot_settings: HashMap::new(),
             };
             gui_runs.update_filtered_runs();
             gui_runs.db_train_runs_sender_slot = Some(gui_runs.runs2.active_runs.clone());

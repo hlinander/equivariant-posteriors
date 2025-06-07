@@ -13,6 +13,7 @@ from lib.paths import (
 from lib.random_util import random_positive_i64
 from lib.stable_hash import stable_hash_str
 from lib.compute_env import env
+import time
 
 CONN = None
 LAST_MODEL_ID = None
@@ -38,6 +39,7 @@ TRAIN_STEPS_TABLE_NAME = "train_steps"
 CHECKPOINTS_TABLE_NAME = "checkpoints"
 ARTIFACTS_TABLE_NAME = "artifacts"
 ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
+LOG_TABLE_NAME = "logs"
 
 
 @dataclass
@@ -78,6 +80,7 @@ def sql_create_table_artifacts():
     return """
                 CREATE TABLE IF NOT EXISTS artifacts (
                     id BIGINT,
+                    timestamp TIMESTAMPTZ,
                     model_id BIGINT,
                     name text,
                     path text,
@@ -85,6 +88,26 @@ def sql_create_table_artifacts():
                     size int
                 )
     """
+
+
+def sql_create_table_logs():
+    return f"""
+                CREATE TABLE IF NOT EXISTS {LOG_TABLE_NAME}(
+                    run_id BIGINT,
+                    timestamp TIMESTAMPTZ,
+                    context text,
+                    level text,
+                    msg text
+                )
+    """
+
+
+def insert_log(run_id: int, context: str, level: str, msg: str):
+    sql_insert_log = f"""
+        INSERT INTO {LOG_TABLE_NAME} (run_id, timestamp, context, level, msg) 
+        VALUES (?, ?, ?, ?, ?)
+    """
+    execute(sql_insert_log, (run_id, time.time(), context, level, msg))
 
 
 def sql_create_table_artifact_chunks():
@@ -153,6 +176,7 @@ def sql_create_table_model_parameter(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(MODEL_PARAMETER, type_def.name)} (
             model_id BIGINT,
+                    timestamp TIMESTAMPTZ,
             name TEXT,
             value {type_def.sql_type}
         )"""
@@ -167,8 +191,8 @@ def insert_model_parameter(model_id, name, value):
         return
 
     sql_insert_model_parameter = f"""
-        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, name, value) 
-        VALUES (?, ?, ?)
+        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, name, value, timestamp) 
+        VALUES (?, ?, ?, now())
     """
     execute(sql_insert_model_parameter, (model_id, name, value))
 
@@ -177,6 +201,7 @@ def sql_create_table_train_step_metric(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(TRAIN_STEP_METRIC, type_def.name)} (
             model_id BIGINT,
+            timestamp TIMESTAMPTZ,
             run_id BIGINT,
             name TEXT,
             step INTEGER,
@@ -194,8 +219,8 @@ def insert_train_step_metric(model_id, run_id, name, step, value):
 
     # raise Exception(type_def)
     sql_insert_train_step_metric = f"""
-        INSERT INTO {table_name(TRAIN_STEP_METRIC, type_def.name)} (model_id, run_id, name, step, value) 
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO {table_name(TRAIN_STEP_METRIC, type_def.name)} (model_id, run_id, name, step, value, timestamp) 
+        VALUES (?, ?, ?, ?, ?, now())
     """
     execute(sql_insert_train_step_metric, (model_id, run_id, name, step, value))
 
@@ -215,6 +240,7 @@ def sql_create_table_checkpoint_sample_metric(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (
             model_id BIGINT,
+            timestamp TIMESTAMPTZ,
             step INTEGER,
             name TEXT,
             dataset TEXT,
@@ -237,8 +263,8 @@ def insert_checkpoint_sample_metric(
         return
 
     sql_insert_train_step_metric = f"""
-        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample, timestamp) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, now())
     """
     execute(
         sql_insert_train_step_metric,
@@ -250,7 +276,8 @@ def sql_create_table_models():
     return f"""
     CREATE TABLE IF NOT EXISTS {MODELS_TABLE_NAME} (
         id BIGINT,
-        train_id TEXT
+        train_id TEXT,
+        timestamp TIMESTAMPTZ,
     )"""
 
 
@@ -265,7 +292,7 @@ def insert_model_with_model_id(train_run: TrainRun, model_id: int):
     train_id = stable_hash_str(train_run.train_config)
 
     sql_insert_model = """
-    INSERT INTO models (id, train_id) VALUES (?, ?)
+    INSERT INTO models (id, train_id, timestamp) VALUES (?, ?, now())
     """
     execute(sql_insert_model, (model_id, train_id))
     return model_id
@@ -278,7 +305,8 @@ def sql_create_table_train_steps():
         run_id BIGINT,
         step INTEGER,
         dataset TEXT,
-        sample_ids INTEGER[]
+        sample_ids INTEGER[],
+        timestamp TIMESTAMPTZ
     )
     """
 
@@ -287,8 +315,8 @@ def insert_train_step(
     model_id: int, run_id: int, step: int, dataset: str, sample_ids: List[int]
 ):
     sql_insert_train_step = """
-        INSERT INTO train_steps (model_id, run_id, step, dataset, sample_ids)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO train_steps (model_id, run_id, step, dataset, sample_ids, timestamp)
+        VALUES (?, ?, ?, ?, ?, now())
     """
     # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
     execute(
@@ -302,15 +330,16 @@ def sql_create_table_checkpoints():
     CREATE TABLE IF NOT EXISTS {CHECKPOINTS_TABLE_NAME} (
         model_id BIGINT ,
         step INTEGER ,
-        path TEXT
-    )
+        path TEXT,
+        timestamp TIMESTAMPTZ
+            )
     """
 
 
 def insert_checkpoint(model_id: int, step: int, path: str, db_prefix=""):
     sql_insert_train_step = f"""
-        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path)
-        VALUES (?, ?, ?)
+        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path, timestamp)
+        VALUES (?, ?, ?, now())
        -- ON CONFLICT (model_id, step)
        -- DO UPDATE SET path=EXCLUDED.path
     """
@@ -323,8 +352,8 @@ def insert_checkpoint(model_id: int, step: int, path: str, db_prefix=""):
 
 def insert_checkpoint_pg(model_id: int, step: int, path: str, db_prefix=""):
     sql_insert_train_step = f"""
-        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path)
-        VALUES (?, ?, ?)
+        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path, timestamp)
+        VALUES (?, ?, ?, now())
     """
     # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
     execute(
@@ -359,11 +388,15 @@ def attach_pg(db="equiv_v2"):
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
     pw = env().postgres_password
-    # execute("INSTALL postgres")
-    # execute("LOAD postgres")
-    # execute(
-    #     f"ATTACH IF NOT EXISTS 'dbname={db} user=postgres password={pw} host={hostname} port={port}' as pg (TYPE POSTGRES)"
-    # )
+
+    if "DUCKLAKE" in os.environ:
+        lake_name = os.environ["DUCKLAKE"]
+        CONN.sql(
+            f"ATTACH IF NOT EXISTS 'ducklake:{lake_name}' as pg (data_path './{lake_name}_data')"
+        )
+        print(f"Attached local ducklake at {lake_name}")
+        return
+
     CONN.sql("INSTALL ducklake")
     CONN.sql("INSTALL aws")
     CONN.sql(
@@ -377,11 +410,9 @@ def attach_pg(db="equiv_v2"):
              )
         """
     )
-    # CONN.sql("CALL load_aws_credentials()")
     CONN.sql(
         f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqpducklake')"
     )
-    # CONN.sql("use ducklake")
 
 
 def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
@@ -540,6 +571,7 @@ def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
         CONN = duckdb.connect()
         CONN.sql(f"ATTACH '{db_path}' as local")
         CONN.sql("USE local")
+        CONN.sql("LOAD icu")
         # CONN = duckdb.connect(db_path)
         # CONN = duckdb.connect()
         print("Connected.")

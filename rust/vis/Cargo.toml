@@ -45,7 +45,7 @@ duckdb = {git = "https://github.com/duckdb/duckdb-rs", features=["polars", "r2d2
 r2d2 = "0.8.9"
 # r2d2-duckdb = "0.1.0"
 # r2d2 = "0.8.10"
-polars = {version="0.46.0", features=["lazy", "rolling_window", "polars-io", "json"]}
+polars = {version="0.46.0", features=["lazy", "rolling_window", "polars-io", "json", "timezones"]}
 # polars-core = "*"
 serde = {version="1.0.209", features=["derive"]}
 ron = "0.8.1"
@@ -58,5 +58,7 @@ egui_file = "0.22.0"
 egui_code_editor = "0.2.9"
 sqlformat = "0.2.6"
 tracy-client = "0.18.0"
+jemallocator = { version = "0.5.4", features = ["profiling"] }
+jemalloc-ctl = "0.5.4"
 # console-subscriber = "0.2.0"
 # tracy-client = "0.16.4"

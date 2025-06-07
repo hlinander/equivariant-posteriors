@@ -185,6 +185,7 @@ def get_modules():
 
 @dataclass
 class TrainRun:
+    project: str
     compute_config: ComputeConfig
     train_config: TrainConfig
     train_eval: TrainEval
