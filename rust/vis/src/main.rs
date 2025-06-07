@@ -2818,8 +2818,11 @@ impl GuiRuns {
                 .prepare(&format!(
                     "SELECT is_active, date_trunc('second', runtime) :: text as runtime, argv, date_trunc('minute', age(now(), timestamp)) :: text as age, * EXCLUDE(argv, is_active, runtime) FROM {}",
                     table_name
-                ))
-                .unwrap();
+                ));
+            if stmt.is_err() {
+                return;
+            }
+            let Ok(mut stmt) = stmt else { panic!() };
             let polars = stmt.query_polars([]).unwrap();
             polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap()
         };

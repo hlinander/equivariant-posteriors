@@ -209,6 +209,7 @@ class TrainRun:
 
     def serialize_human(self):
         return dict(
+            project=self.project,
             compute_config=self.compute_config.serialize_human(),
             train_config=self.train_config.serialize_human(),
             train_id=stable_hash_str(self.train_config),
