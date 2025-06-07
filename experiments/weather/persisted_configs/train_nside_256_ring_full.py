@@ -103,6 +103,7 @@ def create_config(ensemble_id, epoch=200):
         train_metrics=[create_metric(reg_loss)], validation_metrics=[]
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
+        project="weather",
         compute_config=ComputeConfig(distributed=False, num_workers=0, num_gpus=1),
         # compute_config=ComputeConfig(distributed=False, num_workers=5, num_gpus=1),
         # compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=4),

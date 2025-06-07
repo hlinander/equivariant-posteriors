@@ -26,6 +26,8 @@ dependencies = [
     "psycopg2>=2.9.10",
     "pytest>=8.3.4",
     "python-lsp-ruff>=2.2.2",
+    "rplot>=1.8",
+    "rpy2>=3.6.0",
     "ruff>=0.9.6",
     "seaborn>=0.13.2",
     "timm>=1.0.14",
@@ -34,4 +36,10 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.48.3",
     "xarray>=2025.1.2",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    # Allow test files to have the same name in different directories.
+    "--import-mode=importlib",
 ]

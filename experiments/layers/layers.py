@@ -38,6 +38,7 @@ def create_config(layers, ensemble_id):
             batch_size=500,
             num_layers=layers,
             num_heads=1,
+            softmax=True,
         ),
         train_data_config=DataSpiralsConfig(seed=0, N=1000),
         val_data_config=DataSpiralsConfig(seed=1, N=500),
@@ -52,6 +53,7 @@ def create_config(layers, ensemble_id):
         data_visualizer=visualize_spiral, n_classes=2
     )
     train_run = TrainRun(
+        project="spiral",
         compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,

@@ -39,6 +39,7 @@ def create_config(mlp_dim, ensemble_id):
             batch_size=500,
             num_layers=1,
             num_heads=1,
+            softmax=True,
         ),
         optimizer=OptimizerConfig(
             optimizer=torch.optim.Adam, kwargs=dict(weight_decay=0.0001)
@@ -53,6 +54,7 @@ def create_config(mlp_dim, ensemble_id):
         data_visualizer=visualize_spiral, n_classes=2
     )
     train_run = TrainRun(
+        project="spiral",
         compute_config=ComputeConfig(False, 0),
         train_config=train_config,
         train_eval=train_eval,

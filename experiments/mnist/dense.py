@@ -42,6 +42,7 @@ def create_config(mlp_dim, ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
+        project="mnist",
         compute_config=ComputeConfig(distributed=False, num_workers=0),
         train_config=train_config,
         train_eval=train_eval,

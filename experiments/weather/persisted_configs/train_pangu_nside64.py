@@ -80,6 +80,7 @@ def create_config(ensemble_id, epoch):
         log_gradient_norm=True,
     )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
     train_run = TrainRun(
+        project="weather",
         # compute_config=ComputeConfig(distributed=True, num_workers=5, num_gpus=2),
         compute_config=ComputeConfig(),
         train_config=train_config,

@@ -35,6 +35,7 @@ def create_config(mlp_dim, ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_spiral, 2)
     train_run = TrainRun(
+        project="spiral",
         compute_config=ComputeConfig(distributed=False, num_workers=1),
         train_config=train_config,
         train_eval=train_eval,

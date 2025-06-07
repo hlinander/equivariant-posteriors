@@ -20,8 +20,7 @@ _data_factory = None
 
 
 def register_dataset(config_class, dataset):
-    global _data_factory
-    _data_factory.register(config_class, dataset)
+    get_factory().register(config_class, dataset)
 
 
 def get_factory():

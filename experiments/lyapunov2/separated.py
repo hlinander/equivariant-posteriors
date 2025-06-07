@@ -125,6 +125,7 @@ def create_config(ensemble_id, layers, model_config, width):
     )
     train_eval = create_regression_metrics(loss, None)
     train_run = TrainRun(
+        project="lyapunov2",
         compute_config=ComputeConfig(num_workers=0),
         train_config=train_config,
         train_eval=train_eval,

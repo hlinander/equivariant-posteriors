@@ -92,6 +92,7 @@ def create_config(
         data_visualizer=None,
     )
     train_run = TrainRun(
+        project="lora_ensembles",
         compute_config=ComputeConfig(distributed=False, num_workers=2, num_gpus=1),
         train_config=train_config,
         train_eval=train_eval,

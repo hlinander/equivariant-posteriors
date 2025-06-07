@@ -10,7 +10,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 
 from lib.classification_metrics import create_classification_metrics
-from lib.data_factory import DataMNISTConfig
+from lib.data_registry import DataMNISTConfig
 from lib.datasets.mnist_visualization import visualize_mnist
 
 import lib.data_factory as data_factory
@@ -29,8 +29,8 @@ import rplot
 def create_config(ensemble_id):
     loss = torch.nn.CrossEntropyLoss()
 
-    def ce_loss(outputs, targets):
-        return loss(outputs["logits"], targets)
+    def ce_loss(outputs, batch):
+        return loss(outputs["logits"], batch["target"])
 
     train_config = TrainConfig(
         # model_config=MLPClassConfig(widths=[50, 50]),
@@ -48,6 +48,7 @@ def create_config(ensemble_id):
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     train_run = TrainRun(
+        project="lyapunov2",
         compute_config=ComputeConfig(distributed=False, num_workers=16),
         train_config=train_config,
         train_eval=train_eval,
