@@ -2893,9 +2893,36 @@ impl GuiRuns {
                                             );
                                         });
                                     } else {
-                                        ui.add(
+                                        let res = ui.add(
                                             egui::Label::new(value).truncate(), // .sense(egui::Sense::hover()),
                                         );
+                                        if res.hovered() {
+                                            let train_id =
+                                                if let Ok(train_id_col) = df.column("train_id") {
+                                                    match train_id_col.get(row_idx).unwrap() {
+                                                        polars::prelude::AnyValue::String(s) => {
+                                                            s.to_string()
+                                                        }
+                                                        _ => "".to_string(),
+                                                    }
+                                                } else {
+                                                    "".to_string()
+                                                };
+
+                                            self.gui_params.hovered_run = Some(train_id.clone());
+                                            if res.clicked() {
+                                                // self.gui_params.filters.param_filters.iter().any(|filter| Arc::new(filter.filter.entry("train_id".into())))
+                                                let set = self
+                                                    .gui_params
+                                                    .selected_runs
+                                                    .get_or_insert([].into());
+                                                if set.contains(&train_id) {
+                                                    set.remove(&train_id);
+                                                } else {
+                                                    set.insert(train_id.clone());
+                                                }
+                                            }
+                                        }
                                     }
                                 });
                             }
