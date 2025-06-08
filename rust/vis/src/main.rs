@@ -5085,13 +5085,8 @@ WHERE name = 'threads';
                 .and_modify(|x| *x = Progress::Started)
                 .or_insert(Progress::Started);
         }
-        match get_runs_duck(&run_params_thread_pool) {
-            Some(df) => {
-                let params = get_run_params(&df);
-
-                // Create/update params table
-                if let Ok(conn) = run_params_thread_pool.get() {
-                    let query = "
+        if let Ok(conn) = run_params_thread_pool.get() {
+            let query = "
                         CREATE OR REPLACE TABLE params AS (
                             WITH params AS (
                                 PIVOT local.model_parameter_text ON name 
@@ -5119,11 +5114,16 @@ WHERE name = 'threads';
                             ORDER BY timestamp DESC
                         )
                     ";
-                    match conn.execute_batch(query) {
-                        Ok(_) => {}
-                        Err(e) => println!("Error creating params table: {}", e),
-                    }
-                }
+            match conn.execute_batch(query) {
+                Ok(_) => {}
+                Err(e) => println!("Error creating params table: {}", e),
+            }
+        }
+        match get_runs_duck(&run_params_thread_pool) {
+            Some(df) => {
+                let params = get_run_params(&df);
+
+                // Create/update params table
 
                 match tx_run_params.send(params) {
                     Ok(_) => {}
