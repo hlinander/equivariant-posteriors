@@ -198,7 +198,7 @@ class TrainRun:
     notes: object = None
     argv: str = " ".join(sys.argv)
     git_rev: str = get_rev()
-    env: str = os.environ.copy()
+    env: str = field(default_factory=lambda: os.environ.copy())
     slurm_jobid: str = get_slurm_id()
     modules: str = get_modules()
     run_id: int = random_positive_i64()
