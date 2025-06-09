@@ -2816,15 +2816,22 @@ impl GuiRuns {
             let conn = self.duckdb.get().unwrap();
             let mut stmt = conn
                 .prepare(&format!(
-                    "SELECT is_active, date_trunc('second', runtime) :: text as runtime, argv, date_trunc('minute', age(now(), timestamp)) :: text as age, * EXCLUDE(argv, is_active, runtime) FROM {}",
+                    "SELECT is_active, p.progress, date_trunc('second', runtime) :: text as runtime, argv, date_trunc('minute', age(now(), timestamp)) :: text as age, * EXCLUDE(progress, argv, is_active, runtime, run_id)
+                     FROM {} t
+                     JOIN progress p
+                         ON t.run_id=p.run_id",
                     table_name
                 ));
             if stmt.is_err() {
+                println!("{:?}", stmt);
                 return;
             }
             let Ok(mut stmt) = stmt else { panic!() };
             let polars = stmt.query_polars([]).unwrap();
-            polars.reduce(|acc, e| acc.vstack(&e).unwrap()).unwrap()
+            match polars.reduce(|acc, e| acc.vstack(&e).unwrap()) {
+                Some(df) => df,
+                None => DataFrame::empty(),
+            }
         };
 
         let column_names = df.get_column_names();
@@ -5115,35 +5122,69 @@ WHERE name = 'threads';
         if let Ok(conn) = run_params_thread_pool.get() {
             let query = "
                         CREATE OR REPLACE TABLE params AS (
-                            WITH params AS (
+                            WITH params_text AS (
                                 PIVOT local.model_parameter_text ON name 
                                 USING arg_max(value, timestamp) 
-                                GROUP BY model_id
+                                GROUP BY run_id
+                            ),
+                            params_int AS (
+                                PIVOT local.model_parameter_int ON name 
+                                USING arg_max(value, timestamp) 
+                                GROUP BY run_id
+                            ),
+                            params AS (
+                                SELECT * FROM params_text pt JOIN params_int pi on pt.run_id=pi.run_id
                             ),
                             active_models AS (
-                                SELECT DISTINCT model_id 
+                                SELECT DISTINCT run_id 
                                 FROM local.train_steps 
                                 WHERE timestamp > now() - INTERVAL 2 minutes
                             ),
                             latest_steps AS (
-                                SELECT model_id, 
+                                SELECT run_id,
                                        max(timestamp) as latest_step_time
                                 FROM local.train_steps 
-                                GROUP BY model_id
+                                GROUP BY run_id
                             )
-                            SELECT m.*, p.* EXCLUDE(model_id), 
-                                   (a.model_id IS NOT NULL) AS is_active,
-                                   (ls.latest_step_time - m.timestamp) AS runtime
-                            FROM local.models m 
-                            JOIN params p ON m.id = p.model_id 
-                            LEFT JOIN active_models a ON m.id = a.model_id
-                            LEFT JOIN latest_steps ls ON m.id = ls.model_id
+                            SELECT r.*, p.*, 
+                                   (a.run_id IS NOT NULL) AS is_active,
+                                   (ls.latest_step_time - r.timestamp) AS runtime
+                            FROM local.runs r 
+                            JOIN params p ON r.id = p.run_id 
+                            LEFT JOIN active_models a ON r.id = a.run_id
+                            LEFT JOIN latest_steps ls ON r.id = ls.run_id
                             ORDER BY timestamp DESC
                         )
                     ";
             match conn.execute_batch(query) {
                 Ok(_) => {}
                 Err(e) => println!("Error creating params table: {}", e),
+            }
+        }
+        if let Ok(conn) = run_params_thread_pool.get() {
+            let query = "
+                        CREATE OR REPLACE TABLE progress AS
+                        (
+                        with total_samples as
+                            (select r.id as run_id, max(step) as step
+                                from
+                                    local.runs r
+                                join
+                                    local.train_steps as ts
+                                on
+                                    r.id=ts.run_id
+                                group by r.id
+                            )                            
+                            SELECT ts.run_id as run_id, ts.step * p.\"train_config.batch_size\" / (p.train_dataset_len * p.epochs) as progress
+                            FROM
+                                total_samples ts
+                            JOIN params p
+                            ON p.run_id=ts.run_id
+                        )
+                                            ";
+            match conn.execute_batch(query) {
+                Ok(_) => {}
+                Err(e) => println!("Error creating progress table: {}", e),
             }
         }
         match get_runs_duck(&run_params_thread_pool) {
@@ -5263,6 +5304,8 @@ WHERE name = 'threads';
         "Visualizer",
         options,
         Box::new(|cc| {
+            cc.egui_ctx
+                .options_mut(|options| options.reduce_texture_memory = true);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut gui_runs = GuiRuns {
                 duckdb: duckdb_pool,

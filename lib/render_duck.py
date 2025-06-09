@@ -41,6 +41,8 @@ ARTIFACTS_TABLE_NAME = "artifacts"
 ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
 LOG_TABLE_NAME = "logs"
 
+RUNS_TABLE_NAME = "runs"
+
 
 @dataclass
 class TypeDef:
@@ -65,6 +67,7 @@ def table_name(kind, type_name):
 ALL_TABLES = (
     [
         MODELS_TABLE_NAME,
+        RUNS_TABLE_NAME,
         TRAIN_STEPS_TABLE_NAME,
         CHECKPOINTS_TABLE_NAME,
         ARTIFACTS_TABLE_NAME,
@@ -74,6 +77,23 @@ ALL_TABLES = (
     + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
     + [table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name) for type_def in TYPE_DEFS]
 )
+
+
+def sql_create_table_runs():
+    return f"""
+                CREATE TABLE IF NOT EXISTS {RUNS_TABLE_NAME} (
+                    id BIGINT,
+                    model_id BIGINT,
+                    timestamp TIMESTAMPTZ,
+                )
+    """
+
+
+def insert_run(run_id, model_id):
+    sql_insert_model = """
+    INSERT INTO runs (id, model_id, timestamp) VALUES (?, ?, now())
+    """
+    execute(sql_insert_model, (run_id, model_id))
 
 
 def sql_create_table_artifacts():
@@ -176,25 +196,26 @@ def sql_create_table_model_parameter(type_def):
     return f"""
         CREATE TABLE IF NOT EXISTS {table_name(MODEL_PARAMETER, type_def.name)} (
             model_id BIGINT,
-                    timestamp TIMESTAMPTZ,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
             name TEXT,
             value {type_def.sql_type}
         )"""
 
 
-def insert_model_parameter(model_id, name, value):
+def insert_model_parameter(model_id, run_id, name, value):
     value_type = type(value)
     if value_type in PYTHON_TYPE_TO_TYPE_DEF:
         type_def = PYTHON_TYPE_TO_TYPE_DEF[value_type]
     else:
-        insert_model_parameter(model_id, name, str(value))
+        insert_model_parameter(model_id, run_id, name, str(value))
         return
 
     sql_insert_model_parameter = f"""
-        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, name, value, timestamp) 
-        VALUES (?, ?, ?, now())
+        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, run_id, name, value, timestamp) 
+        VALUES (?, ?, ?, ?, now())
     """
-    execute(sql_insert_model_parameter, (model_id, name, value))
+    execute(sql_insert_model_parameter, (model_id, run_id, name, value))
 
 
 def sql_create_table_train_step_metric(type_def):
@@ -288,7 +309,7 @@ def insert_model(train_run: TrainRun):
 
 def insert_model_with_model_id(train_run: TrainRun, model_id: int):
     ensure_duck(train_run)
-    insert_or_update_train_run(train_run, model_id)
+    # insert_or_update_train_run(train_run, model_id)
     train_id = stable_hash_str(train_run.train_config)
 
     sql_insert_model = """
@@ -543,6 +564,7 @@ def execute_and_fetch(sql, params=None):
 
 def _ensure_schema(executor=execute):
     executor(sql_create_table_models())
+    executor(sql_create_table_runs())
     executor(sql_create_table_train_steps())
     executor(sql_create_table_checkpoints())
     executor(sql_create_table_sync())
@@ -586,13 +608,15 @@ def dict_to_normalized_json(input_dict):
 
 def insert_or_update_train_run(train_run: TrainRun, model_id: int):
     train_run_flat = dict_to_normalized_json(train_run.serialize_human())
-    # train_run_flat["train_id"],
-    # train_run_flat["ensemble_id"],
-    insert_model_parameter(model_id, "train_config_hash", train_run_flat["train_id"])
-    insert_model_parameter(model_id, "model_id", model_id)
+    insert_run(train_run.run_id, model_id)
+    insert_model_parameter(
+        model_id, train_run.run_id, "train_config_hash", train_run_flat["train_id"]
+    )
+    insert_model_parameter(model_id, train_run.run_id, "model_id", model_id)
     for key, value in train_run_flat.items():
         insert_model_parameter(
             model_id,
+            train_run.run_id,
             key,
             value,
         )
@@ -604,4 +628,16 @@ def render_duck(
     global LAST_MODEL_ID
     ensure_duck(train_run, in_memory)
     insert_or_update_train_run(train_run, train_epoch_state.model_id)
+    insert_model_parameter(
+        train_epoch_state.model_id,
+        train_run.run_id,
+        "train_dataset_len",
+        len(train_epoch_state.train_dataloader.dataset),
+    )
+    insert_model_parameter(
+        train_epoch_state.model_id,
+        train_run.run_id,
+        "val_dataset_len",
+        len(train_epoch_state.val_dataloader.dataset),
+    )
     LAST_MODEL_ID = train_epoch_state.model_id
