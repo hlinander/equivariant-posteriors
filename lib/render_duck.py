@@ -41,6 +41,7 @@ CHECKPOINTS_TABLE_NAME = "checkpoints"
 ARTIFACTS_TABLE_NAME = "artifacts"
 ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
 LOG_TABLE_NAME = "logs"
+DATASET_TABLE_NAME = "datasets"
 
 RUNS_TABLE_NAME = "runs"
 
@@ -78,6 +79,16 @@ ALL_TABLES = (
     + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
     + [table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name) for type_def in TYPE_DEFS]
 )
+
+
+def sql_create_table_datasets():
+    return f"""
+                CREATE TABLE IF NOT EXISTS {DATASET_TABLE_NAME} (
+                    id BIGINT,
+                    timestamp TIMESTAMPTZ,
+                    config JSONB
+                )
+    """
 
 
 def sql_create_table_runs():
