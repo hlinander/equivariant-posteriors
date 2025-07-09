@@ -49,6 +49,7 @@ def evaluate_metrics_on_data(
     dataloader = create_dataloader(
         data_config, batch_size, shuffle=False, compute_config=compute_config
     )
+    ds_id = duck.insert_dataset(data_config)
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
             batch = {
@@ -80,6 +81,7 @@ def evaluate_metrics_on_data(
                     step,
                     metric.name(),
                     data_factory.get_factory().get_class(data_config).__name__,
+                    ds_id,
                     batch["sample_id"].tolist(),
                     values.mean().item(),
                     value_per_sample,
@@ -100,6 +102,8 @@ def validate(
     model = train_epoch_state.model
     dataloader = train_epoch_state.val_dataloader
     device = train_epoch_spec.device_id
+
+    ds_id = duck.insert_dataset(train_run.train_config.val_data_config)
 
     model.eval()
 
@@ -138,6 +142,7 @@ def validate(
                         data_factory.get_factory()
                         .get_class(train_run.train_config.val_data_config)
                         .__name__,
+                        ds_id,
                         batch["sample_id"].tolist(),
                         # metric_sample.batch,
                         values.mean().item(),

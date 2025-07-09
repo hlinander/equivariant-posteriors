@@ -13,6 +13,7 @@ from lib.paths import (
 )
 from lib.random_util import random_positive_i64
 from lib.stable_hash import stable_hash_str
+from lib.stable_hash import stable_hash
 from lib.compute_env import env
 import time
 
@@ -74,6 +75,7 @@ ALL_TABLES = (
         CHECKPOINTS_TABLE_NAME,
         ARTIFACTS_TABLE_NAME,
         ARTIFACT_CHUNKS_TABLE_NAME,
+        DATASET_TABLE_NAME,
     ]
     + [table_name(TRAIN_STEP_METRIC, type_def.name) for type_def in TYPE_DEFS]
     + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
@@ -86,9 +88,24 @@ def sql_create_table_datasets():
                 CREATE TABLE IF NOT EXISTS {DATASET_TABLE_NAME} (
                     id BIGINT,
                     timestamp TIMESTAMPTZ,
-                    config JSONB
+                    name VARCHAR,
+                    config JSON
                 )
     """
+
+
+def insert_dataset(data_config):
+    data_config_flat = dict_to_normalized_json(data_config.serialize_human())
+    dataset_id = stable_hash(data_config)
+    if len(execute_and_fetch(f"SELECT * FROM datasets WHERE id={dataset_id}")) == 0:
+        sql_insert_dataset = """
+        INSERT INTO datasets (id, config, name, timestamp) VALUES (?, ?, ?, now())
+        """
+        execute(
+            sql_insert_dataset,
+            (dataset_id, data_config_flat, data_config.__class__.__name__),
+        )
+    return dataset_id
 
 
 def sql_create_table_runs():
@@ -277,6 +294,7 @@ def sql_create_table_checkpoint_sample_metric(type_def):
             step INTEGER,
             name TEXT,
             dataset TEXT,
+            dataset_id BIGINT,
             sample_ids INTEGER[],
             mean {type_def.sql_type},
             value_per_sample {type_def.sql_type}[]
@@ -284,24 +302,39 @@ def sql_create_table_checkpoint_sample_metric(type_def):
 
 
 def insert_checkpoint_sample_metric(
-    model_id, step, name, dataset, sample_ids, mean, value_per_sample, db_prefix=""
+    model_id,
+    step,
+    name,
+    dataset,
+    dataset_id,
+    sample_ids,
+    mean,
+    value_per_sample,
+    db_prefix="",
 ):
     value_type = type(mean)
     if value_type in PYTHON_TYPE_TO_TYPE_DEF:
         type_def = PYTHON_TYPE_TO_TYPE_DEF[value_type]
     else:
         insert_checkpoint_sample_metric(
-            model_id, step, name, dataset, sample_ids, str(mean), str(value_per_sample)
+            model_id,
+            step,
+            name,
+            dataset,
+            dataset_id,
+            sample_ids,
+            str(mean),
+            str(value_per_sample),
         )
         return
 
     sql_insert_train_step_metric = f"""
-        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample, timestamp) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, now())
+        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, dataset_id, sample_ids, mean, value_per_sample, timestamp) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, now())
     """
     execute(
         sql_insert_train_step_metric,
-        (model_id, step, name, dataset, sample_ids, mean, value_per_sample),
+        (model_id, step, name, dataset, dataset_id, sample_ids, mean, value_per_sample),
     )
 
 
@@ -417,10 +450,26 @@ def sql_create_table_sync():
     """
 
 
-def attach_pg(db="equiv_v2"):
+def get_create_secret():
+    return f"""CREATE OR REPLACE SECRET (
+             TYPE s3,
+    PROVIDER config,
+    KEY_ID '{env().s3_key}',
+    SECRET '{env().s3_secret}',
+    REGION '{env().s3_region}',
+    ENDPOINT '{env().s3_endpoint}'
+             )
+        """
+
+
+def get_attach_ducklake():
     hostname = env().postgres_host  # "localhost"
     port = env().postgres_port  # 5432
     pw = env().postgres_password
+    return f"""ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqpducklake')"""
+
+
+def attach_pg(db="equiv_v2"):
 
     if "DUCKLAKE" in os.environ:
         lake_name = os.environ["DUCKLAKE"]
@@ -432,20 +481,8 @@ def attach_pg(db="equiv_v2"):
 
     CONN.sql("INSTALL ducklake")
     CONN.sql("INSTALL aws")
-    CONN.sql(
-        f"""CREATE OR REPLACE SECRET (
-             TYPE s3,
-    PROVIDER config,
-    KEY_ID '{env().s3_key}',
-    SECRET '{env().s3_secret}',
-    REGION '{env().s3_region}',
-    ENDPOINT '{env().s3_endpoint}'
-             )
-        """
-    )
-    CONN.sql(
-        f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqpducklake')"
-    )
+    CONN.sql(get_create_secret())
+    CONN.sql(get_attach_ducklake())
 
 
 def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
@@ -592,6 +629,7 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_sync())
     executor(sql_create_table_artifacts())
     executor(sql_create_table_artifact_chunks())
+    executor(sql_create_table_datasets())
 
     for type_def in TYPE_DEFS:
         executor(sql_create_table_model_parameter(type_def))

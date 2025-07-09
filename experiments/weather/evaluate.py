@@ -45,6 +45,7 @@ from lib.render_duck import (
     insert_checkpoint_pg,
     ensure_duck,
     attach_pg,
+    insert_dataset,
     sync,
 )
 
@@ -182,6 +183,7 @@ if __name__ == "__main__":
 
     model = deser_model.model
     model.eval()
+    ds_id = insert_dataset(ds_rmse_config)
 
     print("ACC")
     if ds_rmse_config.driscoll_healy:
@@ -196,6 +198,7 @@ if __name__ == "__main__":
                 epoch * len(ds_train),
                 f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
+                ds_id,
                 [],
                 var_data.item(),
                 [],
@@ -212,6 +215,7 @@ if __name__ == "__main__":
                     epoch * len(ds_train),
                     var_name,
                     ds_rmse_config.short_name(),
+                    ds_id,
                     [],
                     value.item(),
                     [],
@@ -239,6 +243,7 @@ if __name__ == "__main__":
                 epoch * len(ds_train),
                 f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
+                ds_id,
                 [],
                 var_data.item(),
                 [],
@@ -255,6 +260,7 @@ if __name__ == "__main__":
                     epoch * len(ds_train),
                     var_name,
                     ds_rmse_config.short_name(),
+                    ds_id,
                     [],
                     value.item(),
                     [],
@@ -275,6 +281,7 @@ if __name__ == "__main__":
             epoch * len(ds_train),
             f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
+            ds_id,
             [],
             var_data.item(),
             [],
@@ -291,6 +298,7 @@ if __name__ == "__main__":
                 epoch * len(ds_train),
                 var_name,
                 ds_rmse_config.short_name(),
+                ds_id,
                 [],
                 value.item(),
                 [],
@@ -302,6 +310,7 @@ if __name__ == "__main__":
             epoch * len(ds_train),
             f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
+            ds_id,
             [],
             var_data.item(),
             [],
@@ -318,6 +327,7 @@ if __name__ == "__main__":
                 epoch * len(ds_train),
                 var_name,
                 ds_rmse_config.short_name(),
+                ds_id,
                 [],
                 value.item(),
                 [],
