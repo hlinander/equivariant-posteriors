@@ -31,7 +31,6 @@ from lib.data_factory import get_factory as get_dataset_factory
 
 # from lib.model_factory import get_factory as get_model_factory
 
-from lib.render_psql import add_artifact, has_artifact, add_parameter
 
 from lib.distributed_trainer import distributed_train
 
@@ -97,7 +96,7 @@ def create_config(ensemble_id, epoch=200, dataset_years=10):
         # gradient_clipping=0.3,
         # _version=57,
         # NOTE: Versions below 13 used buggy window shifting
-        _version=17,
+        _version=18,
         # _version=55,
     )
     train_eval = TrainEval(

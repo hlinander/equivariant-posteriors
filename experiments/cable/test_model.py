@@ -112,7 +112,7 @@ def create_config(ensemble_id):
         return loss(outputs["logits"], targets)
 
     train_config = TrainConfig(
-        model_config=MLPConfig(widths=[256, 256, 256]),
+        model_config=MLPConfig(widths=[256, 256, 256], activation="relu"),
         train_data_config=DataCableConfig(npoints=100),
         val_data_config=DataCableConfig(npoints=100),
         loss=reg_loss,

@@ -279,27 +279,7 @@ def create_config(create_model_config, ensemble_id, **kwargs):
     return train_run
 
 
-if __name__ == "__main__":
-    # device_id = ddp_setup()
-
-    # clifford_structure = torch.tensor(
-    #     np.load(Path(__file__).parent / "./clifford_110_structure.npz"),
-    #     dtype=torch.float32,
-    # )
-    # clifford_blades = json.loads(
-    #     open(Path(__file__).parent / "clifford_110_blades.json").read()
-    # )
-    # basis = {tuple(key): idx for idx, key in enumerate(clifford_blades)}
-    # v1 = torch.tensor([0.0] * 8)
-    # v2 = torch.tensor([0.0] * 8)
-    # v1[basis[(1,)]] = 1.0
-    # v2[basis[(2,)]] = 1.0
-    # w = torch.einsum("i,ikl,k->l", v1, clifford_structure, v2)
-    data_factory.get_factory()
-    data_factory.register_dataset(DataCableConfig, DataCable)
-
-    mf = model_factory.get_factory()
-    mf.register(CliffordModelConfig, CliffordModel)
+def get_all_configs():
     configs = []
     configs += generic_ablation(
         create_config,
@@ -320,6 +300,16 @@ if __name__ == "__main__":
             ensemble_id=[0],
         ),
     )
+    return configs
+
+
+if __name__ == "__main__":
+    data_factory.get_factory()
+    data_factory.register_dataset(DataCableConfig, DataCable)
+
+    mf = model_factory.get_factory()
+    mf.register(CliffordModelConfig, CliffordModel)
+    configs = get_all_configs()
     distributed_train(configs)
 
     # device_id = ddp_setup()

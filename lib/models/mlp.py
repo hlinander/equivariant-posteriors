@@ -48,10 +48,13 @@ class MLPClass(torch.nn.Module):
         last_out_dim = in_out[-1][1]
         torch.nn.init.normal_(self.mlp_out.weight, 0.0, math.sqrt(1.0 / last_out_dim))
         torch.nn.init.normal_(self.mlp_out.bias, 0.0, std=math.sqrt(1e-7))
+        self.drop = torch.nn.Dropout(p=0.2)
 
     def forward(self, batch):
         x = batch["input"]
+        # breakpoint()
         y = x.reshape(x.shape[0], -1)
+        y = self.drop(y)
         y = self.mlp_in(y)
         y = torch.nn.functional.tanh(y)
 

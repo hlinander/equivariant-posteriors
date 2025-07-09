@@ -33,7 +33,7 @@ from lib.data_factory import get_factory as get_dataset_factory
 
 # from lib.model_factory import get_factory as get_model_factory
 
-from lib.render_psql import add_artifact
+# from lib.render_psql import add_artifact
 
 from lib.distributed_trainer import distributed_train
 

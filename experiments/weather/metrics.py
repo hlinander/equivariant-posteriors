@@ -14,7 +14,6 @@ from experiments.weather.data import (
     DataHPConfig,
 )
 from experiments.weather.cdsmontly import ERA5Sample
-from lib.render_psql import add_artifact
 
 
 def dh_numpy_to_xr_surface_hp(data_surface, data_upper, meta) -> ERA5Sample:

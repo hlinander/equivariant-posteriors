@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 from typing import Optional
 import pandas
@@ -164,8 +165,8 @@ def _insert_artifact(
 
     execute(
         """
-            INSERT INTO artifacts (id, model_id, name, path, type, size)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO artifacts (id, timestamp, model_id, name, path, type, size)
+            VALUES (?, now(), ?, ?, ?, ?, ?)
             """,
         (artifact_id, model_id, name, path_str, type, size_bytes),
     )
@@ -540,7 +541,17 @@ def execute_ducklake(sql, params=None):
 
 def execute(sql, params=None):
     try:
-        return CONN.execute(sql, params)
+        done = False
+        ret = None
+        while not done:
+            try:
+                ret = CONN.execute(sql, params)
+                done = True
+            except duckdb.TransactionException as e:
+                print(e)
+                print("Transaction error, let's sleep for a while...")
+                time.sleep(random.random() * 2)
+        return ret
     except Exception as e:
         # print(sql)
         raise e
@@ -577,7 +588,7 @@ def _ensure_schema(executor=execute):
         executor(sql_create_table_train_step_metric(type_def))
 
 
-def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
+def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
     global CONN
     global SCHEMA_ENSURED
 
@@ -634,10 +645,11 @@ def render_duck(
         "train_dataset_len",
         len(train_epoch_state.train_dataloader.dataset),
     )
-    insert_model_parameter(
-        train_epoch_state.model_id,
-        train_run.run_id,
-        "val_dataset_len",
-        len(train_epoch_state.val_dataloader.dataset),
-    )
+    if train_epoch_state.val_dataloader is not None:
+        insert_model_parameter(
+            train_epoch_state.model_id,
+            train_run.run_id,
+            "val_dataset_len",
+            len(train_epoch_state.val_dataloader.dataset),
+        )
     LAST_MODEL_ID = train_epoch_state.model_id

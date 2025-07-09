@@ -13,7 +13,6 @@ import lib.data_factory as data_factory
 from lib.data_utils import get_sampler
 import lib.model_factory as model_factory
 from lib.render_dataframe import render_dataframe
-from lib.render_psql import render_psql
 
 # from lib.render_duck import insert_model, render_duck
 import lib.render_duck as duck
@@ -39,6 +38,8 @@ import lib.ddp as ddp
 
 def evaluate_metrics_on_data(
     model,
+    model_id,
+    step,
     metrics: Dict[str, Metric],
     data_config,
     batch_size: int,
@@ -58,11 +59,31 @@ def evaluate_metrics_on_data(
             metric_sample = MetricSample(
                 output=output,
                 batch=batch,
-                # prediction=output["predictions"],
-                epoch=-1,
+                model_id=model_id,
             )
-            for metric_name, metric in metrics.items():
-                metric(metric_sample)
+            for metric in metrics:
+                values = metric.per_sample(metric_sample)
+
+                if values.dtype == torch.double:
+                    values = values.float()
+
+                if (
+                    len(values.shape) == 1
+                    and values.shape[0] == batch["sample_id"].shape[0]
+                ):
+                    value_per_sample = values.tolist()
+                else:
+                    value_per_sample = None
+
+                duck.insert_checkpoint_sample_metric(
+                    metric_sample.model_id,
+                    step,
+                    metric.name(),
+                    data_factory.get_factory().get_class(data_config).__name__,
+                    batch["sample_id"].tolist(),
+                    values.mean().item(),
+                    value_per_sample,
+                )
 
 
 def validate(
@@ -94,7 +115,6 @@ def validate(
                 metric_sample = MetricSample(
                     output=output,
                     batch=batch,
-                    # epoch=train_epoch_state.epoch,
                     model_id=train_epoch_state.model_id,
                 )
                 for metric in train_epoch_state.validation_metrics:
@@ -168,7 +188,7 @@ def train(
                     batch_time,
                 )
         train_epoch_state.timing_metric.start("batch")
-        train_epoch_state.batch += 1
+        train_epoch_state.batch += ddp.get_world_size()
 
         batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
         output = model(batch)
@@ -243,7 +263,6 @@ def train(
             if now > train_epoch_state.next_visualization:
                 train_epoch_state.next_visualization = time.time() + 10
                 train_epoch_state.timing_metric.start("duck")
-                # last_postgres_result = render_psql(train_run, train_epoch_state)
                 # last_duck_result = duck.render_duck(train_run, train_epoch_state)
                 # duck.touch_model(train_run.train_config, train_epoch_state.model_id)
                 try:
@@ -293,6 +312,8 @@ def create_dataloader(
         sampler=sampler,
         num_workers=compute_config.num_workers,
         collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
+        pin_memory=True,
+        persistent_workers=True and compute_config.num_workers > 0,
     )
     return dataloader
 
@@ -314,6 +335,8 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
         shuffle=train_shuffle,
         num_workers=train_run.compute_config.num_workers,
         collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
+        pin_memory=True,
+        persistent_workers=True and train_run.compute_config.num_workers > 0,
     )
     if train_config.val_data_config is not None:
         val_ds = data_factory.get_factory().create(train_config.val_data_config)
@@ -329,6 +352,8 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
             sampler=val_sampler,
             num_workers=train_run.compute_config.num_workers,
             collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
+            pin_memory=True,
+            persistent_workers=True and train_run.compute_config.num_workers > 0,
         )
     else:
         val_dataloader = None

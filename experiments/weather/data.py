@@ -182,6 +182,7 @@ class Climatology(torch.utils.data.Dataset):
             for key, filename in names.items():
                 item_dict[key] = np.load(fs_cache_path / filename).astype(np.float32)
         else:
+            print(f"Cache not found {fs_cache_path}")
             print("Climate hydrating cache")
             accum_dict = dict()
             for cidx in climate_indices:
@@ -503,6 +504,7 @@ class DataHP(torch.utils.data.Dataset):
             for key, filename in names.items():
                 item_dict[key] = np.load(fs_cache_path / filename).astype(np.float32)
         else:
+            print(f"Cache not found: {fs_cache_path}")
             e5s_input_config = day_index_to_era5_config(
                 idx, self.config.start_year, self.config.end_year
             )
