@@ -86,7 +86,7 @@ ALL_TABLES = (
 def sql_create_table_datasets():
     return f"""
                 CREATE TABLE IF NOT EXISTS {DATASET_TABLE_NAME} (
-                    id BIGINT,
+                    id UBIGINT,
                     timestamp TIMESTAMPTZ,
                     name VARCHAR,
                     config JSON
@@ -97,13 +97,14 @@ def sql_create_table_datasets():
 def insert_dataset(data_config):
     data_config_flat = dict_to_normalized_json(data_config.serialize_human())
     dataset_id = stable_hash(data_config)
+    print(type(dataset_id))
     if len(execute_and_fetch(f"SELECT * FROM datasets WHERE id={dataset_id}")) == 0:
-        sql_insert_dataset = """
-        INSERT INTO datasets (id, config, name, timestamp) VALUES (?, ?, ?, now())
+        sql_insert_dataset = f"""
+        INSERT INTO datasets (id, config, name, timestamp) VALUES ({dataset_id}, ?, ?, now())
         """
         execute(
             sql_insert_dataset,
-            (dataset_id, data_config_flat, data_config.__class__.__name__),
+            (data_config_flat, data_config.__class__.__name__),
         )
     return dataset_id
 
@@ -294,7 +295,7 @@ def sql_create_table_checkpoint_sample_metric(type_def):
             step INTEGER,
             name TEXT,
             dataset TEXT,
-            dataset_id BIGINT,
+            dataset_id UBIGINT,
             sample_ids INTEGER[],
             mean {type_def.sql_type},
             value_per_sample {type_def.sql_type}[]
@@ -637,7 +638,7 @@ def _ensure_schema(executor=execute):
         executor(sql_create_table_train_step_metric(type_def))
 
 
-def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
+def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False, reset=False):
     global CONN
     global SCHEMA_ENSURED
 
@@ -648,7 +649,7 @@ def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
             get_or_create_checkpoint_path(run_run.train_config)
             / f"duck_{run_run.run_id:x}.db"
         )
-    if CONN is None:
+    if CONN is None or reset:
         print("Connecting to duck...")
         CONN = duckdb.connect()
         CONN.sql(f"ATTACH '{db_path}' as local")

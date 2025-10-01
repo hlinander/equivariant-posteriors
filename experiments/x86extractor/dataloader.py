@@ -13,6 +13,7 @@ from lib.serialization import serialize_human
 class DataElfConfig:
     path: str
     as_seq: bool
+    patch_size: int
 
     def serialize_human(self):
         return serialize_human(self.__dict__)
@@ -25,6 +26,7 @@ class DataElf(torch.utils.data.Dataset):
         files = root_path.rglob("*")
         segments = []
         types = []
+        used_files = []
         for file in files:
             if file.is_file():
                 segs = extract.process_elf_file(file)
@@ -40,15 +42,22 @@ class DataElf(torch.utils.data.Dataset):
                         # self.segments += [(part, T)]
                         segments += [part]
                         types += [0 if T == "CODE" else 1]
+                        used_files += [file]
                         off += 0x1000
         segments = [seg for seg in segments if len(seg) == extract.PAGE_SIZE]
+        used_files = [
+            file
+            for file, seg in zip(used_files, segments)
+            if len(seg) == extract.PAGE_SIZE
+        ]
+        self.used_files = used_files
         self.segments = np.stack(segments)
         self.types = np.array(types, dtype=np.long)
 
     @staticmethod
     def data_spec(config: DataElfConfig):
         if config.as_seq:
-            input_shape = [0x1000 // 16, 16]
+            input_shape = [0x1000 // config.patch_size, config.patch_size]
         else:
             input_shape = [0x1000]
         return DataSpec(
@@ -63,7 +72,7 @@ class DataElf(torch.utils.data.Dataset):
         # fdata = np.float32([it / 0xFF for it in data])
         # fdata = np.array(data, dtype=np.float32) / 255.0
         if self.config.as_seq:
-            data = data.reshape(-1, 16)
+            data = data.reshape(-1, self.config.patch_size)
         return create_sample_legacy(data, type, idx)
 
     def __len__(self):

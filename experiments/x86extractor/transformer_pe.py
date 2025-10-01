@@ -20,7 +20,14 @@ from lib.classification_metrics import create_classification_metrics
 
 
 def create_config(
-    ensemble_id, embed_d=128, mlp_dim=128, num_heads=4, num_layers=1, **kwargs
+    ensemble_id,
+    embed_d=128,
+    mlp_dim=128,
+    num_heads=4,
+    num_layers=1,
+    patch_size=16,
+    training_path="/proj/heal_pangu/datasets/x86/train",
+    **kwargs,
 ):
     loss = torch.nn.CrossEntropyLoss()
 
@@ -33,13 +40,16 @@ def create_config(
             mlp_dim=mlp_dim,
             num_layers=num_layers,
             num_heads=num_heads,
+            dropout=0.2,
             softmax=True,
         ),
         train_data_config=DataElfConfig(
-            path="/proj/heal_pangu/datasets/x86/train", as_seq=True
+            path=training_path,
+            as_seq=True,
+            patch_size=patch_size,
         ),
         val_data_config=DataElfConfig(
-            path="/proj/heal_pangu/datasets/x86/val", as_seq=True
+            path="/proj/heal_pangu/datasets/x86/val", as_seq=True, patch_size=patch_size
         ),
         loss=cls_loss,
         optimizer=OptimizerConfig(
@@ -67,21 +77,31 @@ def create_config(
     return train_run
 
 
+def get_all_configs():
+    return generic_ablation(
+        create_config,
+        dict(
+            ensemble_id=[0],
+            num_heads=[4],
+            embed_d=[128],
+            mlp_dim=[128],
+            num_layers=[1],
+            patch_size=[2, 4, 8],
+            # patch_size=[2, 4, 8, 16, 32, 64],
+            train_path=[
+                "/proj/heal_pangu/datasets/x86/train",
+                "/proj/heal_pangu/datasets/x86/w10sys32/",
+            ],
+        ),
+    )
+
+
 if __name__ == "__main__":
     data_factory.get_factory()
     data_factory.register_dataset(DataElfConfig, DataElf)
 
     # def create_config(ensemble_id, embed_d, mlp_dim, num_heads, num_layers, **kwargs):
-    configs = generic_ablation(
-        create_config,
-        dict(
-            ensemble_id=[0, 1, 2, 3, 4, 5],
-            num_heads=[4],
-            embed_d=[128],
-            mlp_dim=[128],
-            num_layers=[1],
-        ),
-    )
+    configs = get_all_configs()
     # configs = generic_ablation(
     #     create_config,
     #     dict(

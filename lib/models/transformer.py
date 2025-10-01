@@ -11,6 +11,7 @@ class TransformerConfig:
     num_layers: int
     num_heads: int
     softmax: bool
+    dropout: float = 0.0
     activation: str = "gelu"
 
     def serialize_human(self):
@@ -31,7 +32,7 @@ class Transformer(torch.nn.Module):
             d_model=embed_d,
             nhead=config.num_heads,
             dim_feedforward=config.mlp_dim,
-            dropout=0.0,
+            dropout=self.config.dropout,
             batch_first=True,
             activation=self.config.activation,
         )
@@ -80,7 +81,9 @@ class PositionalEncoding(torch.nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout)
 
         position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10.0) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model)
+        )
         pe = torch.zeros(1, max_len, d_model)
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
