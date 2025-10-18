@@ -47,6 +47,7 @@ def create_train_run():
         epochs=20,
         save_nth_epoch=5,
         validate_nth_epoch=5,
+        project="test",
     )
     return train_run
 

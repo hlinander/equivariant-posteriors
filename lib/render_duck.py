@@ -64,19 +64,17 @@ def table_name(kind, type_name):
     return f"{kind}_{type_name}"
 
 
-ALL_TABLES = (
-    [
-        MODELS_TABLE_NAME,
-        RUNS_TABLE_NAME,
-        TRAIN_STEPS_TABLE_NAME,
-        CHECKPOINTS_TABLE_NAME,
-        ARTIFACTS_TABLE_NAME,
-        ARTIFACT_CHUNKS_TABLE_NAME,
-    ]
-    + [table_name(TRAIN_STEP_METRIC, type_def.name) for type_def in TYPE_DEFS]
-    + [table_name(MODEL_PARAMETER, type_def.name) for type_def in TYPE_DEFS]
-    + [table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name) for type_def in TYPE_DEFS]
-)
+ALL_TABLES = [
+    MODELS_TABLE_NAME,
+    RUNS_TABLE_NAME,
+    TRAIN_STEPS_TABLE_NAME,
+    CHECKPOINTS_TABLE_NAME,
+    ARTIFACTS_TABLE_NAME,
+    ARTIFACT_CHUNKS_TABLE_NAME,
+    MODEL_PARAMETER,
+    TRAIN_STEP_METRIC,
+    CHECKPOINT_SAMPLE_METRIC,
+]
 
 
 def sql_create_table_runs():
@@ -192,14 +190,17 @@ def get_artifact(artifact_id):
     return artifact_data
 
 
-def sql_create_table_model_parameter(type_def):
+def sql_create_table_model_parameter():
     return f"""
-        CREATE TABLE IF NOT EXISTS {table_name(MODEL_PARAMETER, type_def.name)} (
+        CREATE TABLE IF NOT EXISTS {MODEL_PARAMETER} (
             model_id BIGINT,
             run_id BIGINT,
             timestamp TIMESTAMPTZ,
             name TEXT,
-            value {type_def.sql_type}
+            type TEXT,
+            value_int BIGINT,
+            value_float FLOAT,
+            value_text TEXT
         )"""
 
 
@@ -211,22 +212,30 @@ def insert_model_parameter(model_id, run_id, name, value):
         insert_model_parameter(model_id, run_id, name, str(value))
         return
 
+    # Set the appropriate value column based on type
+    value_int = value if type_def.name == INT else None
+    value_float = value if type_def.name == FLOAT else None
+    value_text = value if type_def.name == TEXT else None
+
     sql_insert_model_parameter = f"""
-        INSERT INTO {table_name(MODEL_PARAMETER, type_def.name)} (model_id, run_id, name, value, timestamp) 
-        VALUES (?, ?, ?, ?, now())
+        INSERT INTO {MODEL_PARAMETER} (model_id, run_id, name, type, value_int, value_float, value_text, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, now())
     """
-    execute(sql_insert_model_parameter, (model_id, run_id, name, value))
+    execute(sql_insert_model_parameter, (model_id, run_id, name, type_def.name, value_int, value_float, value_text))
 
 
-def sql_create_table_train_step_metric(type_def):
+def sql_create_table_train_step_metric():
     return f"""
-        CREATE TABLE IF NOT EXISTS {table_name(TRAIN_STEP_METRIC, type_def.name)} (
+        CREATE TABLE IF NOT EXISTS {TRAIN_STEP_METRIC} (
             model_id BIGINT,
             timestamp TIMESTAMPTZ,
             run_id BIGINT,
             name TEXT,
             step INTEGER,
-            value {type_def.sql_type}
+            type TEXT,
+            value_int BIGINT,
+            value_float FLOAT,
+            value_text TEXT
         )"""
 
 
@@ -238,36 +247,45 @@ def insert_train_step_metric(model_id, run_id, name, step, value):
         insert_train_step_metric(model_id, run_id, name, step, str(value))
         return
 
-    # raise Exception(type_def)
+    # Set the appropriate value column based on type
+    value_int = value if type_def.name == INT else None
+    value_float = value if type_def.name == FLOAT else None
+    value_text = value if type_def.name == TEXT else None
+
     sql_insert_train_step_metric = f"""
-        INSERT INTO {table_name(TRAIN_STEP_METRIC, type_def.name)} (model_id, run_id, name, step, value, timestamp) 
-        VALUES (?, ?, ?, ?, ?, now())
+        INSERT INTO {TRAIN_STEP_METRIC} (model_id, run_id, name, step, type, value_int, value_float, value_text, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, now())
     """
-    execute(sql_insert_train_step_metric, (model_id, run_id, name, step, value))
+    execute(sql_insert_train_step_metric, (model_id, run_id, name, step, type_def.name, value_int, value_float, value_text))
 
 
 def select_train_step_metric_float(model_id, name):
     sql_select = f"""
         SELECT * FROM (
-        SELECT * FROM (SELECT step, value FROM {table_name(TRAIN_STEP_METRIC, PYTHON_TYPE_TO_TYPE_DEF[float].name)}
-        WHERE model_id=? AND name=? ORDER BY step)
+        SELECT * FROM (SELECT step, value_float as value FROM {TRAIN_STEP_METRIC}
+        WHERE model_id=? AND name=? AND type=? ORDER BY step)
         USING SAMPLE 1000 ROWS)
         ORDER BY step
         """
-    return execute_and_fetch(sql_select, (model_id, name))
+    return execute_and_fetch(sql_select, (model_id, name, FLOAT))
 
 
-def sql_create_table_checkpoint_sample_metric(type_def):
+def sql_create_table_checkpoint_sample_metric():
     return f"""
-        CREATE TABLE IF NOT EXISTS {table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (
+        CREATE TABLE IF NOT EXISTS {CHECKPOINT_SAMPLE_METRIC} (
             model_id BIGINT,
             timestamp TIMESTAMPTZ,
             step INTEGER,
             name TEXT,
             dataset TEXT,
             sample_ids INTEGER[],
-            mean {type_def.sql_type},
-            value_per_sample {type_def.sql_type}[]
+            type TEXT,
+            mean_int BIGINT,
+            mean_float FLOAT,
+            mean_text TEXT,
+            value_per_sample_int BIGINT[],
+            value_per_sample_float FLOAT[],
+            value_per_sample_text TEXT[]
         )"""
 
 
@@ -283,13 +301,22 @@ def insert_checkpoint_sample_metric(
         )
         return
 
-    sql_insert_train_step_metric = f"""
-        INSERT INTO {db_prefix}{table_name(CHECKPOINT_SAMPLE_METRIC, type_def.name)} (model_id, step, name, dataset, sample_ids, mean, value_per_sample, timestamp) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, now())
+    # Set the appropriate value columns based on type
+    mean_int = mean if type_def.name == INT else None
+    mean_float = mean if type_def.name == FLOAT else None
+    mean_text = mean if type_def.name == TEXT else None
+
+    value_per_sample_int = value_per_sample if type_def.name == INT else None
+    value_per_sample_float = value_per_sample if type_def.name == FLOAT else None
+    value_per_sample_text = value_per_sample if type_def.name == TEXT else None
+
+    sql_insert_checkpoint_sample_metric = f"""
+        INSERT INTO {db_prefix}{CHECKPOINT_SAMPLE_METRIC} (model_id, step, name, dataset, sample_ids, type, mean_int, mean_float, mean_text, value_per_sample_int, value_per_sample_float, value_per_sample_text, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
     """
     execute(
-        sql_insert_train_step_metric,
-        (model_id, step, name, dataset, sample_ids, mean, value_per_sample),
+        sql_insert_checkpoint_sample_metric,
+        (model_id, step, name, dataset, sample_ids, type_def.name, mean_int, mean_float, mean_text, value_per_sample_int, value_per_sample_float, value_per_sample_text),
     )
 
 
@@ -437,6 +464,24 @@ def attach_pg(db="equiv_v2"):
 
 
 def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
+    """
+    DEPRECATED: This function is deprecated in favor of the S3-based ingestion system.
+
+    The old sync() method caused write conflicts when multiple clients tried to write
+    to the central database simultaneously. Use start_periodic_export() instead.
+
+    New approach:
+        1. Client side: Use start_periodic_export() to export to S3
+        2. Central side: Run ingestion/ingest.py to process files
+
+    See ingestion/README.md for details.
+    """
+    raise DeprecationWarning(
+        "sync() is deprecated. Use start_periodic_export() instead. "
+        "See ingestion/README.md for migration instructions."
+    )
+
+    # Old implementation below (kept for reference)
     global PG_SCHEMA_ENSURED
     import time
 
@@ -570,11 +615,9 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_sync())
     executor(sql_create_table_artifacts())
     executor(sql_create_table_artifact_chunks())
-
-    for type_def in TYPE_DEFS:
-        executor(sql_create_table_model_parameter(type_def))
-        executor(sql_create_table_checkpoint_sample_metric(type_def))
-        executor(sql_create_table_train_step_metric(type_def))
+    executor(sql_create_table_model_parameter())
+    executor(sql_create_table_checkpoint_sample_metric())
+    executor(sql_create_table_train_step_metric())
 
 
 def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
@@ -641,3 +684,27 @@ def render_duck(
         len(train_epoch_state.val_dataloader.dataset),
     )
     LAST_MODEL_ID = train_epoch_state.model_id
+
+
+def start_periodic_export(
+    train_run: TrainRun,
+    interval_seconds: int = 300,
+    s3_bucket: Optional[str] = None,
+):
+    """
+    Start a background thread that periodically exports data to S3
+
+    Args:
+        train_run: The training run context
+        interval_seconds: How often to export (default: 300 = 5 minutes)
+        s3_bucket: S3 bucket name (defaults to env().s3_bucket)
+
+    Returns:
+        The background thread handle
+
+    Example:
+        # In your training script
+        export_thread = start_periodic_export(train_run, interval_seconds=300)
+    """
+    from lib.export_parquet import export_periodic
+    return export_periodic(train_run, interval_seconds, s3_bucket)

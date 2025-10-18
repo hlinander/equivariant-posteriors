@@ -246,13 +246,9 @@ def train(
                 # last_postgres_result = render_psql(train_run, train_epoch_state)
                 # last_duck_result = duck.render_duck(train_run, train_epoch_state)
                 # duck.touch_model(train_run.train_config, train_epoch_state.model_id)
-                try:
-                    duck.sync()
-                    last_sync_result = True, ""
-                except Exception as e:
-                    traceback.print_exc()
-                    print(e)
-                    last_sync_result = None, str(e)
+
+                # Sync removed - now using start_periodic_export() instead
+                last_sync_result = True, ""
 
                 duck_time = train_epoch_state.timing_metric.stop("duck")
                 duck.insert_train_step_metric(
@@ -420,10 +416,12 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         except duck.duckdb.duckdb.ConstraintException:
             print("Probably already synced model parameters...")
 
-    print("Sync duck")
+    # Start periodic export to S3 (replaces old sync() calls)
     if ddp.get_rank() == 0:
+        print("Starting periodic export to S3...")
+        export_thread = duck.start_periodic_export(train_run, interval_seconds=300)
         serialize(serialize_config)
-        duck.sync()
+
     print("Run epochs...")
     while state.epoch < train_run.epochs:
         train(train_run, state, train_epoch_spec)
@@ -437,6 +435,8 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
             serialize(serialize_config)
         if train_run.compute_config.distributed:
             torch.distributed.barrier()
+
+    # Final sync removed - periodic export handles syncing automatically
 
     if ddp.get_rank() > 0:
         return

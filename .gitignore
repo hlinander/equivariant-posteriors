@@ -27,3 +27,13 @@ rust/vis/flamegraph.svg
 rust/vis/perf.data
 rust/vis/perf.data.old
 sh/
+
+# Local S3 testing (MinIO)
+minio-data/
+.env.local
+central.db
+central.db.wal
+
+# DuckDB files
+*.db
+*.db.wal

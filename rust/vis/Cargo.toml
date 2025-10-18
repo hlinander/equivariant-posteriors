@@ -12,8 +12,8 @@ clap = "4.4.11"
 colorous = "1.0.12"
 dotenvy = "0.15.7"
 # eframe = "*"
-wgpu = { version = "24.0.1", features = ["spirv"] }
-eframe = { version = "0.31.0", features = ["wgpu", 
+wgpu = { version = "25.0.2", features = ["spirv"] }
+eframe = { version = "0.32", features = ["wgpu", 
      # "accesskit",
     "default_fonts",
     "wayland",
@@ -23,9 +23,9 @@ eframe = { version = "0.31.0", features = ["wgpu",
     "x11",
 ], default-features = false}
 winit = { version = "*", features = ["default"]}
-egui = "0.31.0"
-egui_extras = {version="0.31.0", features=["all_loaders"]}
-egui_plot = "0.31.0"
+egui = "0.32"
+egui_extras = {version="0.32", features=["all_loaders"]}
+egui_plot = "0.33"
 flamegraph = "0.6.4"
 image = {version="*", features=["png"]}
 itertools = "0.12.0"
@@ -45,7 +45,7 @@ duckdb = {git = "https://github.com/duckdb/duckdb-rs", features=["polars", "r2d2
 r2d2 = "0.8.9"
 # r2d2-duckdb = "0.1.0"
 # r2d2 = "0.8.10"
-polars = {version="0.46.0", features=["lazy", "rolling_window", "polars-io", "json", "timezones"]}
+polars = {version="0.49.1", features=["lazy", "rolling_window", "polars-io", "json", "timezones"]}
 # polars-core = "*"
 serde = {version="1.0.209", features=["derive"]}
 ron = "0.8.1"
@@ -54,8 +54,8 @@ ron = "0.8.1"
 tracing = "0.1.40"
 tracing-tracy = "0.11.1"
 tracing-subscriber = "0.3.18"
-egui_file = "0.22.0"
-egui_code_editor = "0.2.9"
+egui_file = "0.23.0"
+egui_code_editor = "0.2.17"
 sqlformat = "0.2.6"
 tracy-client = "0.18.0"
 jemallocator = { version = "0.5.4", features = ["profiling"] }

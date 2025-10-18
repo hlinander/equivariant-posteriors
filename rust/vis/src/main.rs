@@ -18,6 +18,7 @@ use egui_plot::{Line, Plot};
 use itertools::Itertools;
 use ndarray::{s, ArrayBase, Dim, IxDyn, IxDynImpl, OwnedRepr, SliceInfo, SliceInfoElem};
 use sqlformat::{format, FormatOptions};
+use wgpu::ShaderModuleDescriptorSpirV;
 // use profiling::tracy_client;
 use core::time;
 use serde::{Deserialize, Serialize};
@@ -575,10 +576,12 @@ fn load_shader(device: &wgpu::Device, bytes: &'static [u8]) -> wgpu::ShaderModul
     {
         let source = wgpu::util::make_spirv_raw(bytes);
         unsafe {
-            device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                label: None,
-                source,
-            })
+            device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough::SpirV(
+                wgpu::ShaderModuleDescriptorSpirV {
+                    label: None,
+                    source,
+                },
+            ))
         }
     } else {
         // unsafe {
@@ -680,6 +683,7 @@ fn poll_artifact_download(binary_artifact: &mut BinaryArtifact) {
                 //     download_progress.status = download_status;
                 // }
                 while let Ok(download_status) = download_progress.rx_update.try_recv() {
+                    println!("Status!");
                     download_progress.status = download_status;
                 }
             }
@@ -845,7 +849,7 @@ fn image_from_ndarray_healpix(
 ) -> ColorImageInfo {
     let width = 1000;
     let height = 1000;
-    let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
+    let mut img = egui::ColorImage::filled([width, height], egui::Color32::WHITE);
     let mut local_index = vec![0; array.shape().len()];
     for (dim_idx, dim) in view.index.iter().enumerate() {
         local_index[dim_idx] = *dim;
@@ -988,7 +992,7 @@ fn image_from_ndarray_driscoll_healy(
 ) -> ColorImageInfo {
     let width = 1000;
     let height = 1000;
-    let mut img = egui::ColorImage::new([width, height], egui::Color32::WHITE);
+    let mut img = egui::ColorImage::filled([width, height], egui::Color32::WHITE);
     let mut local_index = vec![0; array.shape().len()];
     for (dim_idx, dim) in view.index.iter().enumerate() {
         local_index[dim_idx] = *dim;
@@ -1108,6 +1112,8 @@ struct GuiRuns {
     active_runs_handle: Option<JoinHandle<Vec<String>>>,
     filter_save_name: String,
     filter_load_dialog: Option<FileDialog>,
+    image_save_dialog: Option<FileDialog>,
+    image_save_data: Option<(Vec<u8>, String)>, // (binary_data, filename)
     filter_name_filter: String,
     table_filter: String,
     custom_plot: String,
@@ -1383,6 +1389,24 @@ impl eframe::App for GuiRuns {
                         }
                     }
                 }
+
+                // Handle image save dialog
+                if let Some(dialog) = &mut self.image_save_dialog {
+                    if dialog.show(ui.ctx()).selected() {
+                        if let Some(file_path) = dialog.path() {
+                            if let Some((binary_data, _)) = &self.image_save_data {
+                                if let Ok(mut file) = File::create(file_path) {
+                                    if let Err(e) = file.write_all(binary_data) {
+                                        eprintln!("Failed to save image: {}", e);
+                                    } else {
+                                        println!("Image saved to: {:?}", file_path);
+                                    }
+                                }
+                            }
+                            self.image_save_data = None; // Clear the data after saving
+                        }
+                    }
+                }
                 for param_filter in &mut self.gui_params.filters.param_filters {
                     for param_name in self.gui_params.param_values.keys() {
                         if !param_filter.filter.contains_key(param_name) {
@@ -1579,31 +1603,7 @@ fn label_from_active_inspect_params(
     };
     label
 }
-// fn label_from_active_inspect_params2(runs: &DataFrame, train_id: String, gui_params: &GuiParams) -> String {
-//     let label = if gui_params.inspect_params.is_empty() {
-//         // run.params.get("ensemble_id").unwrap().clone()
-//         // runs.filter()
-//         runs.column("name").unwrap().equal("ensemble_id");
-//         runs.column("train_id").unwrap().utf8().unwrap().equal(train_id);
-//         String::new()
-//         // runs.
-//     } else {
-//         let empty = "".to_string();
-//         gui_params
-//             .inspect_params
-//             .iter()
-//             .sorted()
-//             .map(|param| {
-//                 format!(
-//                     "{}:{}",
-//                     param.split(".").last().unwrap_or(param),
-//                     run.params.get(param).unwrap_or(&empty)
-//                 )
-//             })
-//             .join(", ")
-//     };
-//     label
-// }
+
 fn show_artifacts(
     ui: &mut egui::Ui,
     handler: &mut ArtifactHandler,
@@ -1612,6 +1612,8 @@ fn show_artifacts(
     filtered_runs: &Vec<String>,
     run_ensemble_color: &HashMap<String, egui::Color32>,
     run_params: &HashMap<RunParamKey, HashSet<String>>,
+    image_save_dialog: &mut Option<FileDialog>,
+    image_save_data: &mut Option<(Vec<u8>, String)>,
 ) {
     match handler {
         ArtifactHandler::NPYArtifact {
@@ -1898,6 +1900,21 @@ fn show_artifacts(
                                                 )
                                                 .fit_to_exact_size(max_size * 0.9),
                                             );
+
+                                            // Add save button
+                                            if ui.button("Save").clicked() {
+                                                let filename = format!(
+                                                    "{}_{}.png",
+                                                    artifact_id.train_id, artifact_id.name
+                                                );
+                                                *image_save_data =
+                                                    Some((binary_data.clone(), filename.clone()));
+
+                                                let mut dialog = FileDialog::save_file(None)
+                                                    .default_filename(&filename);
+                                                dialog.open();
+                                                *image_save_dialog = Some(dialog);
+                                            }
                                         }
                                         BinaryArtifact::Loading((_, status)) => {
                                             if status.status.size > 0 {
@@ -2158,6 +2175,7 @@ fn render_npy_artifact_hp(
             );
         }
         let pi = egui_plot::PlotImage::new(
+            "plot",
             textures.get(&view).unwrap().texture_handle.id(),
             // texture.id(),
             egui_plot::PlotPoint::from([0.0, 0.0]),
@@ -2222,7 +2240,7 @@ fn render_npy_artifact_hp(
                     let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
                     let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
                     let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
-                    egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
+                    egui_plot::Line::new("pl", [[0.0, v1], [0.0, v2]].into_iter().collect_vec())
                         .color(color)
                         .width(10.0)
                 });
@@ -2429,6 +2447,7 @@ fn render_npy_artifact_driscoll_healy(
             );
         }
         let pi = egui_plot::PlotImage::new(
+            "pi",
             textures.get(&view).unwrap().texture_handle.id(),
             // texture.id(),
             egui_plot::PlotPoint::from([0.0, 0.0]),
@@ -2457,7 +2476,7 @@ fn render_npy_artifact_driscoll_healy(
                 let color = egui::Color32::from_rgb(c1.r, c1.g, c1.b);
                 let v1 = color_info.min_val + t1 * (color_info.max_val - color_info.min_val);
                 let v2 = color_info.min_val + t2 * (color_info.max_val - color_info.min_val);
-                egui_plot::Line::new([[0.0, v1], [0.0, v2]].into_iter().collect_vec())
+                egui_plot::Line::new("pl2", [[0.0, v1], [0.0, v2]].into_iter().collect_vec())
                     .color(color)
                     .width(10.0)
             });
@@ -2587,7 +2606,7 @@ fn render_npy_artifact_tabular(
                 //     .collect_vec();
                 // let v = xy.iter().next();
                 // xs.fold_axis(, , )
-                plot_ui.points(Points::new(xy));
+                plot_ui.points(Points::new("pp", xy));
                 // plot_ui.image(pi);
             });
     });
@@ -2772,39 +2791,7 @@ fn update_plot_map(
         None => None,
     }
 }
-// fn update_plot_map2(
-//     pool: &r2d2::Pool<DuckdbConnectionManager>,
-//     active_runs: &Vec<String>,
-// ) -> HashMap<(String, String), Vec<[f64; 2]>> {
-//     // self.runs2.plot_map.clear();
-//     let mut plot_map = HashMap::new();
-//     if active_runs.len() == 0 {
-//         return HashMap::new();
-//     }
 
-//     let metrics = get_metrics_duck(pool, active_runs);
-//     let metric_names = metrics
-//         .column("variable")
-//         .unwrap()
-//         .sort(false)
-//         .unique_stable()
-//         .unwrap();
-//     for metric_name in metric_names.iter() {
-//         for train_id in active_runs.iter().sorted() {
-//             // let df =
-//             let x = df.column("x").unwrap().f32().unwrap();
-//             let x = x.to_vec().into_iter().step_by(window_size as usize);
-//             let y = df.column("value").unwrap().f32().unwrap().rechunk();
-//             let y = y.to_vec().into_iter().step_by(window_size as usize);
-//             let xy = x
-//                 .zip(y)
-//                 .map(|(x, y)| [x.unwrap_or(0.0) as f64, y.unwrap_or(0.0) as f64])
-//                 .collect_vec();
-//             plot_map.insert((metric_name.clone(), train_id.clone()), xy);
-//         }
-//     }
-//     plot_map
-// }
 impl GuiRuns {
     fn render_table2(
         &mut self,
@@ -2814,16 +2801,24 @@ impl GuiRuns {
     ) {
         let df = {
             let conn = self.duckdb.get().unwrap();
-            let mut stmt = conn
-                .prepare(&format!(
-                    "SELECT is_active, p.progress, date_trunc('second', runtime) :: text as runtime, argv, date_trunc('minute', age(now(), timestamp)) :: text as age, * EXCLUDE(progress, argv, is_active, runtime, run_id)
+            let mut stmt = conn.prepare(&format!(
+                "SELECT
+                        is_active,
+                        p.progress,
+                        date_trunc('minute', p.remaining) :: text as remaining,
+                        date_trunc('second', runtime) :: text as runtime,
+                        p.epochs as epochs,
+                        p.target_epochs as target_epochs,
+                        argv,
+                        date_trunc('minute', age(now(), timestamp)) :: text as age,
+                        * EXCLUDE(progress, argv, is_active, runtime, run_id, remaining, epochs, target_epochs)
                      FROM {} t
                      JOIN progress p
                          ON t.run_id=p.run_id",
-                    table_name
-                ));
+                table_name
+            ));
             if stmt.is_err() {
-                println!("{:?}", stmt);
+                // println!("{:?}", stmt);
                 return;
             }
             let Ok(mut stmt) = stmt else { panic!() };
@@ -2899,6 +2894,22 @@ impl GuiRuns {
                                                     .sense(egui::Sense::hover()),
                                             );
                                         });
+                                    } else if col.name() == "progress" {
+                                        let polars::prelude::AnyValue::Float64(valuef) = cell_value
+                                        else {
+                                            panic!()
+                                        };
+
+                                        let fill_color = if is_active {
+                                            egui::Color32::GREEN.gamma_multiply(0.2)
+                                        } else {
+                                            egui::Color32::BLUE.gamma_multiply(0.2)
+                                        };
+                                        ui.add(
+                                            egui::ProgressBar::new(valuef as f32)
+                                                .show_percentage()
+                                                .fill(fill_color),
+                                        );
                                     } else {
                                         let res = ui.add(
                                             egui::Label::new(value).truncate(), // .sense(egui::Sense::hover()),
@@ -3248,7 +3259,7 @@ impl GuiRuns {
                 let xy = x.zip(y).map(|(x, y)| [x as f64, y as f64]).collect_vec();
                 Plot::new("custom").show(ui, |plot_ui| {
                     plot_ui.points(
-                        Points::new(PlotPoints::from(xy))
+                        Points::new("pp2", PlotPoints::from(xy))
                             .shape(egui_plot::MarkerShape::Circle)
                             .radius(2.0),
                     );
@@ -3280,7 +3291,7 @@ impl GuiRuns {
                                     .collect_vec();
 
                                 plot_ui.points(
-                                    Points::new(PlotPoints::from(xy))
+                                    Points::new("pp3", PlotPoints::from(xy))
                                         .name(name)
                                         .shape(egui_plot::MarkerShape::Circle)
                                         .radius(2.0),
@@ -3400,7 +3411,7 @@ impl GuiRuns {
                                             1.0
                                         };
                                         plot_ui.line(
-                                            Line::new(PlotPoints::from(xy.clone()))
+                                            Line::new("pl", PlotPoints::from(xy.clone()))
                                                 .stroke(Stroke::new(
                                                     stroke_width,
                                                     *run_ensemble_color
@@ -3412,10 +3423,10 @@ impl GuiRuns {
                                                     &self.runs2.run_params,
                                                     &self.gui_params,
                                                 ))
-                                                .id(train_id.clone().into()),
+                                                .id(train_id.clone()),
                                         );
                                         plot_ui.points(
-                                            Points::new(PlotPoints::from(xy))
+                                            Points::new("pp4", PlotPoints::from(xy))
                                                 .shape(egui_plot::MarkerShape::Circle)
                                                 .color(
                                                     *run_ensemble_color
@@ -3837,6 +3848,8 @@ impl GuiRuns {
                     &self.runs2.active_runs,
                     &run_ensemble_color,
                     &self.runs2.run_params,
+                    &mut self.image_save_dialog,
+                    &mut self.image_save_data,
                 );
             }
             // if let Some(handler) = self.artifact_handlers.get(artifact_type) {}
@@ -3882,77 +3895,10 @@ impl GuiRuns {
                 self.active_runs_handle = Some(handle);
             }
         }
-        // for (param_key, v) in self
-        //     .runs2
-        //     .run_params
-        //     .iter()
-        //     .filter(|(param_key, v)| self.runs2.active_runs.contains(&param_key.train_id))
-        // {
-        //     if !self
-        //         .gui_params
-        //         .filtered_values
-        //         .contains_key(&param_key.name)
-        //     {
-        //         self.gui_params
-        //             .filtered_values
-        //             .insert(param_key.name.clone(), HashSet::new());
-        //     }
-        //     self.gui_params
-        //         .filtered_values
-        //         .get_mut(&param_key.name)
-        //         .unwrap()
-        //         .insert(v.clone());
-        // }
         if self.runs2.active_runs.len() == 0 {
             return;
         }
         {
-            // if let Ok(conn) = self.duckdb.get() {
-            //     // let stmt = conn.prepare()
-            //     let s = tracing::span!(Level::TRACE, "handle_filtered_runs duck");
-            //     let _enter = s.enter();
-            //     let query = format!(
-            //         "
-            //         SELECT variable, list(DISTINCT value_text) as values FROM local.runs
-            //         WHERE train_id IN ({}) GROUP BY variable
-            //         ",
-            //         repeat_vars(self.runs2.active_runs.len()),
-            //     );
-            //     let mut stmt = conn.prepare(&query).unwrap();
-            //     let polars = stmt
-            //         .query_polars(duckdb::params_from_iter(self.runs2.active_runs.iter()))
-            //         .expect("duck artifacts");
-            //     drop(_enter);
-            //     let polars = polars.collect_vec();
-            //     if polars.len() == 0 {
-            //         return;
-            //     }
-            //     let large_df = polars
-            //         .into_iter()
-            //         .reduce(|acc, e| acc.vstack(&e).unwrap())
-            //         .unwrap();
-            //     let vars = large_df
-            //         .column("variable")
-            //         .unwrap()
-            //         .as_materialized_series()
-            //         .rechunk();
-            //     let vars = vars.iter();
-            //     let values = large_df
-            //         .column("values")
-            //         .unwrap()
-            //         .as_materialized_series()
-            //         .rechunk();
-            //     let values = values.iter();
-            //     for (var, value) in vars.zip(values) {
-            //         if let AnyValue::List(l) = value {
-            //             self.gui_params
-            //                 .filtered_values
-            //                 .entry(var.to_string())
-            //                 .insert_entry(l.iter().map(|x| x.to_string()).collect());
-            //         }
-            //     }
-            // }
-            // if self.runs2.
             if let Some(handle) = self.new_filtered_values_handle.take() {
                 if handle.is_finished() {
                     let s = tracing::span!(Level::TRACE, "handle_filtered_runs finished");
@@ -4352,60 +4298,6 @@ fn get_parameter_values_duck_old<T: FromSql + std::cmp::Eq + Hash>(
     return HashMap::from_iter(rows);
 }
 
-// fn get_parameter_values(
-//     runs: &Runs, // active_runs: &Vec<String>,
-//     all: bool,
-// ) -> HashMap<String, HashSet<String>> {
-//     let train_ids: Vec<String> = if all {
-//         runs.runs.keys().cloned().collect()
-//     } else {
-//         runs.active_runs.clone()
-//     };
-//     let mut param_values: HashMap<String, HashSet<String>> = train_ids
-//         .iter()
-//         .map(|train_id| runs.runs.get(train_id).unwrap())
-//         .map(|run| run.params.keys().cloned())
-//         .flatten()
-//         .unique()
-//         .map(|param_name| (param_name, HashSet::with_capacity(train_ids.len())))
-//         .collect();
-//     for run in train_ids
-//         .iter()
-//         .map(|train_id| runs.runs.get(train_id).unwrap())
-//     {
-//         for (k, v) in &run.params {
-//             let values = param_values.get_mut(k).unwrap();
-//             values.insert(v.clone());
-//         }
-//     }
-//     param_values
-// }
-
-async fn get_last_runs_log(
-    pool: &sqlx::Pool<sqlx::Postgres>,
-    // runs: &mut HashMap<String, Run>,
-    // tx_runs: Option<&SyncSender<HashMap<String, Run>>>,
-) -> Result<(), sqlx::Error> {
-    // let mut new_epoch_timestamp = last_timestamp.clone();
-    let q = format!(
-        r#"
-SELECT train_id,
-       CURRENT_TIMESTAMP - MAX(created_at) AS time_since_last
-FROM (
-    SELECT train_id, created_at
-    FROM metrics
-    ORDER BY created_at DESC limit 100
-) AS sorted_table
-GROUP BY train_id limit 10;
-        "#,
-    );
-    let runs_with_time_rows = sqlx::query(q.as_str())
-        // .bind(offset)
-        .fetch_all(pool)
-        .await?;
-    Ok(())
-}
-
 fn get_artifacts_duck(
     pool: &r2d2::Pool<DuckdbConnectionManager>,
     active_runs: &Vec<String>,
@@ -4419,7 +4311,7 @@ fn get_artifacts_duck(
     // conn.set_drop_behavior(duckdb::DropBehavior::Commit);
     let query = format!(
         "
-        SELECT * EXCLUDE(id), local.artifacts.id as id FROM local.artifacts
+        SELECT * EXCLUDE(id, timestamp), local.artifacts.id as id FROM local.artifacts
         JOIN local.models as t2 ON local.artifacts.model_id=t2.id
         WHERE train_id IN ({}) ORDER BY train_id
         ",
@@ -4548,21 +4440,24 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::p
                 "
         SELECT * EXCLUDE(timestamp), name as variable, value as value_text
         FROM local.model_parameter_text JOIN local.models ON id=model_id
-        WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN ({}) 
         UNION
         SELECT * EXCLUDE(timestamp), name as variable, format('{{:E}}', value) as value_text
         FROM local.model_parameter_float JOIN local.models ON id=model_id
-        WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN ({}) 
         UNION
         SELECT * EXCLUDE(timestamp), name as variable, format('{{:d}}', value) as value_text
         FROM local.model_parameter_int JOIN local.models ON id=model_id
-        WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN ({}) 
         ",
                 repeat_vars(HIDDEN_PARAMS.len()),
                 repeat_vars(HIDDEN_PARAMS.len()),
                 repeat_vars(HIDDEN_PARAMS.len()),
             );
             let mut stmt = conn.prepare(&query).unwrap();
+            let s = tracing::span!(Level::TRACE, "duck_get_runs: main query");
+            let _enter = s.enter();
+
             let polars = stmt
                 .query_polars(duckdb::params_from_iter(
                     HIDDEN_PARAMS
@@ -4571,6 +4466,7 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::p
                         .chain(HIDDEN_PARAMS.iter()),
                 ))
                 .expect("duck runs");
+            drop(_enter);
             conn.execute("INSERT INTO last_snapshot (table_name, snapshot_id) VALUES ('model_parameter_text', ?)", [current_snapshot_id]).unwrap();
             dbg!(conn
                 .prepare(
@@ -4886,13 +4782,13 @@ enum ArtifactTransfer {
 }
 // #[tokio::main(flavor = "current_thread")]
 fn main() -> Result<(), sqlx::Error> {
-    // use tracing_subscriber::layer::SubscriberExt;
-    // tracing::subscriber::set_global_default(
-    //     tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-    // )
-    // .expect("setup tracy layer");
-    // use tracy_client::Client;
-    // let _profile_guard = Client::start();
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+    )
+    .expect("setup tracy layer");
+    use tracy_client::Client;
+    let _profile_guard = Client::start();
     // console_subscriber::init();
     // Load environment variables
     // dotenv::dotenv().ok();
@@ -4963,8 +4859,11 @@ WHERE name = 'threads';
             .expect("attach local ducklake");
         }
         Err(_) => {
-            let dburl = env::var("PG").unwrap_or("localhost".into());
-            conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
+            conn.execute(include_str!("../duck_attach.txt"), [])
+                .expect("duckdb attach ducklake");
+            // let dburl = env::var("PG").unwrap_or("localhost".into());
+            // conn.execute(format!("ATTACH 'ducklake:postgres:dbname=ducklake user=postgres password=herdeherde host={dburl} port=5430' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
+            // conn.execute(format!("ATTACH 'ducklake:postgres:dbname=dl user=postgres password= host=postgresql-53e2d1f2-o7a5a28cb.database.cloud.ovh.net port=20184' as local (data_path 's3://eqpducklake')").as_str(), []).expect("attach ducklake");
         }
     }
     conn.execute(
@@ -5166,7 +5065,7 @@ WHERE name = 'threads';
                         CREATE OR REPLACE TABLE progress AS
                         (
                         with total_samples as
-                            (select r.id as run_id, max(step) as step
+                            (select r.id as run_id, max(step) as step, min(step) as start_step, min(ts.timestamp) as start_time, max(ts.timestamp) as end_time
                                 from
                                     local.runs r
                                 join
@@ -5175,7 +5074,13 @@ WHERE name = 'threads';
                                     r.id=ts.run_id
                                 group by r.id
                             )                            
-                            SELECT ts.run_id as run_id, ts.step * p.\"train_config.batch_size\" / (p.train_dataset_len * p.epochs) as progress
+                            SELECT
+                                ts.run_id as run_id,
+                                ts.step * p.\"train_config.batch_size\" / (p.train_dataset_len * p.epochs) as progress,
+                                (ts.end_time - ts.start_time) / (step - start_step) * (p.train_dataset_len * p.epochs - step) as remaining,
+                                ts.step * p.\"train_config.batch_size\" / (p.train_dataset_len) as epochs,
+                                p.epochs as target_epochs,
+                                
                             FROM
                                 total_samples ts
                             JOIN params p
@@ -5393,6 +5298,8 @@ WHERE name = 'threads';
                 active_runs_handle: None,
                 filter_save_name: String::new(),
                 filter_load_dialog: None,
+                image_save_dialog: None,
+                image_save_data: None,
                 table_filter: String::new(),
                 custom_plot: String::new(),
                 custom_plot_last_err: None,

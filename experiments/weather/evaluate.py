@@ -1,4 +1,15 @@
 #!/usr/bin/env python
+"""
+Updated evaluation script using the new AnalyticsConfig-based export system.
+
+Key changes from old version:
+1. Removed db_prefix="pg." - metrics go to local DuckDB first
+2. Removed attach_pg() and insert_checkpoint_pg() - use export instead
+3. Added export_all() at the end to push to staging
+4. Metrics flow: Local DuckDB → Staging (S3/filesystem) → Central DB
+
+This allows the script to work in any environment (with or without Postgres access).
+"""
 import os
 import sys
 import importlib
@@ -6,8 +17,6 @@ import torch
 import numpy as np
 from pathlib import Path
 from filelock import FileLock, Timeout
-
-# import onnxruntime as ort
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
@@ -17,45 +26,29 @@ from lib.train_dataclasses import ComputeConfig
 from lib.metric import create_metric
 from lib.paths import get_lock_path
 
-
-# from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
 from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
 
-# from experiments.weather.models.swin_hp_pangu import SwinHPPangu
-
-# from lib.models.mlp import MLPConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.files import prepare_results
 from lib.serialization import deserialize_model, DeserializeConfig
 
-
 from lib.data_factory import get_factory as get_dataset_factory
 
+# Updated imports - use new API
 from lib.render_duck import (
-    # add_artifact,
-    # has_artifact,
-    # add_parameter,
-    # connect_psql,
-    # add_metric_epoch_values,
     insert_or_update_train_run,
     insert_artifact,
     insert_model_with_model_id,
     insert_checkpoint_sample_metric,
-    insert_checkpoint_pg,
     ensure_duck,
-    attach_pg,
-    sync,
 )
 
-# get_parameter,
-# insert_param,
-# get_checkpoints,
-# )
+# NEW: Import export functionality
+from lib.export import export_all
 
 from lib.distributed_trainer import distributed_train
 
-# from experiments.weather.data import DataHP
 from experiments.weather.data import DataHPConfig, Climatology, DataHP
 from experiments.weather.metrics import (
     anomaly_correlation_coefficient_hp,
@@ -71,30 +64,15 @@ from experiments.weather.metrics import (
 if __name__ == "__main__":
     device_id = ddp_setup()
 
-    # config_file = importlib.import_module(sys.argv[1])
     module_name = Path(sys.argv[1]).stem
     spec = importlib.util.spec_from_file_location(module_name, sys.argv[1])
     config_file = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config_file)
-    # ensemble_config = create_ensemble_config(config_file.create_config, 1)
     train_run = config_file.create_config(0, 10)
-    # train_run = ensemble_config.members[0]
-    # result_path = prepare_results(
-    #     f"{train_run.serialize_human()["run_id"]}",
-    #     train_run,
-    # )
-
-    # def save_and_register(name, array):
-    #     path = result_path / f"{name}.npy"
-
-    #     np.save(
-    #         path,
-    #         array.detach().cpu().float().numpy(),
-    #     )
-    # add_artifact(train_run, name, path)
 
     lead_time_days = int(os.environ.get("LEADTIME", "1"))
-    print("Lead time {lead_time}d")
+    print(f"Lead time {lead_time_days}d")
+
     ds_train = DataHP(train_run.train_config.train_data_config)
     ds_rmse_config = (
         train_run.train_config.train_data_config.validation().with_lead_time_days(
@@ -123,21 +101,6 @@ if __name__ == "__main__":
 
     epoch = int(sys.argv[2])
 
-    # lock = FileLock(
-    #     get_lock_path(train_config=train_run.train_config, lock_name=f"eval_{epoch}"),
-    #     0.1,
-    # )
-    # try:
-    #     lock.acquire(blocking=False)
-    # except Timeout:
-    #     print("Already evaluating...")
-    #     exit(0)
-
-    # try:
-
-    # eval_report_version = f"eval_log.epoch.{epoch:03d}_v2"
-    # if get_parameter(train_run, eval_report_version) is not None:
-    # continue
     print(f"[eval] Epoch {epoch}")
     deser_config = DeserializeConfig(
         train_run=create_ensemble_config(
@@ -160,25 +123,14 @@ if __name__ == "__main__":
 
     def save_and_register(name, array):
         path = result_path / f"{name}.npy"
-
         np.save(
             path,
             array.detach().cpu().float().numpy(),
         )
         insert_artifact(deser_model.model_id, name, path, ".npy")
 
+    # Initialize local DuckDB (no Postgres connection needed)
     ensure_duck(train_run)
-    attach_pg()
-
-    try:
-        insert_checkpoint_pg(
-            deser_model.model_id, int(epoch * len(ds_train)), "", db_prefix="pg."
-        )
-    except Exception as e:
-        print(e)
-
-    # insert_model_with_model_id(train_run, deser_model.model_id)
-    # insert_or_update_train_run(train_run, deser_model.model_id)
 
     model = deser_model.model
     model.eval()
@@ -190,6 +142,7 @@ if __name__ == "__main__":
         )
         acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
 
+        # CHANGED: Removed db_prefix="pg." - metrics go to local DuckDB
         for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
@@ -199,14 +152,10 @@ if __name__ == "__main__":
                 [],
                 var_data.item(),
                 [],
-                db_prefix="pg.",
             )
         for var_idx, var_data in enumerate(acc_res_on_dh.acc_upper):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                # print(level, value)
                 var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-                # print(var_name)
-                # breakpoint()
                 insert_checkpoint_sample_metric(
                     deser_model.model_id,
                     epoch * len(ds_train),
@@ -215,24 +164,16 @@ if __name__ == "__main__":
                     [],
                     value.item(),
                     [],
-                    db_prefix="pg.",
                 )
     else:
         acc_res = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
-
-    # print("EXITING AFTER ACC")
-    # exit(0)
 
     print("[eval] rmse")
     if ds_rmse_config.driscoll_healy:
         rmse_res = rmse_dh(model, dl_rmse, device_id)
         rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
-        # save_and_register(
-        #     f"spatial_rmse_surface_{lead_time_days}d_dh.npydh", rmse_res_on_dh.surface
-        # )
-        # save_and_register(
-        #     f"spatial_rmse_upper_{lead_time_days}d_dh.npydh", rmse_res_on_dh.upper
-        # )
+
+        # CHANGED: Removed db_prefix="pg."
         for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
@@ -242,14 +183,10 @@ if __name__ == "__main__":
                 [],
                 var_data.item(),
                 [],
-                db_prefix="pg.",
             )
         for var_idx, var_data in enumerate(rmse_res_on_dh.mean_upper):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                # print(level, value)
                 var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-                # print(var_name)
-                # breakpoint()
                 insert_checkpoint_sample_metric(
                     deser_model.model_id,
                     epoch * len(ds_train),
@@ -258,17 +195,11 @@ if __name__ == "__main__":
                     [],
                     value.item(),
                     [],
-                    db_prefix="pg.",
                 )
     else:
         rmse_res = rmse_hp(model, dl_rmse, device_id)
 
-    # save_and_register(
-    #     f"spatial_rmse_surface_{lead_time_days}d_hp.npy", rmse_res.surface
-    # )
-    # save_and_register(f"spatial_rmse_upper_{lead_time_days}d_hp.npy", rmse_res.upper)
-    # sync(train_run)
-
+    # CHANGED: Removed db_prefix="pg."
     for var_idx, var_data in enumerate(rmse_res.mean_surface):
         insert_checkpoint_sample_metric(
             deser_model.model_id,
@@ -278,14 +209,10 @@ if __name__ == "__main__":
             [],
             var_data.item(),
             [],
-            db_prefix="pg.",
         )
     for var_idx, var_data in enumerate(rmse_res.mean_upper):
         for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            # print(level, value)
             var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            # print(var_name)
-            # breakpoint()
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
@@ -294,7 +221,6 @@ if __name__ == "__main__":
                 [],
                 value.item(),
                 [],
-                db_prefix="pg.",
             )
     for var_idx, var_data in enumerate(acc_res.acc_surface):
         insert_checkpoint_sample_metric(
@@ -305,14 +231,10 @@ if __name__ == "__main__":
             [],
             var_data.item(),
             [],
-            db_prefix="pg.",
         )
     for var_idx, var_data in enumerate(acc_res.acc_upper):
         for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            # print(level, value)
             var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            # print(var_name)
-            # breakpoint()
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
@@ -321,5 +243,15 @@ if __name__ == "__main__":
                 [],
                 value.item(),
                 [],
-                db_prefix="pg.",
             )
+
+    # NEW: Export metrics to staging using AnalyticsConfig
+    # This replaces the old sync(train_run) call
+    print("[eval] Exporting metrics to staging...")
+    exported_paths = export_all(train_run)
+    if exported_paths:
+        print(f"[eval] ✓ Exported {len(exported_paths)} files to staging")
+    else:
+        print("[eval] No new metrics to export")
+
+    print("[eval] Evaluation complete!")

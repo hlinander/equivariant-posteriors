@@ -9,7 +9,7 @@ Train and evaluate PyTorch models with reproducibility in mind.
 - Python based configuration in terms of dataclasses.
 - Convenient metric functionality with focus on saving as much as possible for future inspection.
 - Simple TUI for easy progress inspection.
-- Postgres storage with experimental Apache Superset couplings for easy visualization and run tracking.
+- DuckDB-based storage with S3 ingestion pipeline for scalable run tracking and visualization.
 
 ## Nix
 This project uses [Nix](https://nixos.org/) to manage development and runtime dependencies.
