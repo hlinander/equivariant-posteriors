@@ -79,10 +79,12 @@ def ensure_s3_credentials(conn, s3_key: str, s3_secret: str, s3_region: str, s3_
 
 def ensure_ingestion_state_table(conn):
     """Ensure the ingestion state tracking table exists"""
+    # DuckLake doesn't support PRIMARY KEY, so we use a plain table
+    # and handle duplicates manually in mark_file_processed
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS ingestion_state (
-            file_path TEXT PRIMARY KEY,
+            file_path TEXT,
             ingested_at TIMESTAMP,
             row_count INTEGER
         )
@@ -93,20 +95,32 @@ def ensure_ingestion_state_table(conn):
 def get_processed_files(conn) -> set[str]:
     """Get set of already processed file paths"""
     result = conn.execute(
-        "SELECT file_path FROM ingestion_state"
+        "SELECT DISTINCT file_path FROM ingestion_state"
     ).fetchall()
     return {row[0] for row in result}
 
 
 def mark_file_processed(conn, file_path: str, row_count: int):
-    """Mark a file as processed"""
-    conn.execute(
-        """
-        INSERT INTO ingestion_state (file_path, ingested_at, row_count)
-        VALUES (?, now(), ?)
-        """,
-        (file_path, row_count),
-    )
+    """
+    Mark a file as processed using INSERT OR IGNORE pattern.
+
+    Since DuckLake doesn't support PRIMARY KEY, we check if the file
+    already exists before inserting.
+    """
+    # Check if already processed
+    exists = conn.execute(
+        "SELECT 1 FROM ingestion_state WHERE file_path = ? LIMIT 1",
+        (file_path,)
+    ).fetchone()
+
+    if not exists:
+        conn.execute(
+            """
+            INSERT INTO ingestion_state (file_path, ingested_at, row_count)
+            VALUES (?, now(), ?)
+            """,
+            (file_path, row_count),
+        )
 
 
 def list_s3_files(s3_client, bucket: str, prefix: str) -> list[str]:
