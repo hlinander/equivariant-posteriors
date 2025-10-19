@@ -37,6 +37,12 @@ TYPES = ["int", "float", "text"]
 def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str):
     """Create S3 client for file operations"""
     import boto3
+
+    # Ensure endpoint has a protocol (boto3 requires it)
+    if not s3_endpoint.startswith("http://") and not s3_endpoint.startswith("https://"):
+        # Default to https if no protocol specified
+        s3_endpoint = f"https://{s3_endpoint}"
+
     return boto3.client(
         "s3",
         aws_access_key_id=s3_key,
