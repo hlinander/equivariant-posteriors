@@ -434,9 +434,6 @@ def main():
         action="store_true",
         help="Run continuously (polling mode)",
     )
-    parser.add_argument(
-        "--interval", type=int, default=300, help="Polling interval in seconds (default: 300)"
-    )
 
     args = parser.parse_args()
 
@@ -450,7 +447,8 @@ def main():
     print(f"[ingest]   Central: {config.central.type}")
 
     if args.continuous:
-        print(f"[ingest] Running in continuous mode (interval: {args.interval}s)")
+        interval = config.ingest_interval_seconds
+        print(f"[ingest] Running in continuous mode (interval: {interval}s from config)")
         while True:
             try:
                 ingest_all_from_config(config, dry_run=args.dry_run)
@@ -459,8 +457,8 @@ def main():
                 import traceback
                 traceback.print_exc()
 
-            print(f"[ingest] Sleeping for {args.interval} seconds...")
-            time.sleep(args.interval)
+            print(f"[ingest] Sleeping for {interval} seconds...")
+            time.sleep(interval)
     else:
         ingest_all_from_config(config, dry_run=args.dry_run)
 
