@@ -19,7 +19,6 @@ CONN = None
 LAST_MODEL_ID = None
 LAST_RUN_CONFIG = None
 SCHEMA_ENSURED = False
-PG_SCHEMA_ENSURED = False
 
 
 INT = "int"
@@ -399,18 +398,6 @@ def insert_checkpoint(model_id: int, step: int, path: str, db_prefix=""):
     )
 
 
-def insert_checkpoint_pg(model_id: int, step: int, path: str, db_prefix=""):
-    sql_insert_train_step = f"""
-        INSERT INTO {db_prefix}{CHECKPOINTS_TABLE_NAME} (model_id, step, path, timestamp)
-        VALUES (?, ?, ?, now())
-    """
-    # data = [(model_id, step, dataset, sample_id) for sample_id in sample_ids]
-    execute(
-        sql_insert_train_step,
-        [model_id, step, path],
-    )
-
-
 def get_checkpoints(model_id: int):
     sql_get_checkpoints = f"""
         SELECT * FROM {CHECKPOINTS_TABLE_NAME}
@@ -421,167 +408,6 @@ def get_checkpoints(model_id: int):
         sql_get_checkpoints,
         [model_id],
     )
-
-
-def sql_create_table_sync():
-    return """
-    CREATE TABLE IF NOT EXISTS sync (
-        table_name TEXT,
-        row_id BIGINT
-        -- synced_time TIMESTAMP WITHOUT TIME ZONE
-    )
-    """
-
-
-def attach_pg(db="equiv_v2"):
-    hostname = env().postgres_host  # "localhost"
-    port = env().postgres_port  # 5432
-    pw = env().postgres_password
-
-    if "DUCKLAKE" in os.environ:
-        lake_name = os.environ["DUCKLAKE"]
-        CONN.sql(
-            f"ATTACH IF NOT EXISTS 'ducklake:{lake_name}' as pg (data_path './{lake_name}_data')"
-        )
-        print(f"Attached local ducklake at {lake_name}")
-        return
-
-    CONN.sql("INSTALL ducklake")
-    CONN.sql("INSTALL aws")
-    CONN.sql(
-        f"""CREATE OR REPLACE SECRET (
-             TYPE s3,
-    PROVIDER config,
-    KEY_ID '{env().s3_key}',
-    SECRET '{env().s3_secret}',
-    REGION '{env().s3_region}',
-    ENDPOINT '{env().s3_endpoint}'
-             )
-        """
-    )
-    CONN.sql(
-        f"ATTACH IF NOT EXISTS 'ducklake:postgres:user=postgres password={pw} host={hostname} port={port} dbname=ducklake' as pg (data_path 's3://eqpducklake')"
-    )
-
-
-def sync(train_run: Optional[TrainRun] = None, db="equiv_v2", clear_pg=False):
-    """
-    DEPRECATED: This function is deprecated in favor of the S3-based ingestion system.
-
-    The old sync() method caused write conflicts when multiple clients tried to write
-    to the central database simultaneously. Use start_periodic_export() instead.
-
-    New approach:
-        1. Client side: Use start_periodic_export() to export to S3
-        2. Central side: Run ingestion/ingest.py to process files
-
-    See ingestion/README.md for details.
-    """
-    raise DeprecationWarning(
-        "sync() is deprecated. Use start_periodic_export() instead. "
-        "See ingestion/README.md for migration instructions."
-    )
-
-    # Old implementation below (kept for reference)
-    global PG_SCHEMA_ENSURED
-    import time
-
-    start = time.time()
-    total_time = 0
-    ensure_duck(train_run)
-    attach_pg(db)
-
-    if clear_pg:
-        if "CLEAR_POSTGRES" not in os.environ:
-            print("Not clearing postgres without CLEAR_POSTGRES env set")
-        else:
-            for table_name in ALL_TABLES:
-                execute(f"DROP TABLE pg.{table_name} CASCADE")
-
-    if not PG_SCHEMA_ENSURED:
-        # pg_stime = time.time()
-        _ensure_schema(execute_ducklake)
-        # print(f"pg schema {time.time() - pg_stime}")
-        # for table_name in ALL_TABLES:
-        #     # alter_time = time.time()
-        #     execute_ducklake(
-        #         f"""
-        #         ALTER TABLE {table_name}
-        #             ADD COLUMN IF NOT EXISTS id_serial SERIAL;
-        #        """
-        #     )
-        # print(f"alter {table_name} {time.time() - alter_time}")
-
-        PG_SCHEMA_ENSURED = True
-
-    for table_name in ALL_TABLES:
-        # table_time = time.time()
-        last_row_id = execute(
-            "SELECT MAX(row_id) FROM sync WHERE table_name=?", (table_name,)
-        ).fetchone()
-        if last_row_id[0] is None:
-            synced_row_id = execute_and_fetch(
-                f"SELECT MIN(rowid) - 1 as min_row FROM {table_name}"
-            )
-            if len(synced_row_id) == 1 and synced_row_id[0] != (None,):
-                synced_row_id = int(synced_row_id[0][0])
-            else:
-                synced_row_id = None
-        else:
-            synced_row_id = int(last_row_id[0])
-
-        next_synced_row_id = execute_and_fetch(
-            f"SELECT MAX(rowid) as max_row FROM {table_name}"
-        )
-        if len(next_synced_row_id) == 1 and next_synced_row_id[0] != (None,):
-            next_synced_row_id = int(next_synced_row_id[0][0])
-
-        if synced_row_id is not None:
-            try:
-                execute(
-                    f"""
-                    INSERT INTO pg.{table_name} BY NAME SELECT * FROM {table_name}
-                    WHERE rowid > '{synced_row_id}'
-                    AND rowid <= '{next_synced_row_id}';
-                    INSERT INTO sync (row_id, table_name)
-                    VALUES ('{next_synced_row_id}', '{table_name}')
-                    -- ON CONFLICT (table_name)
-                    -- DO UPDATE SET row_id='{next_synced_row_id}'
-                    """,
-                )
-            except duckdb.duckdb.Error as e:
-                print(e)
-
-    print(
-        execute(
-            "SELECT table_name, MAX(row_id) from sync group by table_name"
-        ).fetch_df()
-    )
-
-    # t = time.time() - table_time
-    # print(f"{t} for table {table_name}")
-    # total_time += t
-
-    print("Sync time", time.time() - start, total_time)
-
-
-def execute_pg(sql, params=None):
-    try:
-        return CONN.execute(f"CALL postgres_execute('pg', '{sql}')")
-    except Exception as e:
-        # print(sql)
-        raise e
-
-
-def execute_ducklake(sql, params=None):
-    try:
-        CONN.sql("USE pg")
-        res = CONN.execute(sql)
-        CONN.sql("USE local")
-        return res
-    except Exception as e:
-        # print(sql)
-        raise e
 
 
 def execute(sql, params=None):
@@ -613,7 +439,6 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_runs())
     executor(sql_create_table_train_steps())
     executor(sql_create_table_checkpoints())
-    executor(sql_create_table_sync())
     executor(sql_create_table_artifacts())
     executor(sql_create_table_artifact_chunks())
     executor(sql_create_table_model_parameter())

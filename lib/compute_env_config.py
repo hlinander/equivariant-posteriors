@@ -1,3 +1,11 @@
+"""
+Compute environment configuration.
+
+NOTE: For S3 and Postgres configuration, use AnalyticsConfig (lib/analytics_config.py):
+- S3 staging configuration
+- Central database (DuckDB/DuckLake) configuration
+- Export/ingestion intervals
+"""
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -35,11 +43,3 @@ class Paths:
 @dataclass
 class ComputeEnvironment:
     paths: Paths = field(default_factory=lambda: Paths())
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_password: str = "postgres"
-    s3_bucket: str = ""
-    s3_key: str = ""
-    s3_secret: str = ""
-    s3_region: str = ""
-    s3_endpoint: str = ""

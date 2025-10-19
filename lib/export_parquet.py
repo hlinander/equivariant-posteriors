@@ -128,7 +128,7 @@ def flush_table_to_s3(
 
 def flush_all_to_s3(
     train_run: TrainRun,
-    s3_bucket: Optional[str],
+    s3_bucket: str,
     cursor,
     s3_prefix: str = "staging",
 ) -> list[str]:
@@ -137,16 +137,13 @@ def flush_all_to_s3(
 
     Args:
         train_run: The training run context
-        s3_bucket: S3 bucket name (defaults to env().s3_bucket)
+        s3_bucket: S3 bucket name (required)
         cursor: Thread-safe DuckDB cursor
         s3_prefix: Prefix within the bucket (default: "staging")
 
     Returns:
         List of S3 paths that were created
     """
-    if s3_bucket is None:
-        s3_bucket = env().s3_bucket
-
     # Ensure S3 credentials are configured
     ensure_s3_credentials(cursor)
 
@@ -228,7 +225,7 @@ def ensure_s3_credentials(cursor):
 def export_periodic(
     train_run: TrainRun,
     interval_seconds: int = 300,
-    s3_bucket: Optional[str] = None,
+    s3_bucket: str = None,
 ):
     """
     Periodically export data to S3
@@ -239,10 +236,22 @@ def export_periodic(
     Args:
         train_run: The training run context
         interval_seconds: How often to export (default: 300 = 5 minutes)
-        s3_bucket: S3 bucket name
+        s3_bucket: S3 bucket name (required)
     """
     import threading
     import time
+
+    # Load config to get bucket and prefix
+    from lib.analytics_config import analytics_config
+    config = analytics_config()
+
+    if not config.is_s3_staging():
+        raise ValueError("S3 staging not configured in AnalyticsConfig")
+
+    # Use config values
+    if s3_bucket is None:
+        s3_bucket = config.staging.bucket
+    s3_prefix = config.staging.prefix
 
     def export_loop():
         # Create a cursor for this thread (thread-safe per DuckDB docs)
@@ -256,7 +265,7 @@ def export_periodic(
 
         while True:
             try:
-                paths = flush_all_to_s3(train_run, s3_bucket, cursor)
+                paths = flush_all_to_s3(train_run, s3_bucket, cursor, s3_prefix)
                 if paths:
                     print(f"[export] Exported {len(paths)} files to S3")
             except Exception as e:
