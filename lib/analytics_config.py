@@ -160,7 +160,7 @@ class AnalyticsConfig:
             else f"Filesystem ({self.staging.staging_dir})"
         )
         central_desc = (
-            f"DuckLake ({self.central.postgres_host})" if self.is_ducklake_central()
+            f"DuckLake ({self.central.postgres.host})" if self.is_ducklake_central()
             else f"DuckDB ({self.central.db_path})"
         )
         return f"Analytics: {staging_desc} → {central_desc}"
