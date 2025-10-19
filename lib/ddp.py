@@ -12,6 +12,15 @@ def get_rank() -> int:
         return 0
 
 
+def get_world_size() -> int:
+    try:
+        return int(os.environ["WORLD_SIZE"])
+    except KeyError:
+        return 1
+    except ValueError:
+        return 1
+
+
 _DEVICE = None
 
 

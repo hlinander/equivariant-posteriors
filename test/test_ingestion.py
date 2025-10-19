@@ -13,17 +13,13 @@ import pytest
 import duckdb
 from pathlib import Path
 
-# Import from root test.py (not test/ package)
-import importlib.util
-_test_utils_path = Path(__file__).parent.parent / "test.py"
-_spec = importlib.util.spec_from_file_location("test_utils", _test_utils_path)
-_test_utils = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_test_utils)
-create_train_run = _test_utils.create_train_run
-
 from lib.train import create_initial_state
 import lib.render_duck as duck
 from lib.export import export_all
+
+# Import create_train_run from test/conftest.py
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import create_train_run
 
 
 def setup_local_env():

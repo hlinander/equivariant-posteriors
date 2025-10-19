@@ -143,10 +143,11 @@ def insert_artifact(
     model_id: int, name: str, path: Path, type: Optional[str] = None
 ) -> int:
     try:
-        _insert_artifact(model_id, name, path, type)
+        return _insert_artifact(model_id, name, path, type)
     except duckdb.duckdb.ConstraintException as e:
         print(e)
         print(f"Artifact {name} already present for {model_id}")
+        return None
 
 
 def _insert_artifact(
@@ -162,8 +163,8 @@ def _insert_artifact(
 
     execute(
         """
-            INSERT INTO artifacts (id, model_id, name, path, type, size)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO artifacts (id, timestamp, model_id, name, path, type, size)
+            VALUES (?, now(), ?, ?, ?, ?, ?)
             """,
         (artifact_id, model_id, name, path_str, type, size_bytes),
     )
@@ -620,7 +621,7 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_train_step_metric())
 
 
-def ensure_duck(run_run: Optional[TrainRun], in_memory=False):
+def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
     global CONN
     global SCHEMA_ENSURED
 
@@ -677,12 +678,13 @@ def render_duck(
         "train_dataset_len",
         len(train_epoch_state.train_dataloader.dataset),
     )
-    insert_model_parameter(
-        train_epoch_state.model_id,
-        train_run.run_id,
-        "val_dataset_len",
-        len(train_epoch_state.val_dataloader.dataset),
-    )
+    if train_epoch_state.val_dataloader is not None:
+        insert_model_parameter(
+            train_epoch_state.model_id,
+            train_run.run_id,
+            "val_dataset_len",
+            len(train_epoch_state.val_dataloader.dataset),
+        )
     LAST_MODEL_ID = train_epoch_state.model_id
 
 

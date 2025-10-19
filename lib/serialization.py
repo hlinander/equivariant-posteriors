@@ -62,7 +62,7 @@ def write_status_file(config: SerializeConfig):
 
 def serialize(config: SerializeConfig):
     if get_rank() != 0:
-        # print("I am not rank 0 so not serializing...")
+        print("I am not rank 0 so not serializing...")
         return
     train_config = config.train_run.train_config
     train_epoch_state = config.train_epoch_state
@@ -71,12 +71,15 @@ def serialize(config: SerializeConfig):
     keep_checkpoint_condition = config.train_run.keep_epoch_checkpoints and (
         train_epoch_state.epoch % config.train_run.keep_nth_epoch_checkpoints == 0
     )
-    serialize_condition = train_epoch_state.epoch % train_run.save_nth_epoch != 0
+    not_serialize_condition = train_epoch_state.epoch % train_run.save_nth_epoch != 0
 
     # If neither full serialization nor model checkpoint requested, return early
-    if (not keep_checkpoint_condition) and (not serialize_condition):
+    if (not keep_checkpoint_condition) and not_serialize_condition:
         # Save if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
+            print(
+                f"Not serializing....{train_epoch_state.epoch},{train_run.epochs},{train_run.save_nth_epoch},{not_serialize_condition}"
+            )
             return
 
     if config.train_run.compute_config.distributed:
@@ -184,7 +187,7 @@ class DeserializedModel:
     epoch: int
 
 
-def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
+def deserialize_model(config: DeserializeConfig, latest_ok=False) -> DeserializedModel:
     train_config = config.train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config)
     print(f"Trying to load {checkpoint_path.absolute()}")
@@ -203,7 +206,7 @@ def deserialize_model(config: DeserializeConfig) -> DeserializedModel:
         print("model_epoch", model_epoch)
         model_id = torch.load(checkpoint_path / "model_id")
 
-        if model_epoch != config.train_run.epochs:
+        if model_epoch != config.train_run.epochs and not latest_ok:
             model_epoch_checkpoint = get_model_epoch_checkpoint_path(
                 config.train_run.train_config, config.train_run.epochs
             )
@@ -306,6 +309,8 @@ def deserialize(config: DeserializeConfig):
         shuffle=train_shuffle,
         num_workers=config.train_run.compute_config.num_workers,
         collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
+        pin_memory=True,
+        persistent_workers=True and config.train_run.compute_config.num_workers > 0,
     )
     if train_config.val_data_config is not None:
         val_ds = data_factory.get_factory().create(train_config.val_data_config)
@@ -320,6 +325,8 @@ def deserialize(config: DeserializeConfig):
             sampler=val_sampler,
             num_workers=config.train_run.compute_config.num_workers,
             collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
+            pin_memory=True,
+            persistent_workers=True and config.train_run.compute_config.num_workers > 0,
         )
     else:
         val_dataloader = None

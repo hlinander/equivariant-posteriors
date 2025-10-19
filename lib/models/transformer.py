@@ -8,8 +8,6 @@ import math
 class TransformerConfig:
     embed_d: int
     mlp_dim: int
-    n_seq: int
-    batch_size: int
     num_layers: int
     num_heads: int
     softmax: bool
@@ -42,18 +40,18 @@ class Transformer(torch.nn.Module):
         )
 
         self.debed = torch.nn.Linear(embed_d, data_spec.output_shape[-1])
-        self.register_buffer(
-            "mem",
-            torch.randn(
-                (config.batch_size, config.n_seq, embed_d), requires_grad=False
-            ),
-        )
+        # self.register_buffer(
+        #     "mem",
+        #     torch.randn(
+        #         (config.batch_size, config.n_seq, embed_d), requires_grad=False
+        #     ),
+        # )
 
     def forward(self, batch):
         x = batch["input"]
         embed = self.embed(x) * math.sqrt(32)
         embed = self.pos_embed(embed)
-        tout = self.transformer(embed, self.mem[: embed.shape[0]])
+        tout = self.transformer(embed, embed)
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
         output = self.debed(tout[:, 0, :])
         return dict(logits=output, predictions=self.output_to_value_detached(output))
@@ -61,7 +59,7 @@ class Transformer(torch.nn.Module):
     def forward_tensor(self, x):
         embed = self.embed(x) * math.sqrt(32)
         embed = self.pos_embed(embed)
-        tout = self.transformer(embed, self.mem[: embed.shape[0]])
+        tout = self.transformer(embed, embed)
         # return torch.softmax(self.debed(tout), dim=-1)[:, 0, :]
         output = self.debed(tout[:, 0, :])
         return dict(logits=output, predictions=self.output_to_value_detached(output))

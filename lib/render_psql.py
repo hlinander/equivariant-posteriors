@@ -1,3 +1,5 @@
+print("FIX LEGACY PSQL DEPENDENCY")
+exit(0)
 import psycopg
 import pandas
 import json

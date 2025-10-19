@@ -4,6 +4,7 @@ from filelock import FileLock, Timeout
 import os
 from pathlib import Path
 from typing import List
+import random
 
 from lib.train_dataclasses import TrainRun
 from lib.serialization import is_serialized
@@ -109,7 +110,7 @@ def fetch_requested_train_run(train_only_from_configs: List[TrainRun] = None):
 
     hashes_to_train = [stable_hash(config) for config in train_only_from_configs]
 
-    pool = DISTRIBUTED_TRAINING_REQUEST_PATH.glob("*.dill")
+    pool = list(DISTRIBUTED_TRAINING_REQUEST_PATH.glob("*.dill"))
     pool_with_ctime = []
     for pool_file in pool:
         try:
@@ -117,7 +118,13 @@ def fetch_requested_train_run(train_only_from_configs: List[TrainRun] = None):
             pool_with_ctime.append((ctime, pool_file))
         except:
             pass
-    sorted_pool = [x[1] for x in sorted(pool_with_ctime)]
+
+    if len(train_only_from_configs) == 0:
+        sorted_pool = [x[1] for x in sorted(pool_with_ctime)]
+    else:
+        random.shuffle(pool)
+        sorted_pool = pool
+
     for request_file in sorted_pool:
         hash = request_file.stem
         if len(hashes_to_train) > 0 and hash not in hashes_to_train:
