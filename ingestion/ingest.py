@@ -233,37 +233,58 @@ def ingest_table(
             value_col = f"value_{type_name}"
             target_table = f"{table_name}_{type_name}"
 
-            # Build column list based on table type
             if table_name == MODEL_PARAMETER:
-                columns = "model_id, run_id, timestamp, name"
+                # Use INSERT BY NAME to match columns by name, not position
+                conn.execute(
+                    f"""
+                    INSERT INTO {target_table} BY NAME
+                    SELECT
+                        model_id,
+                        run_id,
+                        timestamp,
+                        name,
+                        {value_col} as value
+                    FROM read_parquet('{file_path}')
+                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                    """
+                )
             elif table_name == TRAIN_STEP_METRIC:
-                columns = "model_id, run_id, timestamp, name, step"
+                # Use INSERT BY NAME to match columns by name, not position
+                conn.execute(
+                    f"""
+                    INSERT INTO {target_table} BY NAME
+                    SELECT
+                        model_id,
+                        run_id,
+                        timestamp,
+                        name,
+                        step,
+                        {value_col} as value
+                    FROM read_parquet('{file_path}')
+                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                    """
+                )
             elif table_name == CHECKPOINT_SAMPLE_METRIC:
-                # Checkpoint sample metrics have arrays
+                # Use INSERT BY NAME to match columns by name, not position
                 mean_col = f"mean_{type_name}"
                 value_per_sample_col = f"value_per_sample_{type_name}"
 
                 conn.execute(
                     f"""
-                    INSERT INTO {target_table}
-                    SELECT model_id, timestamp, step, name, dataset, sample_ids,
-                           {mean_col} as mean,
-                           {value_per_sample_col} as value_per_sample
+                    INSERT INTO {target_table} BY NAME
+                    SELECT
+                        model_id,
+                        timestamp,
+                        step,
+                        name,
+                        dataset,
+                        sample_ids,
+                        {mean_col} as mean,
+                        {value_per_sample_col} as value_per_sample
                     FROM read_parquet('{file_path}')
                     WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
                     """
                 )
-                continue
-
-            # For model_parameter and train_step_metric
-            conn.execute(
-                f"""
-                INSERT INTO {target_table}
-                SELECT {columns}, {value_col} as value
-                FROM read_parquet('{file_path}')
-                WHERE type = '{type_name}' AND {value_col} IS NOT NULL
-                """
-            )
 
         # Mark file as processed
         mark_file_processed(conn, file_path, file_row_count)

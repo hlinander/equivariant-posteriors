@@ -228,8 +228,8 @@ def sql_create_table_train_step_metric():
     return f"""
         CREATE TABLE IF NOT EXISTS {TRAIN_STEP_METRIC} (
             model_id BIGINT,
-            timestamp TIMESTAMPTZ,
             run_id BIGINT,
+            timestamp TIMESTAMPTZ,
             name TEXT,
             step INTEGER,
             type TEXT,
@@ -253,8 +253,8 @@ def insert_train_step_metric(model_id, run_id, name, step, value):
     value_text = value if type_def.name == TEXT else None
 
     sql_insert_train_step_metric = f"""
-        INSERT INTO {TRAIN_STEP_METRIC} (model_id, run_id, name, step, type, value_int, value_float, value_text, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, now())
+        INSERT INTO {TRAIN_STEP_METRIC} (model_id, run_id, timestamp, name, step, type, value_int, value_float, value_text)
+        VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?)
     """
     execute(sql_insert_train_step_metric, (model_id, run_id, name, step, type_def.name, value_int, value_float, value_text))
 
