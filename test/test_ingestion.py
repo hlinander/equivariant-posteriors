@@ -115,108 +115,6 @@ def test_env():
     analytics_config_module._analytics_config = None
 
 
-def create_central_db_schema(conn):
-    """Create the split schema in central database (type-specific tables)"""
-    # Model parameter tables (split by type)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS model_parameter_int (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            value BIGINT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS model_parameter_float (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            value FLOAT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS model_parameter_text (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            value TEXT
-        )
-    """)
-
-    # Train step metric tables (split by type)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS train_step_metric_int (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            step INTEGER,
-            value BIGINT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS train_step_metric_float (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            step INTEGER,
-            value FLOAT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS train_step_metric_text (
-            model_id BIGINT,
-            run_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            name TEXT,
-            step INTEGER,
-            value TEXT
-        )
-    """)
-
-    # Checkpoint sample metric tables (split by type)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_int (
-            model_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            step INTEGER,
-            name TEXT,
-            dataset TEXT,
-            sample_ids INTEGER[],
-            mean BIGINT,
-            value_per_sample BIGINT[]
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_float (
-            model_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            step INTEGER,
-            name TEXT,
-            dataset TEXT,
-            sample_ids INTEGER[],
-            mean FLOAT,
-            value_per_sample FLOAT[]
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_text (
-            model_id BIGINT,
-            timestamp TIMESTAMPTZ,
-            step INTEGER,
-            name TEXT,
-            dataset TEXT,
-            sample_ids INTEGER[],
-            mean TEXT,
-            value_per_sample TEXT[]
-        )
-    """)
-
-
 def test_full_pipeline(test_env, tmp_path):
     """Test the complete pipeline: export → MinIO → ingestion → central DB"""
 
@@ -260,17 +158,12 @@ def test_full_pipeline(test_env, tmp_path):
 
     assert len(paths) > 0, "Should have exported files"
 
-    # Step 2: Create central database
-    print("\n[test] Step 2: Creating central database")
-
-    central_db_path = tmp_path / "central.db"
-    central_conn = duckdb.connect(str(central_db_path))
-    create_central_db_schema(central_conn)
-    central_conn.close()
-
-    # Step 3: Update AnalyticsConfig to use the test central DB
+    # Step 2: Update AnalyticsConfig to use the test central DB
+    # (Schema will be created automatically by ingestion script)
     from lib.analytics_config import AnalyticsConfig, StagingS3, CentralDuckDB, S3Config
     import lib.analytics_config as analytics_config_module
+
+    central_db_path = tmp_path / "central.db"
 
     s3_minio = S3Config(
         key="minioadmin",
@@ -291,15 +184,15 @@ def test_full_pipeline(test_env, tmp_path):
         ingest_interval_seconds=60,
     )
 
-    # Step 4: Run ingestion
-    print("\n[test] Step 4: Running ingestion")
+    # Step 3: Run ingestion (schema will be created automatically)
+    print("\n[test] Step 3: Running ingestion")
 
     from ingestion.ingest import ingest_all_from_config
 
     ingest_all_from_config(test_config, dry_run=False)
 
-    # Step 5: Verify data in central database
-    print("\n[test] Step 5: Verifying data in central database")
+    # Step 4: Verify data in central database
+    print("\n[test] Step 4: Verifying data in central database")
 
     # Reconnect to see the changes
     central_conn = duckdb.connect(str(central_db_path))
@@ -359,8 +252,8 @@ def test_full_pipeline(test_env, tmp_path):
     print(f"[test] ✓ Checkpoint metric mean: {checkpoint_data[0]}")
     print(f"[test] ✓ Checkpoint metric values: {checkpoint_data[1]}")
 
-    # Step 6: Verify idempotency (run ingestion again, should not duplicate)
-    print("\n[test] Step 6: Testing idempotency")
+    # Step 5: Verify idempotency (run ingestion again, should not duplicate)
+    print("\n[test] Step 5: Testing idempotency")
 
     ingest_all_from_config(test_config, dry_run=False)
 
@@ -393,12 +286,9 @@ def test_incremental_ingestion(test_env, tmp_path):
     paths1 = export_all(train_run)
     print(f"[test] First export: {len(paths1)} files")
 
-    # Step 2: First ingestion
+    # Step 2: First ingestion (schema will be created automatically)
     print("\n[test] Step 2: First ingestion")
     central_db_path = tmp_path / "central.db"
-    central_conn = duckdb.connect(str(central_db_path))
-    create_central_db_schema(central_conn)
-    central_conn.close()
 
     from lib.analytics_config import AnalyticsConfig, StagingS3, CentralDuckDB, S3Config
     from ingestion.ingest import ingest_all_from_config

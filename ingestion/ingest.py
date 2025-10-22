@@ -83,6 +83,113 @@ def ensure_s3_credentials(conn, s3_key: str, s3_secret: str, s3_region: str, s3_
     )
 
 
+def ensure_central_schema(conn):
+    """
+    Ensure all central database tables exist (idempotent).
+
+    Creates the split schema where each table type (model_parameter, train_step_metric,
+    checkpoint_sample_metric) is split into separate tables by value type (int, float, text).
+    """
+    # Model parameter tables (split by type)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS model_parameter_int (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            value BIGINT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS model_parameter_float (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            value FLOAT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS model_parameter_text (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            value TEXT
+        )
+    """)
+
+    # Train step metric tables (split by type)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_step_metric_int (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            step INTEGER,
+            value BIGINT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_step_metric_float (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            step INTEGER,
+            value FLOAT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_step_metric_text (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            name TEXT,
+            step INTEGER,
+            value TEXT
+        )
+    """)
+
+    # Checkpoint sample metric tables (split by type)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_int (
+            model_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            sample_ids INTEGER[],
+            mean BIGINT,
+            value_per_sample BIGINT[]
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_float (
+            model_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            sample_ids INTEGER[],
+            mean FLOAT,
+            value_per_sample FLOAT[]
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_text (
+            model_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            sample_ids INTEGER[],
+            mean TEXT,
+            value_per_sample TEXT[]
+        )
+    """)
+
+
 def ensure_ingestion_state_table(conn):
     """Ensure the ingestion state tracking table exists"""
     # DuckLake doesn't support PRIMARY KEY, so we use a plain table
@@ -364,7 +471,9 @@ def ingest_all_from_config(config, dry_run: bool = False):
     else:
         raise ValueError(f"Unknown central database type: {config.central.type}")
 
-    # Ensure ingestion state table
+    # Ensure schema exists (idempotent - safe to run every time)
+    print(f"[ingest] Ensuring central database schema exists")
+    ensure_central_schema(conn)
     ensure_ingestion_state_table(conn)
 
     # Get already processed files
