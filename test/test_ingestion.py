@@ -125,7 +125,7 @@ def test_full_pipeline(test_env, tmp_path):
 
     train_run = create_train_run()
     state = create_initial_state(train_run, None, "cpu")
-    model_id = duck.insert_model(train_run)
+    model_id = state.model_id  # create_initial_state already calls insert_model
 
     # Insert various types of metrics
     duck.insert_model_parameter(model_id, train_run.run_id, "learning_rate", 0.001)  # float
@@ -148,6 +148,17 @@ def test_full_pipeline(test_env, tmp_path):
         mean=sum(values) / len(values),
         value_per_sample=values,
     )
+
+    # Insert run
+    duck.insert_run(train_run.run_id, model_id)
+
+    # Insert train steps
+    train_sample_ids = [10, 11, 12, 13, 14]
+    for i in range(3):
+        duck.insert_train_step(model_id, train_run.run_id, i, "train_dataset", train_sample_ids)
+
+    # Insert checkpoint
+    duck.insert_checkpoint(model_id, 100, "/path/to/checkpoint.pt")
 
     # Export to S3/MinIO using AnalyticsConfig
     paths = export_all(train_run)
@@ -252,6 +263,50 @@ def test_full_pipeline(test_env, tmp_path):
     print(f"[test] ✓ Checkpoint metric mean: {checkpoint_data[0]}")
     print(f"[test] ✓ Checkpoint metric values: {checkpoint_data[1]}")
 
+    # Check models table
+    models_count = central_conn.execute(
+        "SELECT COUNT(*) FROM models"
+    ).fetchone()
+    assert models_count[0] == 1, f"Expected 1 model, got {models_count[0]}"
+    print(f"[test] ✓ Found {models_count[0]} model in models table")
+
+    # Check runs table
+    runs_count = central_conn.execute(
+        "SELECT COUNT(*) FROM runs"
+    ).fetchone()
+    assert runs_count[0] == 1
+    print(f"[test] ✓ Found {runs_count[0]} run in runs table")
+
+    # Check train_steps table
+    train_steps_count = central_conn.execute(
+        "SELECT COUNT(*) FROM train_steps"
+    ).fetchone()
+    assert train_steps_count[0] == 3
+    print(f"[test] ✓ Found {train_steps_count[0]} train steps in train_steps table")
+
+    # Check checkpoints table
+    checkpoints_count = central_conn.execute(
+        "SELECT COUNT(*) FROM checkpoints"
+    ).fetchone()
+    assert checkpoints_count[0] == 1
+    checkpoint_path = central_conn.execute(
+        "SELECT path FROM checkpoints"
+    ).fetchone()
+    assert checkpoint_path[0] == "/path/to/checkpoint.pt"
+    print(f"[test] ✓ Found {checkpoints_count[0]} checkpoint in checkpoints table")
+
+    # Check artifacts table (should be 0 for this test)
+    artifacts_count = central_conn.execute(
+        "SELECT COUNT(*) FROM artifacts"
+    ).fetchone()
+    print(f"[test] ✓ Found {artifacts_count[0]} artifacts in artifacts table")
+
+    # Check artifact_chunks table (should be 0 for this test)
+    artifact_chunks_count = central_conn.execute(
+        "SELECT COUNT(*) FROM artifact_chunks"
+    ).fetchone()
+    print(f"[test] ✓ Found {artifact_chunks_count[0]} artifact chunks in artifact_chunks table")
+
     # Step 5: Verify idempotency (run ingestion again, should not duplicate)
     print("\n[test] Step 5: Testing idempotency")
 
@@ -264,7 +319,19 @@ def test_full_pipeline(test_env, tmp_path):
         "SELECT COUNT(*) FROM model_parameter_float WHERE name = 'learning_rate'"
     ).fetchone()
     assert float_params_count[0] == 1, "Should not duplicate on re-ingestion"
-    print(f"[test] ✓ No duplicates after re-ingestion")
+
+    # Also check one of the new tables
+    runs_count_after = central_conn.execute(
+        "SELECT COUNT(*) FROM runs"
+    ).fetchone()
+    assert runs_count_after[0] == 1, "Should not duplicate runs on re-ingestion"
+
+    train_steps_count_after = central_conn.execute(
+        "SELECT COUNT(*) FROM train_steps"
+    ).fetchone()
+    assert train_steps_count_after[0] == 3, "Should not duplicate train_steps on re-ingestion"
+
+    print(f"[test] ✓ No duplicates after re-ingestion (checked parameters, runs, and train_steps)")
 
     central_conn.close()
     print("\n[test] ✅ Full pipeline test passed!")
@@ -279,7 +346,7 @@ def test_incremental_ingestion(test_env, tmp_path):
 
     train_run = create_train_run()
     state = create_initial_state(train_run, None, "cpu")
-    model_id = duck.insert_model(train_run)
+    model_id = state.model_id  # create_initial_state already calls insert_model
 
     duck.insert_model_parameter(model_id, train_run.run_id, "param1", 100)
 

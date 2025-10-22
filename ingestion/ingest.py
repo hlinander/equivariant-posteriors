@@ -29,8 +29,24 @@ import duckdb
 MODEL_PARAMETER = "model_parameter"
 TRAIN_STEP_METRIC = "train_step_metric"
 CHECKPOINT_SAMPLE_METRIC = "checkpoint_sample_metric"
+MODELS_TABLE_NAME = "models"
+RUNS_TABLE_NAME = "runs"
+TRAIN_STEPS_TABLE_NAME = "train_steps"
+CHECKPOINTS_TABLE_NAME = "checkpoints"
+ARTIFACTS_TABLE_NAME = "artifacts"
+ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
 
-SYNC_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC]
+SYNC_TABLES = [
+    MODEL_PARAMETER,
+    TRAIN_STEP_METRIC,
+    CHECKPOINT_SAMPLE_METRIC,
+    MODELS_TABLE_NAME,
+    RUNS_TABLE_NAME,
+    TRAIN_STEPS_TABLE_NAME,
+    CHECKPOINTS_TABLE_NAME,
+    ARTIFACTS_TABLE_NAME,
+    ARTIFACT_CHUNKS_TABLE_NAME,
+]
 TYPES = ["int", "float", "text"]
 
 
@@ -189,6 +205,70 @@ def ensure_central_schema(conn):
         )
     """)
 
+    # Models table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS models (
+            id BIGINT,
+            train_id TEXT,
+            timestamp TIMESTAMPTZ
+        )
+    """)
+
+    # Runs table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS runs (
+            id BIGINT,
+            model_id BIGINT,
+            timestamp TIMESTAMPTZ
+        )
+    """)
+
+    # Train steps table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_steps (
+            model_id BIGINT,
+            run_id BIGINT,
+            step INTEGER,
+            dataset TEXT,
+            sample_ids INTEGER[],
+            timestamp TIMESTAMPTZ
+        )
+    """)
+
+    # Checkpoints table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            model_id BIGINT,
+            step INTEGER,
+            path TEXT,
+            timestamp TIMESTAMPTZ
+        )
+    """)
+
+    # Artifacts table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id BIGINT,
+            timestamp TIMESTAMPTZ,
+            model_id BIGINT,
+            name TEXT,
+            path TEXT,
+            type TEXT,
+            size INTEGER
+        )
+    """)
+
+    # Artifact chunks table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS artifact_chunks (
+            artifact_id BIGINT,
+            seq_num INTEGER,
+            data BYTEA,
+            size INTEGER,
+            timestamp TIMESTAMPTZ
+        )
+    """)
+
 
 def ensure_ingestion_state_table(conn):
     """Ensure the ingestion state tracking table exists"""
@@ -335,63 +415,74 @@ def ingest_table(
         ).fetchone()
         file_row_count = row_count_result[0] if row_count_result else 0
 
-        # Split by type and insert into type-specific tables
-        for type_name in TYPES:
-            value_col = f"value_{type_name}"
-            target_table = f"{table_name}_{type_name}"
+        # Handle tables that need type splitting (metrics)
+        if table_name in [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC]:
+            # Split by type and insert into type-specific tables
+            for type_name in TYPES:
+                value_col = f"value_{type_name}"
+                target_table = f"{table_name}_{type_name}"
 
-            if table_name == MODEL_PARAMETER:
-                # Use INSERT BY NAME to match columns by name, not position
-                conn.execute(
-                    f"""
-                    INSERT INTO {target_table} BY NAME
-                    SELECT
-                        model_id,
-                        run_id,
-                        timestamp,
-                        name,
-                        {value_col} as value
-                    FROM read_parquet('{file_path}')
-                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
-                    """
-                )
-            elif table_name == TRAIN_STEP_METRIC:
-                # Use INSERT BY NAME to match columns by name, not position
-                conn.execute(
-                    f"""
-                    INSERT INTO {target_table} BY NAME
-                    SELECT
-                        model_id,
-                        run_id,
-                        timestamp,
-                        name,
-                        step,
-                        {value_col} as value
-                    FROM read_parquet('{file_path}')
-                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
-                    """
-                )
-            elif table_name == CHECKPOINT_SAMPLE_METRIC:
-                # Use INSERT BY NAME to match columns by name, not position
-                mean_col = f"mean_{type_name}"
-                value_per_sample_col = f"value_per_sample_{type_name}"
+                if table_name == MODEL_PARAMETER:
+                    # Use INSERT BY NAME to match columns by name, not position
+                    conn.execute(
+                        f"""
+                        INSERT INTO {target_table} BY NAME
+                        SELECT
+                            model_id,
+                            run_id,
+                            timestamp,
+                            name,
+                            {value_col} as value
+                        FROM read_parquet('{file_path}')
+                        WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                        """
+                    )
+                elif table_name == TRAIN_STEP_METRIC:
+                    # Use INSERT BY NAME to match columns by name, not position
+                    conn.execute(
+                        f"""
+                        INSERT INTO {target_table} BY NAME
+                        SELECT
+                            model_id,
+                            run_id,
+                            timestamp,
+                            name,
+                            step,
+                            {value_col} as value
+                        FROM read_parquet('{file_path}')
+                        WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                        """
+                    )
+                elif table_name == CHECKPOINT_SAMPLE_METRIC:
+                    # Use INSERT BY NAME to match columns by name, not position
+                    mean_col = f"mean_{type_name}"
+                    value_per_sample_col = f"value_per_sample_{type_name}"
 
-                conn.execute(
-                    f"""
-                    INSERT INTO {target_table} BY NAME
-                    SELECT
-                        model_id,
-                        timestamp,
-                        step,
-                        name,
-                        dataset,
-                        sample_ids,
-                        {mean_col} as mean,
-                        {value_per_sample_col} as value_per_sample
-                    FROM read_parquet('{file_path}')
-                    WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
-                    """
-                )
+                    conn.execute(
+                        f"""
+                        INSERT INTO {target_table} BY NAME
+                        SELECT
+                            model_id,
+                            timestamp,
+                            step,
+                            name,
+                            dataset,
+                            sample_ids,
+                            {mean_col} as mean,
+                            {value_per_sample_col} as value_per_sample
+                        FROM read_parquet('{file_path}')
+                        WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
+                        """
+                    )
+        else:
+            # Direct copy for tables that don't need type splitting
+            # (models, runs, train_steps, checkpoints, artifacts, artifact_chunks)
+            conn.execute(
+                f"""
+                INSERT INTO {table_name} BY NAME
+                SELECT * FROM read_parquet('{file_path}')
+                """
+            )
 
         # Mark file as processed
         mark_file_processed(conn, file_path, file_row_count)

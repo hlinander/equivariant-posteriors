@@ -133,7 +133,8 @@ def sql_create_table_artifact_chunks():
                     artifact_id bigint,
                     seq_num int,
                     data bytea,
-                    size int
+                    size int,
+                    timestamp TIMESTAMPTZ
                 )
                 """
 
@@ -172,7 +173,7 @@ def _insert_artifact(
         seq_num = 0
         while chunk := file.read(1024 * 1024):
             execute(
-                "INSERT INTO artifact_chunks (artifact_id, seq_num, data, size) VALUES (?, ?, ?, ?)",
+                "INSERT INTO artifact_chunks (artifact_id, seq_num, data, size, timestamp) VALUES (?, ?, ?, ?, now())",
                 (artifact_id, seq_num, chunk, len(chunk)),
             )
             seq_num += 1
