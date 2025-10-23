@@ -1219,6 +1219,10 @@ impl eframe::App for GuiRuns {
         }
         self.handle_filtered_runs();
         self.handle_param_values();
+        // println!(
+        //     "after handle {}",
+        //     Instant::now().duration_since(t_update).as_millis()
+        // );
         if let Some(gui_params_package) = self.gui_params_sender_slot.take() {
             if self
                 .gui_params_sender
@@ -1226,6 +1230,7 @@ impl eframe::App for GuiRuns {
                 .is_err()
             {
                 self.gui_params_sender_slot = Some(gui_params_package);
+                // println!("gui params sender slot");
             }
         }
         if let Some(db_train_runs_package) = self.db_train_runs_sender_slot.take() {
@@ -1235,6 +1240,7 @@ impl eframe::App for GuiRuns {
                 .is_err()
             {
                 self.db_train_runs_sender_slot = Some(db_train_runs_package);
+                // println!("train runs sender slot");
             }
         }
         if Instant::now() > self.plot_timer {
@@ -1246,9 +1252,11 @@ impl eframe::App for GuiRuns {
                 .is_ok()
             {
                 self.plot_timer = Instant::now() + std::time::Duration::from_secs(2);
+                // println!("plot timer");
             }
         }
         if let Ok(new_data) = self.rx_plot_map.try_recv() {
+            // println!("plot map recv");
             let s = tracing::span!(Level::TRACE, "main: plot_map recv");
             let _enter = s.enter();
             let (artifacts, maybe_plot_map) = new_data;
@@ -1280,6 +1288,10 @@ impl eframe::App for GuiRuns {
             self.runs2.run_params = new_run_params;
             self.update_filtered_runs();
         }
+        // println!(
+        //     "after recvs {}",
+        //     Instant::now().duration_since(t_update).as_millis()
+        // );
         // while let Ok(new_runs) = self.db_reciever.try_recv() {
         //     for train_id in new_runs.keys() {
         //         if !self.runs.runs.contains_key(train_id) {
@@ -1296,6 +1308,7 @@ impl eframe::App for GuiRuns {
         // }
 
         if std::time::Instant::now() > self.gui_params.next_param_update {
+            // println!("param update");
             self.gui_params.next_param_update =
                 std::time::Instant::now() + std::time::Duration::from_secs(10);
             let t = Instant::now();
@@ -1341,6 +1354,10 @@ impl eframe::App for GuiRuns {
             })
             .collect();
 
+        // println!(
+        //     "before panels {}",
+        //     Instant::now().duration_since(t_update).as_millis()
+        // );
         egui::SidePanel::left("Controls")
             .resizable(true)
             .min_width(10.0)
@@ -1448,6 +1465,10 @@ impl eframe::App for GuiRuns {
                 }
             });
         let t = Instant::now();
+        // println!(
+        //     "before metrics {}",
+        //     Instant::now().duration_since(t_update).as_millis()
+        // );
 
         egui::SidePanel::right("Metrics")
             .resizable(true)
@@ -2799,35 +2820,35 @@ impl GuiRuns {
         run_ensemble_color: &HashMap<String, egui::Color32>,
         table_name: &str,
     ) {
-        let df = {
-            let conn = self.duckdb.get().unwrap();
-            let mut stmt = conn.prepare(&format!(
-                "SELECT
-                        is_active,
-                        p.progress,
-                        date_trunc('minute', p.remaining) :: text as remaining,
-                        date_trunc('second', runtime) :: text as runtime,
-                        p.epochs as epochs,
-                        p.target_epochs as target_epochs,
-                        argv,
-                        date_trunc('minute', age(now(), timestamp)) :: text as age,
-                        * EXCLUDE(progress, argv, is_active, runtime, run_id, remaining, epochs, target_epochs)
-                     FROM {} t
-                     JOIN progress p
-                         ON t.run_id=p.run_id",
-                table_name
-            ));
-            if stmt.is_err() {
-                // println!("{:?}", stmt);
-                return;
-            }
-            let Ok(mut stmt) = stmt else { panic!() };
-            let polars = stmt.query_polars([]).unwrap();
-            match polars.reduce(|acc, e| acc.vstack(&e).unwrap()) {
-                Some(df) => df,
-                None => DataFrame::empty(),
-            }
-        };
+        let df = DataFrame::empty(); /*{
+                                         let conn = self.duckdb.get().unwrap();
+                                         let mut stmt = conn.prepare(&format!(
+                                             "SELECT
+                                                     is_active,
+                                                     p.progress,
+                                                     date_trunc('minute', p.remaining) :: text as remaining,
+                                                     date_trunc('second', runtime) :: text as runtime,
+                                                     p.epochs as epochs,
+                                                     p.target_epochs as target_epochs,
+                                                     argv,
+                                                     date_trunc('minute', age(now(), timestamp)) :: text as age,
+                                                     * EXCLUDE(progress, argv, is_active, runtime, run_id, remaining, epochs, target_epochs)
+                                                  FROM {} t
+                                                  JOIN progress p
+                                                      ON t.run_id=p.run_id",
+                                             table_name
+                                         ));
+                                         if stmt.is_err() {
+                                             // println!("{:?}", stmt);
+                                             return;
+                                         }
+                                         let Ok(mut stmt) = stmt else { panic!() };
+                                         let polars = stmt.query_polars([]).unwrap();
+                                         match polars.reduce(|acc, e| acc.vstack(&e).unwrap()) {
+                                             Some(df) => df,
+                                             None => DataFrame::empty(),
+                                         }
+                                     };*/
 
         let column_names = df.get_column_names();
         let height = df.height();
@@ -4440,31 +4461,34 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::p
                 "
         SELECT * EXCLUDE(timestamp), name as variable, value as value_text
         FROM local.model_parameter_text JOIN local.models ON id=model_id
-        -- WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN () 
         UNION
         SELECT * EXCLUDE(timestamp), name as variable, format('{{:E}}', value) as value_text
         FROM local.model_parameter_float JOIN local.models ON id=model_id
-        -- WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN () 
         UNION
         SELECT * EXCLUDE(timestamp), name as variable, format('{{:d}}', value) as value_text
         FROM local.model_parameter_int JOIN local.models ON id=model_id
-        -- WHERE name NOT IN ({}) 
+        -- WHERE name NOT IN () 
         ",
-                repeat_vars(HIDDEN_PARAMS.len()),
-                repeat_vars(HIDDEN_PARAMS.len()),
-                repeat_vars(HIDDEN_PARAMS.len()),
+                // repeat_vars(HIDDEN_PARAMS.len()),
+                // repeat_vars(HIDDEN_PARAMS.len()),
+                // repeat_vars(HIDDEN_PARAMS.len()),
             );
+            println!("{}", query);
             let mut stmt = conn.prepare(&query).unwrap();
             let s = tracing::span!(Level::TRACE, "duck_get_runs: main query");
             let _enter = s.enter();
 
             let polars = stmt
-                .query_polars(duckdb::params_from_iter(
-                    HIDDEN_PARAMS
-                        .iter()
-                        .chain(HIDDEN_PARAMS.iter())
-                        .chain(HIDDEN_PARAMS.iter()),
-                ))
+                .query_polars(
+                    [], /*duckdb::params_from_iter(
+                            HIDDEN_PARAMS
+                                .iter()
+                                .chain(HIDDEN_PARAMS.iter())
+                                .chain(HIDDEN_PARAMS.iter()),
+                        )*/
+                )
                 .expect("duck runs");
             drop(_enter);
             conn.execute("INSERT INTO last_snapshot (table_name, snapshot_id) VALUES ('model_parameter_text', ?)", [current_snapshot_id]).unwrap();
