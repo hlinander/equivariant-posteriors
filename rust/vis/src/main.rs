@@ -1179,7 +1179,6 @@ fn get_train_ids_from_filter_duck(
             SELECT train_id, COUNT(*) FROM (SELECT DISTINCT ON (model_id, variable) * FROM all_params ORDER BY timestamp DESC)
             JOIN uniq_models on id=model_id WHERE {sql_where} GROUP BY (model_id, train_id) HAVING COUNT(*)={n_filters}"
         );
-        println!("{sql}");
         let res = duck.prepare(&sql);
         if let Err(err) = &res {
             println!("{:?}", err);
@@ -1219,10 +1218,6 @@ impl eframe::App for GuiRuns {
         }
         self.handle_filtered_runs();
         self.handle_param_values();
-        // println!(
-        //     "after handle {}",
-        //     Instant::now().duration_since(t_update).as_millis()
-        // );
         if let Some(gui_params_package) = self.gui_params_sender_slot.take() {
             if self
                 .gui_params_sender
@@ -1230,7 +1225,6 @@ impl eframe::App for GuiRuns {
                 .is_err()
             {
                 self.gui_params_sender_slot = Some(gui_params_package);
-                // println!("gui params sender slot");
             }
         }
         if let Some(db_train_runs_package) = self.db_train_runs_sender_slot.take() {
@@ -1240,7 +1234,6 @@ impl eframe::App for GuiRuns {
                 .is_err()
             {
                 self.db_train_runs_sender_slot = Some(db_train_runs_package);
-                // println!("train runs sender slot");
             }
         }
         if Instant::now() > self.plot_timer {
@@ -1252,11 +1245,9 @@ impl eframe::App for GuiRuns {
                 .is_ok()
             {
                 self.plot_timer = Instant::now() + std::time::Duration::from_secs(2);
-                // println!("plot timer");
             }
         }
         if let Ok(new_data) = self.rx_plot_map.try_recv() {
-            // println!("plot map recv");
             let s = tracing::span!(Level::TRACE, "main: plot_map recv");
             let _enter = s.enter();
             let (artifacts, maybe_plot_map) = new_data;
@@ -1288,27 +1279,8 @@ impl eframe::App for GuiRuns {
             self.runs2.run_params = new_run_params;
             self.update_filtered_runs();
         }
-        // println!(
-        //     "after recvs {}",
-        //     Instant::now().duration_since(t_update).as_millis()
-        // );
-        // while let Ok(new_runs) = self.db_reciever.try_recv() {
-        //     for train_id in new_runs.keys() {
-        //         if !self.runs.runs.contains_key(train_id) {
-        //             let t = Instant::now();
-        //             let new_active = get_train_ids_from_filter(&new_runs, &self.gui_params);
-        //             self.db_train_runs_sender_slot = Some(new_active);
-        //             break;
-        //         }
-        //     }
-        //     self.gui_params_sender_slot = Some((self.gui_params.clone(), new_runs));
-        //     if self.data_status == DataStatus::Waiting {
-        //         self.data_status = DataStatus::FirstDataArrived;
-        //     }
-        // }
 
         if std::time::Instant::now() > self.gui_params.next_param_update {
-            // println!("param update");
             self.gui_params.next_param_update =
                 std::time::Instant::now() + std::time::Duration::from_secs(10);
             let t = Instant::now();
@@ -1354,10 +1326,6 @@ impl eframe::App for GuiRuns {
             })
             .collect();
 
-        // println!(
-        //     "before panels {}",
-        //     Instant::now().duration_since(t_update).as_millis()
-        // );
         egui::SidePanel::left("Controls")
             .resizable(true)
             .min_width(10.0)
@@ -1465,10 +1433,6 @@ impl eframe::App for GuiRuns {
                 }
             });
         let t = Instant::now();
-        // println!(
-        //     "before metrics {}",
-        //     Instant::now().duration_since(t_update).as_millis()
-        // );
 
         egui::SidePanel::right("Metrics")
             .resizable(true)
@@ -2839,7 +2803,6 @@ impl GuiRuns {
                                              table_name
                                          ));
                                          if stmt.is_err() {
-                                             // println!("{:?}", stmt);
                                              return;
                                          }
                                          let Ok(mut stmt) = stmt else { panic!() };
@@ -3911,7 +3874,6 @@ impl GuiRuns {
                 self.runs2.active_runs =
                     tokio::runtime::Handle::current().block_on(handle).unwrap();
                 self.db_train_runs_sender_slot = Some(self.runs2.active_runs.clone());
-                println!("updated active runs to {:?}", self.runs2.active_runs);
             } else {
                 self.active_runs_handle = Some(handle);
             }
@@ -3970,7 +3932,6 @@ impl GuiRuns {
             if handle.is_finished() {
                 self.gui_params.param_values =
                     tokio::runtime::Handle::current().block_on(handle).unwrap();
-                println!("handle finished");
             } else {
                 self.param_values_handle = Some(handle);
             }
@@ -4446,7 +4407,7 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::p
             ",
             [],
             |row| row.get(0),
-        ).unwrap_or(15);
+        ).unwrap_or(0);
 
     let res: Result<i32> = conn.query_row(
         "
@@ -4475,7 +4436,6 @@ fn get_runs_duck(pool: &r2d2::Pool<DuckdbConnectionManager>) -> Option<polars::p
                 // repeat_vars(HIDDEN_PARAMS.len()),
                 // repeat_vars(HIDDEN_PARAMS.len()),
             );
-            println!("{}", query);
             let mut stmt = conn.prepare(&query).unwrap();
             let s = tracing::span!(Level::TRACE, "duck_get_runs: main query");
             let _enter = s.enter();
@@ -4620,7 +4580,7 @@ fn get_metrics_duck(
             ",
             [],
             |row| row.get(0),
-        ).unwrap_or(15);
+        ).unwrap_or(0);
 
     let res: Result<i32> = conn.query_row(
         "
@@ -4698,7 +4658,6 @@ fn sync_table(
 ) -> bool {
     let conn = pool.get().unwrap();
     let mut updated = false;
-    println!("syncing {:?}", active_runs);
     for train_id in active_runs {
         let mut stmt = conn
             .prepare(format!("SELECT id as model_ids from local.models WHERE train_id=?").as_str())
@@ -4712,7 +4671,6 @@ fn sync_table(
         if model_ids.len() == 0 {
             continue;
         }
-        println!("getting max id for {}", train_id);
         let max_id: i32 = conn
             .query_row(
                 format!(
@@ -4723,8 +4681,6 @@ fn sync_table(
                 |row| row.get(0),
             )
             .unwrap();
-        println!("[{}] max id {}", train_id, max_id);
-        // println!("max id {} for {}", max_id, train_id);
         let query = format!(
             "
         INSERT INTO local.{table_name} BY NAME
@@ -4743,12 +4699,10 @@ fn sync_table(
             // repeat_vars(model_ids.len()),
             limit
         );
-        // println!("{query} {}", train_id);
         let t = Instant::now();
         let n_rows = conn
             .execute(&query, [train_id]) //params_from_iter(model_ids.iter()))
             .expect("sync runs failed");
-        println!("Inserted {}", n_rows);
         let max_id_post: i32 = conn
             .query_row(
                 format!(
@@ -4896,8 +4850,8 @@ WHERE name = 'threads';
     )
     .expect("create last snapshot_id table");
     // conn.execute("USE local", []).expect("attach ducklake");
-    conn.execute("SET memory_limit = '1GB';", [])
-        .expect("attach to psql failed");
+    // conn.execute("SET memory_limit = '1GB';", [])
+    // .expect("attach to psql failed");
     conn.execute("set parquet_metadata_cache=true;", [])
         .expect("attach to psql failed");
     conn.execute("set enable_external_file_cache=true;", [])
@@ -5013,9 +4967,6 @@ WHERE name = 'threads';
                 .prepare("SELECT * FROM duckdb_memory() ORDER BY memory_usage_bytes DESC")
                 .unwrap();
             let df: Vec<DataFrame> = stmt.query_polars([]).unwrap().collect();
-            for df in df {
-                println!("{:?}", df);
-            }
             log_jemalloc_stats();
             match tx_plot_map.send((artifacts, plot_map)) {
                 Ok(_) => {}
@@ -5057,23 +5008,44 @@ WHERE name = 'threads';
                             ),
                             params AS (
                                 SELECT * FROM params_text pt JOIN params_int pi on pt.run_id=pi.run_id
+                            )
+                            SELECT r.*, p.*, 
+                            FROM local.runs r 
+                            JOIN params p ON r.id = p.run_id
+                            )
+                
+            ";
+            let query = "
+                        CREATE OR REPLACE TABLE params AS (
+                            WITH params_text AS (
+                                PIVOT local.model_parameter_text ON name
+                                USING arg_max(value, timestamp)
+                                GROUP BY run_id
+                            ),
+                            params_int AS (
+                                PIVOT local.model_parameter_int ON name
+                                USING arg_max(value, timestamp)
+                                GROUP BY run_id
+                            ),
+                            params AS (
+                                SELECT * FROM params_text pt JOIN params_int pi on pt.run_id=pi.run_id
                             ),
                             active_models AS (
-                                SELECT DISTINCT run_id 
-                                FROM local.train_steps 
+                                SELECT DISTINCT run_id
+                                FROM local.train_steps
                                 WHERE timestamp > now() - INTERVAL 2 minutes
                             ),
                             latest_steps AS (
                                 SELECT run_id,
                                        max(timestamp) as latest_step_time
-                                FROM local.train_steps 
+                                FROM local.train_steps
                                 GROUP BY run_id
                             )
-                            SELECT r.*, p.*, 
+                            SELECT r.*, p.*,
                                    (a.run_id IS NOT NULL) AS is_active,
                                    (ls.latest_step_time - r.timestamp) AS runtime
-                            FROM local.runs r 
-                            JOIN params p ON r.id = p.run_id 
+                            FROM local.runs r
+                            JOIN params p ON r.id = p.run_id
                             LEFT JOIN active_models a ON r.id = a.run_id
                             LEFT JOIN latest_steps ls ON r.id = ls.run_id
                             ORDER BY timestamp DESC
