@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import torch
 
+import os, sys
+
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
@@ -24,8 +26,8 @@ def create_config(mlp_dim, ensemble_id):
         model_config=TransformerConfig(
             embed_d=32,
             mlp_dim=64,
-            n_seq=784 // (14 * 14),
-            batch_size=256,
+            #n_seq=784 // (14 * 14),
+            #batch_size=256,
             num_layers=2,
             num_heads=1,
             softmax=True,

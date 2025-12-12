@@ -107,21 +107,21 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
     plt.show()
 
     checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
-    f = io.StringIO()
-    with redirect_stdout(f):
-        plt.save_fig(checkpoint_path / "batches_tmp.html")
-        plt.save_fig(checkpoint_path / "batches_term_")
-        plt.save_fig(checkpoint_path / "batches_term_color_", keep_colors=True)
-    shutil.move(
-        checkpoint_path / "batches_tmp.html", checkpoint_path / "batches_training.html"
-    )
-    shutil.move(
-        checkpoint_path / "batches_term_", checkpoint_path / "batches_training.term"
-    )
-    shutil.move(
-        checkpoint_path / "batches_term_color_",
-        checkpoint_path / "batches_training.term_color",
-    )
+    # f = io.StringIO()
+    # with redirect_stdout(f):
+    #     # plt.save_fig(checkpoint_path / "batches_tmp.html")
+    #     plt.save_fig(checkpoint_path / "batches_term_")
+    #     plt.save_fig(checkpoint_path / "batches_term_color_", keep_colors=True)
+    # # shutil.move(
+    # #     checkpoint_path / "batches_tmp.html", checkpoint_path / "batches_training.html"
+    # # )
+    # shutil.move(
+    #     checkpoint_path / "batches_term_", checkpoint_path / "batches_training.term"
+    # )
+    # shutil.move(
+    #     checkpoint_path / "batches_term_color_",
+    #     checkpoint_path / "batches_training.term_color",
+    # )
 
 
 def visualize_progress(state, train_run, last_postgres_result, device):
