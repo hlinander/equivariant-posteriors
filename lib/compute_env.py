@@ -16,7 +16,7 @@ def env():
         try:
             import env
 
-            _current_env = env.env
+            _current_env = env.get_env()
         except Exception:
             print(
                 f"{_TERM_WARNING}[Compute environment] Could not load env.py: \n{traceback.format_exc()}{_TERM_ENDC}"

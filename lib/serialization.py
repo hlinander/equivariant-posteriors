@@ -107,7 +107,7 @@ def serialize(config: SerializeConfig):
             config.train_run.train_config, train_epoch_state.epoch
         )
         torch.save(model, f"{model_epoch_checkpoint}_tmp")
-        final_checkpoint_path = checkpoint_path / model_epoch_checkpoint
+        final_checkpoint_path = model_epoch_checkpoint
         full_checkpoint_path_str = final_checkpoint_path.absolute().as_posix()
 
         shutil.move(
