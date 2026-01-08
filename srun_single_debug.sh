@@ -17,4 +17,5 @@ export SINGULARITYENV_EID=\$EID
 singularity exec --nv --cleanenv --no-home --env COLUMNS=200 --env LINES=60 --env SLURM_ARRAY_TASK_ID=\$SLURM_ARRAY_TASK_ID --env PYTHONNOUSERSITE=1 --bind $HOME /proj/heal_pangu/containers/x86.sif sh $@
 EOM
 
-sbatch -o slurm_log/slurm_%x.%j.log -A $SLURM_PROJECT -p $SLURM_PARTITION --gpus=1 -t 3-00:00:00 $SCRIPT_FILE
+#sbatch -o slurm_log/slurm_%x.%j.log -A $SLURM_PROJECT -p $SLURM_PARTITION --gpus=1 -t 3-00:00:00 $SCRIPT_FILE
+srun -A $SLURM_PROJECT -p $SLURM_PARTITION --gpus=1 -t 3-00:00:00 --pty bash $SCRIPT_FILE
