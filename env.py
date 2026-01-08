@@ -67,6 +67,7 @@ def get_analytics_config() -> AnalyticsConfig:
     )
 
 
+
 def get_env() -> ComputeEnvironment:
     """
     Configure training client settings.
@@ -76,9 +77,9 @@ def get_env() -> ComputeEnvironment:
     """
     return ComputeEnvironment(
         paths=Paths(
-            checkpoints=Path("./checkpoints"),
-            artifacts=Path("./artifacts"),
-            datasets=Path("./datasets"),
+            checkpoints=Path("/proj/heal_pangu/eqp_climate/checkpoints"),
+            artifacts=Path("/proj/heal_pangu/eqp_climate/artifacts"),
+            datasets=Path("/proj/heal_pangu/datasets"), # points to dataset on cluster proj
             locks=Path("./locks"),
             distributed_requests=Path("./distributed_requests"),
         ),
