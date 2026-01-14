@@ -406,8 +406,9 @@ class RingShift:
             # for n in n_slices:
             # mask[d, n] = cnt
             # cnt += 1
-        assert mask[-1, 0] != mask[-2, 0]
-        assert mask[-1, -self.shift_size_hp - 1] != mask[-1, -1]
+        if D > 1: # ADDED TO HANDLE D=1 CASE
+            assert mask[-1, 0] != mask[-2, 0]
+            assert mask[-1, -self.shift_size_hp - 1] != mask[-1, -1]
 
         for d_idx in range(D):
             mask[d_idx, :] = mask[d_idx, nest_idcs_in_ring]
