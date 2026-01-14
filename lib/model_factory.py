@@ -34,6 +34,8 @@ from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
     SwinHPPanguIsolatitudeConv,
 )
 
+from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig
+from experiments.climate.models.swin_hp_climateset import SwinHPClimateset
 
 class _ModelFactory:
     def __init__(self):
@@ -52,6 +54,7 @@ class _ModelFactory:
         self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
         self.models[SwinHPPanguMaskConfig.__name__] = SwinHPPanguMask
         self.models[SwinHPPanguPadConfig.__name__] = SwinHPPanguPad
+        self.models[SwinHPClimatesetkConfig.__name__] = SwinHPClimateset # added
         self.models[SwinHPPanguIsolatitudeConfig.__name__] = SwinHPPanguIsolatitude
         self.models[SwinHPPanguIsolatitudeConvConfig.__name__] = (
             SwinHPPanguIsolatitudeConv
