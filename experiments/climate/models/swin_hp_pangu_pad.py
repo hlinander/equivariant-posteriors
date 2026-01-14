@@ -1,4 +1,3 @@
-"""This implementation of the HEAL-SWIN-UNet was adapted from
 https://github.com/HuCaoFighting/Swin-Unet/blob/1c8b3e860dfaa89c98fa8e5ad1d4abd2251744f9/networks/swin_transformer_unet_skip_expand_decoder_sys.py
 """
 
