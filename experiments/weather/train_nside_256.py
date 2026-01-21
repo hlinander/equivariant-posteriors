@@ -31,7 +31,8 @@ from lib.data_factory import get_factory as get_dataset_factory
 
 # from lib.model_factory import get_factory as get_model_factory
 
-from lib.render_psql import add_artifact, has_artifact, add_parameter
+from lib.render_duck import insert_artifact, insert_model_parameter, ensure_duck
+from lib.serialization import deserialize_model, DeserializeConfig
 
 from lib.distributed_trainer import distributed_train
 
@@ -149,6 +150,16 @@ if __name__ == "__main__":
     print("Creating ensemble..")
     ensemble = create_ensemble(ensemble_config, device_id)
 
+    # Get model_id from deserialization for artifact/metric storage
+    train_run = ensemble_config.members[0]
+    deser_config = DeserializeConfig(train_run=train_run, device_id=device_id)
+    deser_model = deserialize_model(deser_config)
+    model_id = deser_model.model_id if deser_model else 0
+    run_id = train_run.run_id
+
+    # Initialize local DuckDB
+    ensure_duck(train_run)
+
     data_factory = get_dataset_factory()
     ds = data_factory.create(DataHPConfig(nside=NSIDE))
     dl = torch.utils.data.DataLoader(
@@ -159,51 +170,28 @@ if __name__ == "__main__":
     )
 
     result_path = prepare_results(
-        # Path(__file__).parent,
         f"{Path(__file__).stem}_{ensemble_config.members[0].train_config.model_config.__class__.__name__}_nside_{NSIDE}_lite",
         ensemble_config,
     )
     symlink_checkpoint_files(ensemble, result_path)
 
-    # options = ort.SessionOptions()
-    # options.enable_cpu_mem_arena = False
-    # options.enable_mem_pattern = False
-    # options.enable_mem_reuse = False
-    # options.intra_op_num_threads = 16
-
-    # cuda_provider_options = {
-    # "arena_extend_strategy": "kSameAsRequested",
-    # }
-
-    # ort_session_3 = ort.InferenceSession(
-    #     "experiments/weather/pangu_models/pangu_weather_3.onnx",
-    #     sess_options=options,
-    #     providers=[("CUDAExecutionProvider", cuda_provider_options)],
-    # )
     def save_and_register(name, array):
         path = result_path / f"{name}.npy"
-
         np.save(
             path,
             array.detach().cpu().float().numpy(),
         )
-        add_artifact(ensemble_config.members[0], name, path)
+        insert_artifact(model_id, name, path)
 
-    # acc = anomaly_correlation_coefficient(ensemble.members[0], dl, device_id)
-    # rmse = rmse(ensemble.members[0], dl, device_id)
-    # breakpoint()
-    # torch.cuda.memory._record_memory_history(stacks="python")
     for idx, batch in enumerate(dl):
         if idx > 1:
             break
-        if has_artifact(ensemble_config.members[0], f"{idx}_of_surface.npy"):
+        # Check if artifact file already exists
+        if (result_path / f"{idx}_of_surface.npy.npy").exists():
             continue
         batch = {k: v.to(device_id) for k, v in batch.items()}
 
-        #     start = time.time()
         output = ensemble.members[0](batch)
-        #     model_time = time.time()
-        #     print(f"Model time: {model_time - start}, Sample {batch['sample_id']}")
         save_and_register(f"{idx}_of_surface.npy", output["logits_surface"])
         save_and_register(f"{idx}_if_surface.npy", batch["input_surface"])
         save_and_register(f"{idx}_tf_surface.npy", batch["target_surface"])
@@ -222,8 +210,8 @@ if __name__ == "__main__":
         drop_last=False,
     )
     acc = anomaly_correlation_coefficient(ensemble.members[0], dl, device_id)
-    add_parameter(ensemble.member_configs[0], "acc_surface", acc.acc_surface)
-    add_parameter(ensemble.member_configs[0], "acc_upper", acc.acc_upper)
+    insert_model_parameter(model_id, run_id, "acc_surface", acc.acc_surface)
+    insert_model_parameter(model_id, run_id, "acc_upper", acc.acc_upper)
     save_and_register("acc_surface.npy", acc.acc_unnorm_surface)
     save_and_register("acc_upper.npy", acc.acc_unnorm_upper)
     # save_and_register("of_surface.npy", output["logits_surface"])

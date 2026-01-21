@@ -12,9 +12,6 @@ from lib.timing_metric import Timing
 import lib.data_factory as data_factory
 from lib.data_utils import get_sampler
 import lib.model_factory as model_factory
-from lib.render_dataframe import render_dataframe
-
-# from lib.render_duck import insert_model, render_duck
 import lib.render_duck as duck
 
 from lib.train_dataclasses import TrainEpochState
@@ -26,12 +23,10 @@ from lib.serialization import SerializeConfig
 from lib.serialization import DeserializeConfig
 from lib.serialization import deserialize
 from lib.serialization import serialize
-from lib.serialization import write_status_file
 
-from lib.train_visualization import visualize_progress
 from lib.train_visualization import visualize_progress_batches
 
-from lib.paths import get_checkpoint_path, get_lock_path
+from lib.paths import get_lock_path
 from lib.files import prepare_results
 import lib.ddp as ddp
 
@@ -105,17 +100,14 @@ def validate(
 
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
-            # print(f"[Rank {ddp.get_rank()}] Validation batch")
             batch = {
                 k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()
             }
-            # print(f"[Rank {ddp.get_rank()}] Validation batch device")
             output = model(batch)
             if ddp.get_rank() == 0:
                 metric_sample = MetricSample(
                     output=output,
                     batch=batch,
-                    # epoch=train_epoch_state.epoch,
                     model_id=train_epoch_state.model_id,
                 )
                 for metric in train_epoch_state.validation_metrics:
@@ -140,20 +132,9 @@ def validate(
                         .get_class(train_run.train_config.val_data_config)
                         .__name__,
                         batch["sample_id"].tolist(),
-                        # metric_sample.batch,
                         values.mean().item(),
                         value_per_sample,
                     )
-            # print(f"[Rank {ddp.get_rank()}] Validation post model")
-            # metric_sample = dataloader.dataset.create_metric_sample(
-            #     output=output, batch=batch, train_epoch_state=train_epoch_state
-            # )
-            # if ddp.get_rank() == 0:
-            # metric_sample = MetricSample(
-            #     output=output, batch=batch, epoch=train_epoch_state.epoch
-            # )
-            # for metric in train_epoch_state.validation_metrics:
-            #     metric(metric_sample)
 
 
 def train(
@@ -175,7 +156,6 @@ def train(
     if dataloader.sampler.__class__.__name__ == "DistributedSampler":
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
-    # visualizers = [visualize_progress, visualize_progress_batches]
     visualizers = [visualize_progress_batches]
     for i, batch in enumerate(dataloader):
         batch_time = train_epoch_state.timing_metric.stop("batch")
@@ -244,7 +224,6 @@ def train(
         metric_sample = MetricSample(
             output=output,
             batch=batch,
-            # epoch=train_epoch_state.epoch,
             model_id=train_epoch_state.model_id,
         )
         for metric in train_epoch_state.train_metrics:
@@ -254,7 +233,6 @@ def train(
                 train_run.run_id,
                 metric.name(),
                 train_epoch_state.batch,
-                # metric_sample.batch,
                 value,
             )
         train_epoch_state.timing_metric.stop("train_metrics")
@@ -264,11 +242,6 @@ def train(
             if now > train_epoch_state.next_visualization:
                 train_epoch_state.next_visualization = time.time() + 10
                 train_epoch_state.timing_metric.start("duck")
-                # last_postgres_result = render_psql(train_run, train_epoch_state)
-                # last_duck_result = duck.render_duck(train_run, train_epoch_state)
-                # duck.touch_model(train_run.train_config, train_epoch_state.model_id)
-
-                # Sync removed - now using start_periodic_export() instead
                 last_sync_result = True, ""
 
                 duck_time = train_epoch_state.timing_metric.stop("duck")
@@ -280,9 +253,6 @@ def train(
                     duck_time,
                 )
                 if train_run.visualize_terminal:
-                    # train_epoch_state.next_visualizer = (
-                    #     train_epoch_state.next_visualizer + 1
-                    # ) % 2
                     train_epoch_state.timing_metric.start("visualize")
                     visualizers[train_epoch_state.next_visualizer](
                         train_epoch_state,
@@ -411,11 +381,8 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
         if state is not None:
             if ddp.get_rank() == 0:
                 duck.insert_model_with_model_id(train_run, state.model_id)
-        # duck.execute("DELETE FROM ")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
-        # raise e
-        # print(str(e))
 
     if state is None:
         state = create_initial_state(
@@ -463,12 +430,8 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         if train_run.compute_config.distributed:
             torch.distributed.barrier()
 
-    # Final sync removed - periodic export handles syncing automatically
-
     if ddp.get_rank() > 0:
         return
-
-    # duck.render_duck(train_run, state)
 
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):

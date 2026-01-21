@@ -1,12 +1,10 @@
 import torch
 from dataclasses import dataclass
-from typing import List
 from datetime import datetime
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun, TrainConfig
 import lib.data_factory as data_factory
-from lib.metric import Metric
 from lib.timing_metric import Timing
 from lib.paths import (
     get_checkpoint_path,
@@ -18,20 +16,16 @@ from lib.data_utils import get_sampler
 from lib.ddp import get_rank
 from lib.stable_hash import json_dumps_dataclass_str
 import shutil
-from lib.serialize_human import serialize_human
 import lib.render_duck as duck
+
+# Re-export for backward compatibility
+from lib.serialize_human import serialize_human
 
 
 @dataclass
 class SerializeConfig:
     train_run: TrainRun
     train_epoch_state: TrainEpochState
-
-
-# def serialize_metrics(metrics: List[Metric]):
-#     serialized_metrics = [(metric.name(), metric.serialize()) for metric in metrics]
-#     serialized_metrics = {name: value for name, value in serialized_metrics}
-#     return serialized_metrics
 
 
 @dataclass
@@ -49,7 +43,6 @@ class FileStructure:
 
 def write_status_file(config: SerializeConfig):
     if get_rank() != 0:
-        # print("I am not rank 0 so not serializing...")
         return
 
     checkpoint_path = get_or_create_checkpoint_path(config.train_run.train_config)
@@ -93,8 +86,6 @@ def serialize(config: SerializeConfig):
         optimizer=train_epoch_state.optimizer.state_dict(),
         epoch=train_epoch_state.epoch,
         batch=train_epoch_state.batch,
-        # train_metrics=serialize_metrics(train_epoch_state.train_metrics),
-        # validation_metrics=serialize_metrics(train_epoch_state.validation_metrics),
         train_run=config.train_run.serialize_human(),
         timing_metric=train_epoch_state.timing_metric.serialize(),
     )
@@ -107,12 +98,11 @@ def serialize(config: SerializeConfig):
             config.train_run.train_config, train_epoch_state.epoch
         )
         torch.save(model, f"{model_epoch_checkpoint}_tmp")
-        final_checkpoint_path = model_epoch_checkpoint
-        full_checkpoint_path_str = final_checkpoint_path.absolute().as_posix()
+        full_checkpoint_path_str = model_epoch_checkpoint.absolute().as_posix()
 
         shutil.move(
-            checkpoint_path / f"{model_epoch_checkpoint}_tmp",
-            final_checkpoint_path,
+            f"{model_epoch_checkpoint}_tmp",
+            model_epoch_checkpoint,
         )
     for key, value in file_data.__dict__.items():
         torch.save(value, checkpoint_path / f"{key}_tmp")
@@ -242,7 +232,6 @@ def get_serialization_epoch(config: DeserializeConfig):
 
 
 def get_serialized_epoch(train_config: TrainConfig):
-    # train_config = config.train_run.train_config
     checkpoint_path = get_checkpoint_path(train_config)
     if (
         not (checkpoint_path / "model").is_file()
@@ -334,24 +323,6 @@ def deserialize(config: DeserializeConfig):
     duck.LAST_MODEL_ID = file_data.model_id
     duck.LAST_RUN_CONFIG = config.train_run
     model = create_model(config, data_dict["model"])
-    # model = model_factory.get_factory().create(
-    #     train_config.model_config, val_ds.data_spec()
-    # )
-    # model = model.to(torch.device(config.device_id))
-
-    # if config.train_run.compute_config.distributed:
-    #     device_id_list = [config.device_id]
-    #     model = torch.nn.parallel.DistributedDataParallel(
-    #         model, device_ids=device_id_list, find_unused_parameters=True
-    #     )
-
-    # model.load_state_dict(data_dict["model"])
-
-    # if train_config.model_pre_train_hook is not None:
-    #     model = train_config.model_pre_train_hook(model, config.train_run)
-
-    # if train_config.post_model_create_hook is not None:
-    # model = train_config.post_model_create_hook(model, train_run=config.train_run)
 
     optimizer = train_config.optimizer.optimizer(
         model.parameters(), **train_config.optimizer.kwargs
@@ -361,15 +332,11 @@ def deserialize(config: DeserializeConfig):
     train_metrics = []
     for metric in config.train_run.train_eval.train_metrics:
         metric_instance = metric()
-        # metric_instance.deserialize(data_dict["train_metrics"][metric_instance.name()])
         train_metrics.append(metric_instance)
 
     validation_metrics = []
     for metric in config.train_run.train_eval.validation_metrics:
         metric_instance = metric()
-        # metric_instance.deserialize(
-        # data_dict["validation_metrics"][metric_instance.name()]
-        # )
         validation_metrics.append(metric_instance)
 
     timing_metric = Timing()
