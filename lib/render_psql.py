@@ -1,5 +1,4 @@
-print("FIX LEGACY PSQL DEPENDENCY")
-exit(0)
+raise Exception("Fix legacy psql dependency")
 import psycopg
 import pandas
 import json

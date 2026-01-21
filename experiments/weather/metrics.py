@@ -14,7 +14,6 @@ from experiments.weather.data import (
     DataHPConfig,
 )
 from experiments.weather.cdsmontly import ERA5Sample
-from lib.render_psql import add_artifact
 
 
 def dh_numpy_to_xr_surface_hp(data_surface, data_upper, meta) -> ERA5Sample:
@@ -643,14 +642,12 @@ def rmse_dh(model, dataloader_dh, device_id):
         #     "/tmp/surface_test.npy",
         #     e5s.surface.to_array().to_numpy().astype(np.float32),
         # )
-        # add_artifact(train_run, "surface_test_rmse.npydh", "/tmp/surface_test.npy")
         # breakpoint()
         surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
         # np.save(
         #     "/tmp/surface_test_hp.npy",
         #     surface.astype(np.float32),
         # )
-        # add_artifact(train_run, "surface_test_rmse_hp.npy", "/tmp/surface_test_hp.npy")
         surface = torch.from_numpy(surface).to(device_id)
         upper = torch.from_numpy(upper).to(device_id)
 
