@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "equivariant-posteriors"
 version = "0.1.0"
@@ -24,11 +28,9 @@ dependencies = [
     "peft>=0.14.0",
     "plotext==5.2.8",
     "psycopg>=3.2.4",
-    "psycopg2>=2.9.10",
     "pytest>=8.3.4",
     "python-lsp-ruff>=2.2.2",
     "rplot>=1.8",
-    "rpy2>=3.6.0",
     "ruff>=0.9.6",
     "seaborn>=0.13.2",
     "timm>=1.0.14",
@@ -38,6 +40,9 @@ dependencies = [
     "transformers>=4.48.3",
     "xarray>=2025.1.2",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["lib", "experiments"]
 
 [tool.pytest.ini_options]
 addopts = [
