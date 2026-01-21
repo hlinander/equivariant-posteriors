@@ -24,8 +24,6 @@ def create_config(mlp_dim, ensemble_id):
         model_config=TransformerConfig(
             embed_d=32,
             mlp_dim=64,
-            n_seq=784 // (14 * 14),
-            batch_size=256,
             num_layers=2,
             num_heads=1,
             softmax=True,

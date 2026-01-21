@@ -42,8 +42,14 @@ def copy_tracked_and_untracked_to_destination(dest_path):
     all_files = {item.a_path for item in repo.index.diff(None)}
     all_files.update(repo.untracked_files)
 
+    # Directories to skip
+    skip_dirs = {"rust", ".venv", "__pycache__"}
+
     # Iterate over all files, tracked and untracked
     for file_path in all_files:
+        # Skip files in excluded directories
+        if any(part in skip_dirs for part in Path(file_path).parts):
+            continue
         if Path(file_path).is_file():  # Check if it's a file
             if Path(file_path).stat().st_size > 1000000:
                 print(f"Skipping large file {file_path}")
@@ -64,9 +70,15 @@ def copy_tracked_tree_to_destination(dest_path):
     # Ensure destination path exists
     dest_path.mkdir(parents=True, exist_ok=True)
 
+    # Directories to skip
+    skip_dirs = {"rust", ".venv", "__pycache__"}
+
     # Iterate over all tracked files
     for file in git.git_repo().head.commit.tree.traverse():
         if file.type == "blob":  # A file (not a directory)
+            # Skip files in excluded directories
+            if any(part in skip_dirs for part in Path(file.path).parts):
+                continue
             dest_file_path = dest_path / file.path
 
             # Ensure the parent directory exists
