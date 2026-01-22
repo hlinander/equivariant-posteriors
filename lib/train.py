@@ -237,6 +237,10 @@ def train(
             )
         train_epoch_state.timing_metric.stop("train_metrics")
 
+        # Record GPU metrics if monitor is active
+        if train_epoch_state.gpu_monitor is not None:
+            train_epoch_state.gpu_monitor.record_metrics(train_epoch_state.batch)
+
         try:
             now = time.time()
             if now > train_epoch_state.next_visualization:
@@ -418,6 +422,12 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         print(f"Starting periodic export to {config.staging.type} staging (interval: {config.export_interval_seconds}s)...")
         export_thread = start_periodic_export(train_run)
         serialize(serialize_config)
+
+    # Start GPU monitoring (if available)
+    if ddp.get_rank() == 0:
+        from lib.gpu_monitor import GPUMonitor
+        state.gpu_monitor = GPUMonitor(state.model_id, train_run.run_id)
+        state.gpu_monitor.start()
 
     print("Run epochs...")
     while state.epoch < train_run.epochs:

@@ -37,6 +37,7 @@ class TrainEpochState:
     psql_query_cache: Set = field(default_factory=lambda: set())
     psql_starting_xs: Dict[str, float] = None
     code_path: Path = None
+    gpu_monitor: object = None
 
 
 @dataclass

@@ -39,6 +39,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.48.3",
     "xarray>=2025.1.2",
+    "pynvml>=11.0.0",
 ]
 
 [project.optional-dependencies]
