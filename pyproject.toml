@@ -41,6 +41,11 @@ dependencies = [
     "xarray>=2025.1.2",
 ]
 
+[project.optional-dependencies]
+test = [
+    "moto[server]>=5.0.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["lib", "experiments"]
 

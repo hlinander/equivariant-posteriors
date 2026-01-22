@@ -410,10 +410,13 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         except duck.duckdb.duckdb.ConstraintException:
             print("Probably already synced model parameters...")
 
-    # Start periodic export to S3 (replaces old sync() calls)
+    # Start periodic export to staging (S3 or filesystem based on config)
     if ddp.get_rank() == 0:
-        print("Starting periodic export to S3...")
-        export_thread = duck.start_periodic_export(train_run, interval_seconds=300)
+        from lib.export import start_periodic_export
+        from lib.analytics_config import analytics_config
+        config = analytics_config()
+        print(f"Starting periodic export to {config.staging.type} staging (interval: {config.export_interval_seconds}s)...")
+        export_thread = start_periodic_export(train_run)
         serialize(serialize_config)
 
     print("Run epochs...")

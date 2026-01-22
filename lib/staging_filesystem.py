@@ -137,13 +137,30 @@ def flush_all_to_filesystem(
     Returns:
         List of filesystem paths that were created
     """
-    from lib.render_duck import MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC
+    from lib.render_duck import (
+        MODEL_PARAMETER,
+        TRAIN_STEP_METRIC,
+        CHECKPOINT_SAMPLE_METRIC,
+        MODELS_TABLE_NAME,
+        RUNS_TABLE_NAME,
+        TRAIN_STEPS_TABLE_NAME,
+        CHECKPOINTS_TABLE_NAME,
+        ARTIFACTS_TABLE_NAME,
+        ARTIFACT_CHUNKS_TABLE_NAME,
+    )
 
     # Tables that have run_id column (filter by run_id)
-    RUN_ID_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC]
+    RUN_ID_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC, TRAIN_STEPS_TABLE_NAME]
 
     # Tables without run_id column (filter by timestamp only)
-    TIMESTAMP_ONLY_TABLES = [CHECKPOINT_SAMPLE_METRIC]
+    TIMESTAMP_ONLY_TABLES = [
+        CHECKPOINT_SAMPLE_METRIC,
+        MODELS_TABLE_NAME,
+        RUNS_TABLE_NAME,
+        CHECKPOINTS_TABLE_NAME,
+        ARTIFACTS_TABLE_NAME,
+        ARTIFACT_CHUNKS_TABLE_NAME,
+    ]
 
     exported_paths = []
 

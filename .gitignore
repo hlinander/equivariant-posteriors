@@ -37,3 +37,7 @@ central.db.wal
 # DuckDB files
 *.db
 *.db.wal
+
+# Local environment data (default env.py paths)
+.local/
+env.py
