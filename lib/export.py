@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 from lib.train_dataclasses import TrainRun
 from lib.analytics_config import analytics_config, AnalyticsConfig
+from lib.log import log
 import lib.render_duck as duck
 
 
@@ -26,7 +27,7 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
 
     # Get thread-safe cursor
     if duck.CONN is None:
-        print("[export] Error: DuckDB connection not initialized")
+        log("export", "Error: DuckDB connection not initialized")
         return []
 
     cursor = duck.CONN.cursor()

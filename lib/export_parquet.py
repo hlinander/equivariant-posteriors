@@ -285,14 +285,15 @@ def export_periodic(
             return
 
         cursor = duck.CONN.cursor()
+        from lib.log import log, log_next_in
 
         while True:
             try:
                 paths = flush_all_to_s3(train_run, s3_bucket, cursor, s3_prefix)
                 if paths:
-                    print(f"[export] Exported {len(paths)} files to S3")
+                    log_next_in("export", f"Exported {len(paths)} files to S3", interval_seconds)
             except Exception as e:
-                print(f"[export] Error during export: {e}")
+                log("export", f"Error during export: {e}")
                 import traceback
                 traceback.print_exc()
 

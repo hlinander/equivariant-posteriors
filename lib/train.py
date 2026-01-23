@@ -426,7 +426,7 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
     # Start GPU monitoring (if available)
     if ddp.get_rank() == 0:
         from lib.gpu_monitor import GPUMonitor
-        state.gpu_monitor = GPUMonitor(state.model_id, train_run.run_id)
+        state.gpu_monitor = GPUMonitor(state.model_id, train_run.run_id, train_run.gpu_monitor)
         state.gpu_monitor.start()
 
     print("Run epochs...")
