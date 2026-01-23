@@ -12,11 +12,12 @@ Train and evaluate PyTorch models with reproducibility in mind.
 
 ## Quick Start with uv
 
-Install [uv](https://github.com/astral-sh/uv) and run experiments directly:
+Install [uv](https://github.com/astral-sh/uv) and run experiments:
 
 ```bash
-# Run MNIST experiment
-uv run python experiments/mnist/dense.py
+uv run run.py experiments/mnist/dense.py            # auto-detect device
+uv run run.py --mode cuda experiments/mnist/dense.py
+uv run run.py --mode cpu experiments/mnist/dense.py
 ```
 
 On first run, `env.py` is auto-created with defaults. All data is stored under `.local/` (add to `.gitignore`).
