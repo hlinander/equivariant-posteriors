@@ -1,17 +1,12 @@
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/02f05fc";
   inputs.helix-pkg.url = "github:helix-editor/helix";
-  # inputs.helix-pkg.url = "github:helix-editor/helix?tag=25.01";
-
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
   inputs.fenix = {
     url = "github:nix-community/fenix";
     inputs.nixpkgs.follows = "nixpkgs";
   };
+
   outputs = { self, nixpkgs, helix-pkg, fenix, ... }:
-    # outputs = { self, nixpkgs, ... }:
     let
       disableCudaEnvFlag = builtins.getEnv "DISABLE_CUDA";
       system = "x86_64-linux";
@@ -20,190 +15,61 @@
         config = {
           allowUnfree = true;
           cudaSupport = disableCudaEnvFlag != "1";
-          # cudaCapabilities = ["8.0"];
         };
       });
       rustToolchain = fenix.packages."${system}".stable;
       helixmaster = helix-pkg.packages.${system}.default;
-      # weatherlearn = pkgs.python3Packages.buildPythonPackage rec {
-      #   pname = "weatherlearn";
-      #   version = "7b3f";
-      #   format = "pyproject";
 
-      #   # disabled = pythonOlder "3.8";
-
-      #   src = pkgs.fetchFromGitHub {
-      #     owner = "lizhuoq";
-      #     repo = pname;
-      #     # rev = "refs/tags/${version}";
-      #     rev = "7b3f3c790380c4fddd2e06f1bb7db1a70894717b";
-      #     hash = "sha256-jiLmtvtRJJOfeFdzYv56hq8Uv2MVVyuy3kTTGe0vvXE=";
-      #     # hash = "sha256-Q8cSgupfj6xKD0bYgL6bvYBwdYDdNaiWEWWUrRvwc4g";
-      #   };
-
-      #   propagatedBuildInputs = [
-      #     # pkgs.python3Packages.aiohttp
-      #     pkgs.poetry
-      #     pkgs.python3Packages.poetry-core
-      #     pkgs.python3Packages.pytorch
-      #     pkgs.python3Packages.timm
-      #     pkgs.python3Packages.numpy
-      #     # cdsapi
-          
-      #   ]; # ++ pkgs.lib.optionals (pkgs.pythonOlder "3.8") [
-      #   #pkgs.python3Packages.importlib-metadata
-      #   #];
-
-      #   # Tests require pervasive internet access
-      #   doCheck = false;
-      # };
-
-      # datasets = pkgs.python3Packages.buildPythonPackage rec {
-      #   pname = "datasets";
-      #   version = "2.14.7";
-      #   format = "setuptools";
-
-      #   # disabled = pythonOlder "3.8";
-
-      #   src = pkgs.fetchFromGitHub {
-      #     owner = "huggingface";
-      #     repo = pname;
-      #     rev = "refs/tags/${version}";
-      #     hash = "sha256-Q8cSgupfj6xKD0bYgL6bvYBwdYDdNaiWEWWUrRvwc4g";
-      #   };
-
-      #   propagatedBuildInputs = [
-      #     pkgs.python3Packages.aiohttp
-      #     pkgs.python3Packages.dill
-      #     pkgs.python3Packages.fsspec
-      #     pkgs.python3Packages.huggingface-hub
-      #     pkgs.python3Packages.multiprocess
-      #     pkgs.python3Packages.numpy
-      #     pkgs.python3Packages.packaging
-      #     pkgs.python3Packages.pandas
-      #     pkgs.python3Packages.pyarrow
-      #     pkgs.python3Packages.requests
-      #     pkgs.python3Packages.responses
-      #     pkgs.python3Packages.tqdm
-      #     pkgs.python3Packages.xxhash
-      #     pyarrow_hotfix
-      #   ]; # ++ pkgs.lib.optionals (pkgs.pythonOlder "3.8") [
-      #   #pkgs.python3Packages.importlib-metadata
-      #   #];
-
-      #   # Tests require pervasive internet access
-      #   doCheck = false;
-
-      #   # Module import will attempt to create a cache directory
-      #   postFixup = "export HF_MODULES_CACHE=$TMPDIR";
-
-      #   pythonImportsCheck = [ "datasets" ];
-
-      #   meta = with pkgs.lib; {
-      #     description =
-      #       "Open-access datasets and evaluation metrics for natural language processing";
-      #     homepage = "https://github.com/huggingface/datasets";
-      #     changelog =
-      #       "https://github.com/huggingface/datasets/releases/tag/${version}";
-      #     license = licenses.asl20;
-      #     platforms = platforms.unix;
-      #     maintainers = with maintainers; [ ];
-      #   };
-      # };
-      # pyarrow_hotfix = pkgs.python3Packages.buildPythonPackage rec {
-      #   pname = "pyarrow_hotfix";
-      #   version = "1.0";
-
-      #   src = ./pyarrow_hotfix; # Path to your local dummy_package directory
-      #   format = "other";
-
-      #   buildPhase = "runHook postBuild";
-
-      #   installPhase = ''
-      #     # mkdir -p $out/${pkgs.python3.sitePackages}
-      #     # cp -r $src/* $out/${pkgs.python3.sitePackages}
-      #     mkdir -p $out/${pkgs.python3.sitePackages}/pyarrow_hotfix
-      #     cp -r $src/* $out/${pkgs.python3.sitePackages}/pyarrow_hotfix
-      #   '';
-      #   # No dependencies for this dummy package
-      #   propagatedBuildInputs = [ ];
-
-      #   # No tests to run
-      #   doCheck = false;
-
-      #   meta = with pkgs.lib; {
-      #     description = "A dummy Python package";
-      #     homepage = "https://example.com/dummy_package";
-      #     license = licenses.mit;
-      #   };
-      # };
-      # https://github.com/google-research/weatherbench2
+      # Custom Python packages not in nixpkgs
       weatherbench2 = pkgs.python3Packages.buildPythonPackage rec {
         pname = "weatherbench2";
         version = "0.2.0";
         format = "setuptools";
-
-        # disabled = pythonOlder "3.8";
-
         src = pkgs.fetchFromGitHub {
           owner = "google-research";
           repo = pname;
           rev = "ae870189270ca46b96328a7328c877debf580ae8";
           hash = "sha256-2k83KxjWFANPwZWgrKwNstwbJjgtSDNZGDF0sPu2OVY=";
         };
-
-        propagatedBuildInputs = [
-        ];         
-
+        propagatedBuildInputs = [];
         doCheck = false;
-
-        # meta = with pkgs.lib; {
-        #   description =
-        #     "Open-access datasets and evaluation metrics for natural language processing";
-        #   homepage = "https://github.com/huggingface/datasets";
-        #   changelog =
-        #     "https://github.com/huggingface/datasets/releases/tag/${version}";
-        #   license = licenses.asl20;
-        #   platforms = platforms.unix;
-        #   maintainers = with maintainers; [ ];
-        # };
       };
-
 
       healpix = pkgs.python3Packages.buildPythonPackage rec {
         pname = "healpix";
         version = "2023.1.13";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          sha256 = "sha256-JU8AUgck7F8X2+0zk+O/F8iSt+laxt9S75p/a2jjhOE="; # TODO
+          sha256 = "sha256-JU8AUgck7F8X2+0zk+O/F8iSt+laxt9S75p/a2jjhOE=";
         };
         propagatedBuildInputs = [ pkgs.python3Packages.numpy ];
         doCheck = false;
       };
+
       multiurl = pkgs.python3Packages.buildPythonPackage rec {
         pname = "multiurl";
         version = "0.3.1";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          sha256 = "sha256-xwAUN7WdVtTDENclw9z/+YyXxLZSiT2ImJhTgnRl1EI="; # TODO
+          sha256 = "sha256-xwAUN7WdVtTDENclw9z/+YyXxLZSiT2ImJhTgnRl1EI=";
         };
-        propagatedBuildInputs = [ 
-        pkgs.python3Packages.requests
-        pkgs.python3Packages.tqdm
-        pkgs.python3Packages.pytz
-        pkgs.python3Packages.dateutils
-         ];
+        propagatedBuildInputs = [
+          pkgs.python3Packages.requests
+          pkgs.python3Packages.tqdm
+          pkgs.python3Packages.pytz
+          pkgs.python3Packages.dateutils
+        ];
         doCheck = false;
       };
+
       cads_api_client = pkgs.python3Packages.buildPythonPackage rec {
         pname = "cads_api_client";
         version = "1.4.3";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          # sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
           sha256 = "sha256-UjWep0OoS1l8xYlzD/S0FHB7zk5eInmDVSiy0Sc8Gbg=";
         };
-        format="pyproject";
+        format = "pyproject";
         propagatedBuildInputs = [
           pkgs.python3Packages.requests
           pkgs.python3Packages.tqdm
@@ -214,28 +80,39 @@
         ];
         doCheck = false;
       };
+
       cdsapi = pkgs.python3Packages.buildPythonPackage rec {
         pname = "cdsapi";
         version = "0.7.3";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          # sha256 = "sha256-fUDFjj/T51qKzc3IHqtO+bb3Y7KQK6AdfRc482UqWjA="; # TODO
           sha256 = "sha256-iDoTdspJVFfrVf1Ujbu29bZPLkyICzWG3Te6kEHlHII=";
         };
         propagatedBuildInputs = [
           pkgs.python3Packages.requests
           pkgs.python3Packages.tqdm
           cads_api_client
-
         ];
         doCheck = false;
       };
+
+      findlibs = pkgs.python3Packages.buildPythonPackage rec {
+        pname = "findlibs";
+        version = "0.0.5";
+        src = pkgs.python3Packages.fetchPypi {
+          inherit pname version;
+          sha256 = "sha256-eoAVcemZ0O6D+bksu1mMIfhh7ibKnbp0zqiVi6QzXn4=";
+        };
+        propagatedBuildInputs = [];
+        doCheck = false;
+      };
+
       eccodes3 = pkgs.python3Packages.buildPythonPackage rec {
         pname = "eccodes";
         version = "1.6.0";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          sha256 = "sha256-WTkwQLz4nYBIEnQQkmWCqv/GiOF0vr1GRxkwe7xdnhU="; # TODO
+          sha256 = "sha256-WTkwQLz4nYBIEnQQkmWCqv/GiOF0vr1GRxkwe7xdnhU=";
         };
         propagatedBuildInputs = [
           pkgs.python3Packages.numpy
@@ -246,12 +123,13 @@
         ];
         doCheck = false;
       };
+
       cfgrib = pkgs.python3Packages.buildPythonPackage rec {
         pname = "cfgrib";
         version = "0.9.10.3";
         src = pkgs.python3Packages.fetchPypi {
           inherit pname version;
-          sha256 = "sha256-wQgGBYyAxIYQwgG/BespJAGAeAarlCOrSWWuI9u2tSE="; # TODO
+          sha256 = "sha256-wQgGBYyAxIYQwgG/BespJAGAeAarlCOrSWWuI9u2tSE=";
         };
         propagatedBuildInputs = [
           pkgs.python3Packages.numpy
@@ -262,35 +140,19 @@
         ];
         doCheck = false;
       };
-      findlibs = pkgs.python3Packages.buildPythonPackage rec {
-        pname = "findlibs";
-        version = "0.0.5";
-        src = pkgs.python3Packages.fetchPypi {
-          inherit pname version;
-          sha256 = "sha256-eoAVcemZ0O6D+bksu1mMIfhh7ibKnbp0zqiVi6QzXn4="; # TODO
-        };
-        propagatedBuildInputs = [ ];
-        doCheck = false;
-      };
+
       program = pkgs.python3Packages.buildPythonApplication {
-        pname = "equivariant-transformers";
+        pname = "equivariant-posteriors";
         version = "1.0";
-
-        # buildInputs = [pythonWithPackages];
-        propagatedBuildInputs = pythonPackages; # tqdm
-
+        propagatedBuildInputs = pythonPackages;
         src = ./.;
-
         checkPhase = ''
-          # ${pkgs.python3Packages.pytorch}/bin/torchrun --standalone --nnodes=1 --nproc_per_node=1 test.py
           export TORCH_DEVICE="cpu"
           python test.py
         '';
       };
 
       pythonPackages = with pkgs.python3Packages; [
-        # pycapnp
-        # apache-beam
         duckdb
         zarr
         weatherbench2
@@ -333,110 +195,82 @@
         psycopg2
         pytest
         sqlalchemy
-        (rpy2.override{ extraRPackages = with pkgs.rPackages; [ggplot2 ggforce dplyr latex2exp patchwork reticulate Hmisc]; })
+        (rpy2.override {
+          extraRPackages = with pkgs.rPackages; [
+            ggplot2 ggforce dplyr latex2exp patchwork reticulate Hmisc
+          ];
+        })
         seaborn
-        # weatherlearn
       ];
 
       pythonWithPackages = pkgs.python3.withPackages (p: pythonPackages);
-      devinputs = with pkgs; [
-      helixmaster
-      # helix
-      duckdb
-      flatbuffers
-      glslang
-      shaderc
-      # gitui
-      # lazygit
-      linuxPackages_latest.perf
-      glfw3
-      glm
-      xorg.libX11
-      xorg.libpthreadstubs
-      xorg.libXau
-      xorg.libXdmcp
-      xorg.libXrandr
-      xorg.libXinerama
-      xorg.libXcursor
-      xorg.libXi
-      xorg.libxcb
-      xorg.xkbevd
-      xorg.xkbutils
-      xclip
-      libxkbcommon
-      libGL
-      libGLU
 
-      pkg-config
-      openssl
-      (rustToolchain.withComponents [
-        "cargo"
-        "rustc"
-        "rust-src"
-        "rustfmt"
-        "clippy"
-      ])
-      fenix.packages."${system}".rust-analyzer
-      nil
-      julia
-      # (postgresql_15.withPackages(p: [p.timescaledb]))
-      postgresql_15
-      ruff
-      nixfmt
-      jq
-      poppler
-      fzf
-      (ueberzugpp.override {
-        enableWayland = false;
-        enableOpencv = false;
-      })
-      (rWrapper.override {
-        packages = with rPackages; [
-          ggplot2
-          dplyr
-          latex2exp
-          patchwork
-          reticulate
-          Hmisc
-          RPostgreSQL
-          plotly
-        ];
-      })
-      # (rstudioWrapper.override {
-      #   packages = with rPackages; [
-      #     ggplot2
-      #     dplyr
-      #     patchwork
-      #     reticulate
-      #     Hmisc
-      #     RPostgreSQL
-      #     plotly
-      #     esquisse
-      #     matlab
-      #     ggExtra
-      #     ggpubr
-      #   ];
-      # })
-      cudatoolkit
-      # python
-      pythonWithPackages
+      devinputs = with pkgs; [
+        helixmaster
+        duckdb
+        flatbuffers
+        glslang
+        shaderc
+        linuxPackages_latest.perf
+        glfw3
+        glm
+        xorg.libX11
+        xorg.libpthreadstubs
+        xorg.libXau
+        xorg.libXdmcp
+        xorg.libXrandr
+        xorg.libXinerama
+        xorg.libXcursor
+        xorg.libXi
+        xorg.libxcb
+        xorg.xkbevd
+        xorg.xkbutils
+        xclip
+        libxkbcommon
+        libGL
+        libGLU
+        pkg-config
+        openssl
+        (rustToolchain.withComponents [
+          "cargo" "rustc" "rust-src" "rustfmt" "clippy"
+        ])
+        fenix.packages."${system}".rust-analyzer
+        nil
+        julia
+        postgresql_15
+        ruff
+        nixfmt
+        jq
+        poppler
+        fzf
+        (ueberzugpp.override {
+          enableWayland = false;
+          enableOpencv = false;
+        })
+        (rWrapper.override {
+          packages = with rPackages; [
+            ggplot2 dplyr latex2exp patchwork reticulate Hmisc RPostgreSQL plotly
+          ];
+        })
+        cudatoolkit
+        pythonWithPackages
       ];
+
     in {
       packages.x86_64-linux.default = program;
       packages.aarch64-darwin.default = program;
-      # devShells.x86_64-linux.default = pkgs.mkShellNoCC {
+
       devShells.x86_64-linux.default =
         (pkgs.mkShell.override { stdenv = pkgs.llvmPackages_14.stdenv; }) {
           buildInputs = devinputs;
           nativeBuildInputs = [ pkgs.cudatoolkit ];
           shellHook = ''
             export POSTGRES=${pkgs.postgresql_15}
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/"
             export EDITOR=hx
             export PYTHON=${pythonWithPackages}/bin/python
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/run/opengl-driver/lib/:${
-              pkgs.lib.makeLibraryPath ([
-                pkgs.vulkan-loader 
+              pkgs.lib.makeLibraryPath [
+                pkgs.vulkan-loader
                 pkgs.libGL
                 pkgs.libGLU
                 pkgs.xorg.libX11
@@ -448,24 +282,17 @@
                 pkgs.pipewire
                 pkgs.openssl
                 pkgs.duckdb
-              ])
+              ]
             }"
             export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.stdenv.cc.cc.lib}/lib64"
             export X11_X11_INCLUDE_PATH="${pkgs.xorg.libX11}/include"
-            export X11_X11_LIB=${
-              pkgs.lib.makeLibraryPath ([ pkgs.xorg.libX11 ])
-            }
-
-            # export CUDA_PATH=${pkgs.cudatoolkit}
+            export X11_X11_LIB=${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 ]}
           '';
         };
+
       devShells.aarch64-darwin.default =
         pkgs.mkShellNoCC { buildInputs = devinputs; };
 
-      dbg = pkgs.python3.withPackages(p: [
-        p.psycopg
-        p.psycopg2
-      ]);
       sing = pkgs.singularity-tools.buildImage {
         name = "equivariant-posteriors";
         diskSize = 1024 * 200;
@@ -473,18 +300,9 @@
         contents = [
           (pkgs.buildEnv {
             name = "root";
-            paths = [
-              pkgs.bashInteractive
-              pkgs.coreutils
-              pkgs.findutils
-              pkgs.gnugrep
-              # program
-              # devinputs
-            ];
+            paths = [ pkgs.bashInteractive pkgs.coreutils pkgs.findutils pkgs.gnugrep ];
             pathsToLink = [ "/bin" "/share" ];
           })
-          # program
-          # devinputs
           pkgs.postgresql_15
           pythonWithPackages
           pkgs.helix
@@ -496,15 +314,12 @@
           pkgs.which
           pkgs.gnused
         ];
-        # [ program (pkgs.python3.withPackages (p: [ p.numpy p.pytorch ])) ];
         runScript = ''
           #!${pkgs.stdenv.shell}
           export POSTGRES=${pkgs.postgresql_15}
           export LOCALE_ARCHIVE=${pkgs.glibcLocales}/lib/locale/locale-archive
           exec /bin/sh $@'';
-        runAsRoot =
-          "   #!${pkgs.stdenv.shell}\n   ${pkgs.dockerTools.shadowSetup}\n";
+        runAsRoot = "   #!${pkgs.stdenv.shell}\n   ${pkgs.dockerTools.shadowSetup}\n";
       };
-
     };
 }
