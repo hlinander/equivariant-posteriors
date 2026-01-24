@@ -1,43 +1,37 @@
-checkpoints/
-database.csv
-database.df.pickle
-__pycache__
-.Rhistory
-flake.lock2
-image.sif
-.gitignore
-profile
-result
-database/
-ds/
-pg_database/
-distributed_training_requests/
-/datasets/
-results/
-*.npy
-slurm_log/
-slurm_tmp/
-locks/
-experiments/lora_ensembles/hf_env.sh
-distributed_training_requests/*
-LLM
-artifacts
-rust/vis/target
-rust/vis/flamegraph.svg
-rust/vis/perf.data
-rust/vis/perf.data.old
-sh/
+# Python
+__pycache__/
+*.pyc
 
-# Local S3 testing (MinIO)
-minio-data/
-.env.local
-central.db
-central.db.wal
-
-# DuckDB files
-*.db
-*.db.wal
-
-# Local environment data (default env.py paths)
+# Local data (all under .local/)
 .local/
 env.py
+
+# Scratch folder for old/unused files
+.scratch/
+
+# DuckDB
+*.db
+*.db.wal
+*.lake
+
+# Checkpoints and artifacts
+checkpoints/
+artifacts/
+locks/
+datasets/
+distributed_training_requests/
+
+# Slurm
+slurm_log/
+slurm_tmp/
+
+# Nix
+result
+
+# Rust
+rust/vis/target/
+
+# Misc
+*.npy
+*.sif
+.Rhistory
