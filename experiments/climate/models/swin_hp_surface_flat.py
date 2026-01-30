@@ -34,9 +34,6 @@ from experiments.climate.climateset_data import ClimatesetDataSpec
 
 from lib.serialize_human import serialize_human
 
-INJECT_SAVE = None
-
-
 class Mlp(nn.Module):
     def __init__(
         self,
@@ -660,8 +657,9 @@ class PatchEmbed(nn.Module):
         return x
 
 
+
 @dataclass
-class SwinHPClimatesetConfig:
+class SwinHPSurfaceFlatConfig:
     base_pix: int = 12
     nside: int = 64
     patch_size: int = 16
@@ -692,9 +690,8 @@ class SwinHPClimatesetConfig:
     def serialize_human(self):
         return serialize_human(self.__dict__)  # dict(validation=self.validation)
 
-
-class SwinHPClimateset(nn.Module):
-    def __init__(self, config: SwinHPClimatesetConfig, data_spec: DataSpec, **kwargs):
+class SwinHPPanguPadSurfaceFlat(nn.Module):
+    def __init__(self, config: SwinHPSurfaceFlatConfig, data_spec: DataSpec, **kwargs):
         super().__init__()
         self.config = config
         self.data_spec = data_spec
@@ -750,7 +747,7 @@ class SwinHPClimateset(nn.Module):
                 norm_layer=config.norm_layer,
                 use_v2_norm_placement=config.use_v2_norm_placement,
                 use_checkpoint=config.use_checkpoint,
-            )
+            ) # = SwinTransformerLayers in certain depth
             self.layers.append(layer)
 
         self.norm = config.norm_layer(config.embed_dims[1])
@@ -782,6 +779,4 @@ class SwinHPClimateset(nn.Module):
 
     def forward(self, batch):
         x_surface = self._forward(batch["input"])
-        x_surface = x_surface.permute(0, 2, 1) # B, N_pix, C_surface
-        return dict(logits_output=x_surface) #TODO: Change key name appropriately
-
+        return dict(logits_surface=x_surface)
