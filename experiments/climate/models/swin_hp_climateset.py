@@ -29,7 +29,9 @@ from experiments.weather.models.hp_windowing import (
     window_reverse,
     get_nest_win_idcs,
 )
-from experiments.weather.data import DataSpecHP
+
+from experiments.climate.climateset_data import ClimatesetDataSpec
+
 from lib.serialize_human import serialize_human
 
 INJECT_SAVE = None
@@ -472,17 +474,17 @@ class PatchExpand(nn.Module):
 
 class FinalPatchExpand_Transpose(nn.Module):
     # Changed to include output data spec
-    def __init__(self, patch_size, dim, data_spec_hp: DataSpecHP, output_data_spec_hp: DataSpecHP = None):
+    def __init__(self, patch_size, dim, data_spec_hp: ClimatesetDataSpec): # TODO: Make sure it has same input and output data spec
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
         
-        if output_data_spec_hp is None:
-            output_data_spec_hp = data_spec_hp
+        # if output_data_spec_hp is None:
+        #     output_data_spec_hp = data_spec_hp
             
         self.conv_surface = nn.ConvTranspose1d(
             dim,
-            output_data_spec_hp.n_surface,
+            data_spec_hp.n_output_channels,
             kernel_size=patch_size,
             stride=patch_size,
         )
@@ -619,7 +621,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, config, data_spec: DataSpecHP):
+    def __init__(self, config, data_spec: ClimatesetDataSpec):
         super().__init__()
         # assert config.patch_size % 4 == 0, "required for valid nside in deeper layers"
 
@@ -629,7 +631,7 @@ class PatchEmbed(nn.Module):
         self.num_hp_patches = hp.nside2npix(data_spec.nside) // config.patch_size
 
         self.proj_surface = nn.Conv1d(
-            data_spec.n_surface,
+            data_spec.n_input_channels,
             config.embed_dims[0],
             kernel_size=config.patch_size,
             stride=config.patch_size,
@@ -642,6 +644,7 @@ class PatchEmbed(nn.Module):
         # )
 
     def forward(self, x):
+        #print("PatchEmbed input shape:", x.shape)
         B, C, N = x.shape
         assert N == hp.nside2npix(
             self.data_spec.nside
@@ -691,11 +694,10 @@ class SwinHPClimatesetConfig:
 
 
 class SwinHPClimateset(nn.Module):
-    def __init__(self, config: SwinHPClimatesetConfig, data_spec: DataSpec, output_data_spec: DataSpec = None, **kwargs):
+    def __init__(self, config: SwinHPClimatesetConfig, data_spec: DataSpec, **kwargs):
         super().__init__()
         self.config = config
         self.data_spec = data_spec
-        self.output_data_spec = output_data_spec if output_data_spec is not None else data_spec
         self.num_layers = len(config.depths)
 
         self.patch_embed = PatchEmbed(config, data_spec)
@@ -722,7 +724,6 @@ class SwinHPClimateset(nn.Module):
             patch_size=config.patch_size,
             dim=2 * config.embed_dims[-1],
             data_spec_hp=data_spec,
-            output_data_spec_hp=self.output_data_spec,
         )
 
         self.layers = nn.ModuleList()
@@ -780,97 +781,7 @@ class SwinHPClimateset(nn.Module):
         return x_surface
 
     def forward(self, batch):
-        x_surface = self._forward(batch["input_surface"])
-        return dict(logits_surface=x_surface)
+        x_surface = self._forward(batch["input"])
+        x_surface = x_surface.permute(0, 2, 1) # B, N_pix, C_surface
+        return dict(logits_output=x_surface) #TODO: Change key name appropriately
 
-
-class SwinHPPanguPadSurfaceOnly(nn.Module):
-    def __init__(self, config: SwinHPClimatesetConfig, data_spec: DataSpec, **kwargs):
-        super().__init__()
-        self.config = config
-        self.data_spec = data_spec
-        self.num_layers = len(config.depths)
-
-        self.patch_embed = PatchEmbed(config, data_spec)
-        num_hp_patches = self.patch_embed.num_hp_patches
-
-        self.input_resolutions = [
-            [1, num_hp_patches],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches],
-        ]
-
-        self.pos_drop = nn.Dropout(p=config.drop_rate)
-
-        dpr = [
-            x.item()
-            for x in torch.linspace(0, config.drop_path_rate, sum(config.depths))
-        ]
-
-        self.downsample = PatchMerging(config.embed_dims[0], dim_scale=2)
-        self.upsample = PatchExpand(config.embed_dims[1], dim_scale=2)
-
-        self.final_up = FinalPatchExpand_Transpose(
-            patch_size=config.patch_size,
-            dim=2 * config.embed_dims[-1],
-            data_spec_hp=data_spec,
-        )
-
-        self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers):
-            layer = BasicLayer(
-                dim=config.embed_dims[i_layer],
-                input_resolution=self.input_resolutions[i_layer],
-                depth=config.depths[i_layer],
-                num_heads=config.num_heads[i_layer],
-                window_size=config.window_size,
-                base_pix=config.base_pix,
-                shift_size=config.shift_size,
-                shift_strategy=config.shift_strategy,
-                rel_pos_bias=config.rel_pos_bias,
-                mlp_ratio=config.mlp_ratio,
-                qkv_bias=config.qkv_bias,
-                qk_scale=config.qk_scale,
-                use_cos_attn=config.use_cos_attn,
-                drop=config.drop_rate,
-                attn_drop=config.attn_drop_rate,
-                drop_path=dpr[
-                    sum(config.depths[:i_layer]) : sum(config.depths[: i_layer + 1])
-                ],
-                norm_layer=config.norm_layer,
-                use_v2_norm_placement=config.use_v2_norm_placement,
-                use_checkpoint=config.use_checkpoint,
-            ) # = SwinTransformerLayers in certain depth
-            self.layers.append(layer)
-
-        self.norm = config.norm_layer(config.embed_dims[1])
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-
-    def _forward(self, x_surface):
-        # x_surface: B, C_surface, N_pix
-        x = self.patch_embed(x_surface)   # B,1,N,C
-        x = self.layers[0](x)
-        skip = x
-        x = self.downsample(x)
-        x = self.layers[1](x)
-        x = self.layers[2](x)
-        x = self.norm(x)
-        x = self.upsample(x)
-        x = self.layers[3](x)
-        x = torch.concatenate([skip, x], dim=-1)
-        x_surface = self.final_up(x)
-        return x_surface
-
-    def forward(self, batch):
-        x_surface = self._forward(batch["input_surface"])
-        return dict(logits_surface=x_surface)

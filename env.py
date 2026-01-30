@@ -77,9 +77,12 @@ def get_env() -> ComputeEnvironment:
     """
     return ComputeEnvironment(
         paths=Paths(
-            checkpoints=Path("/proj/heal_pangu/eqp_climate/checkpoints"),
-            artifacts=Path("/proj/heal_pangu/eqp_climate/artifacts"),
-            datasets=Path("/proj/heal_pangu/datasets"), # points to dataset on cluster proj
+            checkpoints=Path("/proj/heal_pangu/users/x_tagty/climateset_checkpoints"),
+            artifacts=Path("/proj/heal_pangu/users/x_tagty/climateset_artifacts"),
+            datasets=Path("/proj/heal_pangu/users/x_tagty/climateset"), # points to dataset on cluster proj
+            # checkpoints=Path("/proj/heal_pangu/eqp_climate/checkpoints"),
+            # artifacts=Path("/proj/heal_pangu/eqp_climate/artifacts"),
+            # datasets=Path("/proj/heal_pangu/datasets"), # points to dataset on cluster proj
             locks=Path("./locks"),
             distributed_requests=Path("./distributed_requests"),
         ),
