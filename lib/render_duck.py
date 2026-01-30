@@ -347,6 +347,31 @@ def insert_model_with_model_id(train_run: TrainRun, model_id: int):
     return model_id
 
 
+def create_standalone_model(train_id: str, in_memory: bool = False) -> tuple[int, int]:
+    """
+    Create a standalone model and run for debug/testing purposes.
+
+    Args:
+        train_id: A string identifier for this model
+        in_memory: If True, use in-memory DB. If False, use file-based DB for export.
+
+    Returns:
+        Tuple of (model_id, run_id)
+    """
+    ensure_duck(None, in_memory=in_memory)
+
+    model_id = random_positive_i64()
+    run_id = random_positive_i64()
+
+    execute(
+        "INSERT INTO models (id, train_id, timestamp) VALUES (?, ?, now())",
+        (model_id, train_id),
+    )
+    insert_run(run_id, model_id)
+
+    return model_id, run_id
+
+
 def sql_create_table_train_steps():
     return f"""
     CREATE TABLE IF NOT EXISTS {TRAIN_STEPS_TABLE_NAME} (
