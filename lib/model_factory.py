@@ -54,7 +54,6 @@ class _ModelFactory:
         self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
         self.models[SwinHPPanguMaskConfig.__name__] = SwinHPPanguMask
         self.models[SwinHPPanguPadConfig.__name__] = SwinHPPanguPad
-        self.models[SwinHPClimatesetkConfig.__name__] = SwinHPClimateset # added
         self.models[SwinHPPanguIsolatitudeConfig.__name__] = SwinHPPanguIsolatitude
         self.models[SwinHPPanguIsolatitudeConvConfig.__name__] = (
             SwinHPPanguIsolatitudeConv
