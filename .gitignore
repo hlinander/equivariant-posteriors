@@ -37,3 +37,5 @@ central.db.wal
 # DuckDB files
 *.db
 *.db.wal
+experiments/climate/models/.ipynb_checkpoints/
+experiments/climate/notebooks/.ipynb_checkpoints/
