@@ -15,6 +15,7 @@ from lib.analytics_config import (
     CentralDuckLake,
 )
 from lib.compute_env_config import ComputeEnvironment, Paths
+from lib.slurm import SlurmConfig
 
 
 # Base directory for all local data
@@ -31,6 +32,16 @@ def get_env() -> ComputeEnvironment:
             artifacts=LOCAL_DIR / "artifacts",
             datasets=LOCAL_DIR / "datasets",
         ),
+    )
+
+
+def get_slurm_config() -> SlurmConfig:
+    """Configure SLURM job parameters for sweep submission."""
+    return SlurmConfig(
+        time="24:00:00",
+        mem="40G",
+        cpus_per_task=4,
+        gpus=1,
     )
 
 
