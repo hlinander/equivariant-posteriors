@@ -8,9 +8,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import create_metric
 from lib.ddp import ddp_setup
-from lib.ensemble import create_ensemble_config
-from lib.ensemble import request_ensemble, request_train_run
-from lib.ensemble import is_ensemble_serialized
+from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
 
 from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPadConfig
@@ -80,10 +78,10 @@ def create_config(ensemble_id, epoch=200, dataset_years=10, drop_rate=0):
 
 
 def create_configs():
-    configs = [
-        lambda: create_config(0, dataset_years=10) for drop_rate in [0, 0.05, 0.1, 0.2]
-    ]
-    return configs
+    return get_config_grid(
+        create_config,
+        dict(ensemble_id=[0], dataset_years=[10], drop_rate=[0, 0.05, 0.1, 0.2]),
+    )
 
 
 def run(config):
@@ -95,10 +93,8 @@ def run(config):
 
     torch._C._cuda_attach_out_of_memory_observer(oom_observer)
 
-    request_train_run(config)
     distributed_train([config])
 
 
 if __name__ == "__main__":
-    for config in create_configs():
-        run(config())
+    distributed_train(create_configs())
