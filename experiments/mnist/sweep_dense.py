@@ -46,20 +46,24 @@ def create_config(lr, width):
     train_eval = create_classification_metrics(visualize_mnist, 10)
     return TrainRun(
         project="mnist",
-        compute_config=ComputeConfig(distributed=False, num_workers=0),
+        compute_config=ComputeConfig(),
         train_config=train_config,
         train_eval=train_eval,
         epochs=20,
         save_nth_epoch=10,
         validate_nth_epoch=5,
+        visualize_terminal=False,
     )
 
 
 def create_configs():
-    return get_config_grid(create_config, dict(
-        lr=[1e-2, 1e-3, 1e-4],
-        width=[32, 64, 128],
-    ))
+    return get_config_grid(
+        create_config,
+        dict(
+            lr=[1e-2, 1e-3, 1e-4],
+            width=[32, 64, 128],
+        ),
+    )
 
 
 def run(config):
