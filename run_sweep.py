@@ -10,6 +10,7 @@ Usage:
     python run_sweep.py --run-local experiments/some_sweep.py  # run all locally
     python run_sweep.py --worker experiments/some_sweep.py 3   # run config 3
 """
+
 import argparse
 import importlib.util
 import os
@@ -58,8 +59,10 @@ def generate_batch_script(
     lines.append(f"#SBATCH --job-name={sweep_name}")
     lines.append(f"#SBATCH --array={array_spec}")
     lines.append(f"#SBATCH --time={slurm.time}")
-    lines.append(f"#SBATCH --mem={slurm.mem}")
-    lines.append(f"#SBATCH --cpus-per-task={slurm.cpus_per_task}")
+    if slurm.mem:
+        lines.append(f"#SBATCH --mem={slurm.mem}")
+    if slurm.cpus_per_task:
+        lines.append(f"#SBATCH --cpus-per-task={slurm.cpus_per_task}")
     if slurm.gpus:
         lines.append(f"#SBATCH --gpus={slurm.gpus}")
     if slurm.partition:
@@ -154,16 +157,34 @@ def cmd_run_local(sweep_path: str):
 def main():
     parser = argparse.ArgumentParser(
         description="SLURM sweep runner",
-        usage=textwrap.dedent("""\
+        usage=textwrap.dedent(
+            """\
             %(prog)s [options] sweep_file.py
-            %(prog)s --worker sweep_file.py INDEX"""),
+            %(prog)s --worker sweep_file.py INDEX"""
+        ),
     )
-    parser.add_argument("--worker", action="store_true", help="Worker mode: run a single config by index")
-    parser.add_argument("--dry-run", action="store_true", help="Print the generated batch script without submitting")
-    parser.add_argument("--run-local", action="store_true", help="Run all configs sequentially without SLURM")
-    parser.add_argument("--max-concurrent", type=int, default=None, help="Limit SLURM array concurrency")
+    parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="Worker mode: run a single config by index",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the generated batch script without submitting",
+    )
+    parser.add_argument(
+        "--run-local",
+        action="store_true",
+        help="Run all configs sequentially without SLURM",
+    )
+    parser.add_argument(
+        "--max-concurrent", type=int, default=None, help="Limit SLURM array concurrency"
+    )
     parser.add_argument("sweep_file", help="Path to sweep file")
-    parser.add_argument("task_index", nargs="?", type=int, help="Task index (worker mode only)")
+    parser.add_argument(
+        "task_index", nargs="?", type=int, help="Task index (worker mode only)"
+    )
 
     args = parser.parse_args()
 
