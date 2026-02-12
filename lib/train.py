@@ -1,3 +1,5 @@
+import os
+import sys
 import traceback
 from pathlib import Path
 import torch
@@ -256,7 +258,7 @@ def train(
                     train_epoch_state.batch,
                     duck_time,
                 )
-                if train_run.visualize_terminal:
+                if train_run.visualize_terminal and sys.stdout.isatty():
                     train_epoch_state.timing_metric.start("visualize")
                     visualizers[train_epoch_state.next_visualizer](
                         train_epoch_state,
