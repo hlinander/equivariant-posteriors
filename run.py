@@ -97,13 +97,8 @@ def main():
         "script",
         help="Python script to run",
     )
-    parser.add_argument(
-        "script_args",
-        nargs="*",
-        help="Arguments to pass to the script",
-    )
 
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
 
     # Resolve auto mode
     mode = args.mode if args.mode != "auto" else detect_default_mode()
@@ -124,7 +119,7 @@ def main():
     env.update(config.env_vars)
 
     # Build command
-    cmd = config.runner + [args.script] + args.script_args
+    cmd = config.runner + [args.script] + remaining
 
     # Print info
     print(f"[run] Mode: {mode}, Device: {config.device}")

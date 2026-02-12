@@ -1,4 +1,5 @@
 import os
+import pprint
 import time
 from typing import Callable, List, Tuple
 from dataclasses import dataclass
@@ -125,6 +126,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
             print(f"Checking if {hash} has already been trained...")
             if stable_hash_str(member_config) in trained_members:
                 print(f"{hash} has already been trained. Continuing.")
+                pprint.pprint(member_config)
                 continue
 
             print(f"Trying to aquire distributed lock for train run {hash}")
@@ -161,6 +163,7 @@ def create_ensemble(ensemble_config: EnsembleConfig, device_id):
                     print(
                         f"Model for {hash} successfully deserialized, using its state dict."
                     )
+                    pprint.pprint(member_config)
                     model = deserialized_model.model
             finally:
                 print("Releasing distributed lock explicitly.")
