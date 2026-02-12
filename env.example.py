@@ -39,8 +39,6 @@ def get_slurm_config() -> SlurmConfig:
     """Configure SLURM job parameters for sweep submission."""
     return SlurmConfig(
         time="24:00:00",
-        mem="40G",
-        cpus_per_task=4,
         gpus=1,
     )
 

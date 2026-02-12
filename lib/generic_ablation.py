@@ -1,16 +1,19 @@
 import itertools
 
-from lib.train_distributed import request_train_run
 
+def get_config_grid(create_config, values_dict):
+    """Creates a list of config factories for all combinations of values.
 
-def generic_ablation(create_config, values_dict):
+    Returns lazy callables compatible with run_slurm_sweep.py.
+
+    >>> get_config_grid(create_config, dict(a=[1, 2], b=['x', 'y']))
+    [lambda: create_config(a=1, b='x'), lambda: create_config(a=1, b='y'), ...]
+    """
     combinations = itertools.product(*values_dict.values())
     kwarg_names = list(values_dict.keys())
     configs = []
     for values in combinations:
         kwargs = {name: val for name, val in zip(kwarg_names, values)}
-        train_run = create_config(**kwargs)
-        configs.append(train_run)
-        request_train_run(train_run)
-
+        config = lambda kwargs=kwargs: create_config(**kwargs)
+        configs.append(config)
     return configs

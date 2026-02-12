@@ -1,7 +1,7 @@
 import os
 import filelock
 import time
-from typing import List
+from typing import Callable, List, Union
 from filelock import FileLock
 from subprocess import Popen
 
@@ -12,7 +12,7 @@ from lib.train import do_training
 from lib.stable_hash import stable_hash_small
 from lib.paths import get_checkpoint_path, get_lock_path
 
-from lib.train_distributed import fetch_requested_train_run, report_done
+from lib.train_distributed import fetch_requested_train_run, report_done, request_train_run
 from lib.serialization import (
     get_serialization_epoch,
     DeserializeConfig,
@@ -54,9 +54,26 @@ def do_train_run(distributed_train_run, device_id):
         do_training(distributed_train_run.train_run, state, device_id)
 
 
-def distributed_train(requested_configs: List[TrainRun] = None):
+def _materialize_configs(configs) -> List[TrainRun]:
+    """Materialize config factories into TrainRun objects if needed."""
+    if configs is None:
+        return None
+    materialized = []
+    for c in configs:
+        if callable(c) and not isinstance(c, TrainRun):
+            materialized.append(c())
+        else:
+            materialized.append(c)
+    return materialized
+
+
+def distributed_train(requested_configs: Union[List[TrainRun], List[Callable]] = None):
     device_id = ddp_setup()
     print(f"[Device] {device_id}")
+    requested_configs = _materialize_configs(requested_configs)
+    if requested_configs is not None:
+        for config in requested_configs:
+            request_train_run(config)
     last_aquired_training = time.time()
     while True:
         print("Trying to fetch train run...")
@@ -90,6 +107,7 @@ def distributed_train(requested_configs: List[TrainRun] = None):
             print("10 minutes since last aquired training, stopping...")
             break
         time.sleep(0.01)
+    return requested_configs
 
 
 if __name__ == "__main__":

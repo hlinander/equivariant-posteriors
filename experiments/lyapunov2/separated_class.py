@@ -8,7 +8,7 @@ from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
-from lib.generic_ablation import generic_ablation
+from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
 
 from lib.classification_metrics import create_classification_metrics
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     data_factory.get_factory()
     data_factory.register_dataset(DataSeparatedClassConfig, DataSeparatedClass)
 
-    configs = generic_ablation(
+    configs = distributed_train(get_config_grid(
         create_config,
         dict(
             layers=[2, 5, 10, 15],
@@ -137,9 +137,7 @@ if __name__ == "__main__":
                 lambda layers: MLPConfig(widths=[50] * layers),
             ],
         ),
-    )
-    # ensemble_config = create_ensemble_config(create_config, 1)
-    distributed_train(configs)
+    ))
     # ensemble = create_ensemble(ensemble_config, device_id)
 
     device_id = ddp_setup()

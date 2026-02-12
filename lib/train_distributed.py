@@ -53,16 +53,17 @@ def get_train_run_from_hash(config_hash):
 def request_train_run(train_run: TrainRun):
     try:
         with FileLock(get_distributed_training_request_lock_path(train_run), 1):
-            with open(
-                get_distributed_training_request_path(train_run), "wb"
-            ) as request_file:
+            request_path = get_distributed_training_request_path(train_run)
+            tmp_path = request_path.with_suffix(".dill.tmp")
+            with open(tmp_path, "wb") as request_file:
                 dill.dump(train_run, request_file)
+            os.replace(tmp_path, request_path)
             print(
                 f"Wrote request file {get_distributed_training_request_lock_path(train_run)}"
             )
     except Timeout:
         print(
-            "[Request train] This config is already locked, maybe already training elsewere?"
+            "[Request train] This config is already locked, maybe already training elsewhere?"
         )
 
 

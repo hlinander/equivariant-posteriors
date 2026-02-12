@@ -13,13 +13,16 @@ Usage:
 
 import argparse
 import importlib.util
-import os
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
-from lib.slurm import SlurmConfig
+from lib.slurm import (
+    SlurmConfig,
+    generate_batch_script,
+    submit_batch_script,
+    load_slurm_config_from_env,
+)
 
 
 def load_sweep_module(sweep_path: str):
@@ -30,67 +33,11 @@ def load_sweep_module(sweep_path: str):
     return module
 
 
-def load_slurm_config() -> SlurmConfig:
-    """Load SlurmConfig from env.py, falling back to defaults."""
-    try:
-        import env
-
-        if hasattr(env, "get_slurm_config"):
-            return env.get_slurm_config()
-    except ImportError:
-        pass
-    return SlurmConfig()
-
-
-def generate_batch_script(
-    sweep_path: str,
-    num_configs: int,
-    slurm: SlurmConfig,
-    max_concurrent: int | None = None,
-) -> str:
-    """Generate a SLURM batch script string."""
-    sweep_name = Path(sweep_path).stem
-
-    array_spec = f"0-{num_configs - 1}"
-    if max_concurrent is not None:
-        array_spec += f"%{max_concurrent}"
-
-    lines = ["#!/bin/bash"]
-    lines.append(f"#SBATCH --job-name={sweep_name}")
-    lines.append(f"#SBATCH --array={array_spec}")
-    lines.append(f"#SBATCH --time={slurm.time}")
-    if slurm.mem:
-        lines.append(f"#SBATCH --mem={slurm.mem}")
-    if slurm.cpus_per_task:
-        lines.append(f"#SBATCH --cpus-per-task={slurm.cpus_per_task}")
-    if slurm.gpus:
-        lines.append(f"#SBATCH --gpus={slurm.gpus}")
-    if slurm.partition:
-        lines.append(f"#SBATCH --partition={slurm.partition}")
-    if slurm.account:
-        lines.append(f"#SBATCH --account={slurm.account}")
-    lines.append(f"#SBATCH --output={slurm.output}")
-    lines.append(f"#SBATCH --error={slurm.error}")
-    for extra in slurm.extra_sbatch:
-        lines.append(f"#SBATCH {extra}")
-
-    lines.append("")
-
-    for mod in slurm.modules:
-        lines.append(f"module load {mod}")
-    if slurm.modules:
-        lines.append("")
-
-    for cmd in slurm.setup_commands:
-        lines.append(cmd)
-    if slurm.setup_commands:
-        lines.append("")
-
-    lines.append(
-        f"uv run python run.py run_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID"
-    )
-
-    return "\n".join(lines) + "\n"
+def load_slurm_config(sweep_module) -> SlurmConfig:
+    """Load SlurmConfig from sweep module, falling back to env.py, then defaults."""
+    if hasattr(sweep_module, "get_slurm_config"):
+        return sweep_module.get_slurm_config()
+    return load_slurm_config_from_env()
 
 
 def cmd_submit(sweep_path: str, dry_run: bool, max_concurrent: int | None):
@@ -100,31 +47,20 @@ def cmd_submit(sweep_path: str, dry_run: bool, max_concurrent: int | None):
     num_configs = len(configs)
     print(f"[sweep] Found {num_configs} configs in {sweep_path}")
 
-    slurm = load_slurm_config()
+    slurm = load_slurm_config(module)
 
-    script = generate_batch_script(sweep_path, num_configs, slurm, max_concurrent)
+    array_spec = f"0-{num_configs - 1}"
+    if max_concurrent is not None:
+        array_spec += f"%{max_concurrent}"
 
-    if dry_run:
-        print("[sweep] Dry run — generated batch script:")
-        print()
-        print(script)
-        return
-
-    # Ensure log directory exists
-    log_dir = Path(slurm.output).parent
-    log_dir.mkdir(parents=True, exist_ok=True)
-    err_dir = Path(slurm.error).parent
-    err_dir.mkdir(parents=True, exist_ok=True)
-
-    result = subprocess.run(
-        ["sbatch"],
-        input=script,
-        text=True,
-        capture_output=True,
+    script = generate_batch_script(
+        job_name=Path(sweep_path).stem,
+        slurm=slurm,
+        run_command=f"uv run python run.py run_slurm_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID",
+        array_spec=array_spec,
     )
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    sys.exit(result.returncode)
+
+    submit_batch_script(script, slurm, dry_run)
 
 
 def cmd_worker(sweep_path: str, task_index: int):

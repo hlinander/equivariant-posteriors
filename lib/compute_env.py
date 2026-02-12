@@ -25,6 +25,7 @@ from lib.analytics_config import (
     StagingFilesystem,
     CentralDuckDB,
 )
+from lib.slurm import SlurmConfig
 
 # Base directory for all local data
 LOCAL_DIR = Path(".local")
@@ -40,6 +41,14 @@ def get_env():
             artifacts=LOCAL_DIR / "artifacts",
             datasets=LOCAL_DIR / "datasets",
         ),
+    )
+
+
+def get_slurm_config():
+    """Configure SLURM job parameters for sweep submission."""
+    return SlurmConfig(
+        time="24:00:00",
+        gpus=1,
     )
 
 
@@ -86,9 +95,3 @@ def env():
 
 
 env()
-
-# def __init__(self, *args, **kwargs):
-#     super().__init__(*args, **kwargs)
-
-#     for key in self.__dict__.keys():
-#         if self.

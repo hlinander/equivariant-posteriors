@@ -10,7 +10,7 @@ from lib.classification_metrics import create_classification_metrics
 from lib.data_registry import DataSpiralsConfig
 from lib.datasets.spiral_visualization import visualize_spiral
 from lib.models.mlp import MLPClassConfig
-from lib.generic_ablation import generic_ablation
+from lib.generic_ablation import get_config_grid
 
 from lib.distributed_trainer import distributed_train
 from lib.ddp import ddp_setup
@@ -55,11 +55,10 @@ def create_config(mlp_dim, ensemble_id):
 
 
 if __name__ == "__main__":
-    configs = generic_ablation(
+    configs = distributed_train(get_config_grid(
         create_config,
         dict(mlp_dim=[10], ensemble_id=list(range(1))),
-    )
-    distributed_train(configs)
+    ))
 
     device = ddp_setup()
     dsm = deserialize_model(DeserializeConfig(train_run=configs[0], device_id=device))

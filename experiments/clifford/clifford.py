@@ -27,7 +27,7 @@ from lib.files import prepare_results
 # from lib.render_psql import add_artifact, add_parameter, has_artifact
 from lib.render_duck import insert_artifact, insert_model_parameter
 from lib.serialization import serialize_human
-from lib.generic_ablation import generic_ablation
+from lib.generic_ablation import get_config_grid
 
 # from lib.data_factory import register_dataset, get_factory
 import lib.data_factory as data_factory
@@ -294,20 +294,14 @@ if __name__ == "__main__":
 
     mf = model_factory.get_factory()
     mf.register(CliffordModelConfig, CliffordModel)
-    configs = generic_ablation(
+    configs = distributed_train(get_config_grid(
         create_config,
         dict(
             clifford_depth=[1, 2],
             clifford_width=[200, 100, 60],
             ensemble_id=[0],
         ),
-        # dict(
-        #     clifford_depth=[1, 2, 3],
-        #     clifford_width=[32, 64, 128, 256, 512],
-        #     ensemble_id=[0],
-        # ),
-    )
-    distributed_train(configs)
+    ))
     # ensemble_config = create_ensemble_config(create_config, 1)
     # request_ensemble(ensemble_config)
     # distributed_train(ensemble_config.members)

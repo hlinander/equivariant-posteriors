@@ -22,6 +22,36 @@ uv run run.py --mode cpu experiments/mnist/dense.py
 
 On first run, `env.py` is auto-created with defaults. All data is stored under `.local/` (add to `.gitignore`).
 
+### SLURM
+
+Submit a single experiment to SLURM:
+
+```bash
+python run_slurm.py experiments/weather/train.py
+python run_slurm.py --dry-run experiments/weather/train.py  # print script only
+```
+
+Submit a sweep (array job) to SLURM:
+
+```bash
+python run_slurm_sweep.py experiments/weather/sweep.py
+python run_slurm_sweep.py --dry-run experiments/weather/sweep.py
+python run_slurm_sweep.py --max-concurrent 4 experiments/weather/sweep.py
+python run_slurm_sweep.py --run-local experiments/weather/sweep.py  # test locally
+```
+
+A sweep file defines `create_configs()` returning a list of callables and `run(config)`:
+
+```python
+def create_configs():
+    return [lambda lr=lr: {"lr": lr} for lr in [1e-2, 1e-3, 1e-4]]
+
+def run(config):
+    print(f"Training with {config}")
+```
+
+SLURM parameters (time, GPUs, partition, etc.) are configured via `get_slurm_config()` in `env.py`. Sweep files can override this by defining their own `get_slurm_config()`.
+
 ### Local Ingestion
 
 After training, ingest metrics into the central database for querying:
