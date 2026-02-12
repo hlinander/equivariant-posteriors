@@ -87,7 +87,7 @@ def generate_batch_script(
         lines.append("")
 
     lines.append(
-        f"uv run python run_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID"
+        f"uv run python run.py run_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID"
     )
 
     return "\n".join(lines) + "\n"
