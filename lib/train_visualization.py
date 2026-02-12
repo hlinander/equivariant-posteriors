@@ -45,12 +45,11 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         plt.subplot(1, 1).subplot(idx + 1, 1)
         plt.title(common_metrics[idx])
         plt.xlabel("batches")
-        if len(batches) > 0:
+        if len(batches) > 1:
             x = [x for x, _ in batches]
             y = [y for x, y in batches]
-            if len(x) > 0:
-                plt.yscale("log")
-                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
+            plt.yscale("log")
+            plt.plot(x, y, label=f"Train {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
