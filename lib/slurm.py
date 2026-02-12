@@ -5,9 +5,9 @@ from typing import Optional
 
 @dataclass
 class SlurmConfig:
-    time: str = "24:00:00"
-    mem: str = "40G"
-    cpus_per_task: int = 4
+    time: str = "2-00:00:00"
+    mem: Optional[str] = None
+    cpus_per_task: Optional[int] = None
     gpus: int = 1
     partition: Optional[str] = None
     account: Optional[str] = None
