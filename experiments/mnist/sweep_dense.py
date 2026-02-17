@@ -41,7 +41,7 @@ def create_config(lr, width):
         ),
         batch_size=256,
         ensemble_id=0,
-        _version=1,
+        _version=2,
     )
     train_eval = create_classification_metrics(visualize_mnist, 10)
     return TrainRun(
@@ -49,7 +49,7 @@ def create_config(lr, width):
         compute_config=ComputeConfig(),
         train_config=train_config,
         train_eval=train_eval,
-        epochs=20,
+        epochs=100,
         save_nth_epoch=10,
         validate_nth_epoch=5,
         visualize_terminal=False,
