@@ -28,6 +28,7 @@ from lib.serialization import serialize
 
 from lib.train_visualization import visualize_progress_batches
 
+from lib.export import export_all
 from lib.paths import get_lock_path
 from lib.files import prepare_results
 import lib.ddp as ddp
@@ -447,6 +448,13 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
 
     if ddp.get_rank() > 0:
         return
+
+    # Final export to ensure all metrics are flushed
+    try:
+        print("Final analytics export...")
+        export_all(train_run)
+    except Exception as e:
+        logging.error(f"Final export failed: {e}")
 
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
