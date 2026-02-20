@@ -247,7 +247,9 @@ def train(
         try:
             now = time.time()
             if now > train_epoch_state.next_visualization:
-                train_epoch_state.next_visualization = time.time() + 10
+                train_epoch_state.next_visualization = (
+                    time.time() + train_run.visualize_interval_s
+                )
                 train_epoch_state.timing_metric.start("duck")
                 last_sync_result = True, ""
 
@@ -421,15 +423,21 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
     if ddp.get_rank() == 0:
         from lib.export import start_periodic_export
         from lib.analytics_config import analytics_config
+
         config = analytics_config()
-        print(f"Starting periodic export to {config.staging.type} staging (interval: {config.export_interval_seconds}s)...")
+        print(
+            f"Starting periodic export to {config.staging.type} staging (interval: {config.export_interval_seconds}s)..."
+        )
         export_thread = start_periodic_export(train_run)
         serialize(serialize_config)
 
     # Start GPU monitoring (if available)
     if ddp.get_rank() == 0:
         from lib.gpu_monitor import GPUMonitor
-        state.gpu_monitor = GPUMonitor(state.model_id, train_run.run_id, train_run.gpu_monitor)
+
+        state.gpu_monitor = GPUMonitor(
+            state.model_id, train_run.run_id, train_run.gpu_monitor
+        )
         state.gpu_monitor.start()
 
     print("Run epochs...")

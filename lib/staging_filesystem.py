@@ -9,6 +9,7 @@ import time
 import shutil
 import duckdb
 from lib.train_dataclasses import TrainRun
+from lib.log import log
 
 
 def flush_table_to_filesystem(
@@ -73,7 +74,7 @@ def flush_table_to_filesystem(
     ).fetchall()
 
     if not count_result or count_result[0][0] == 0:
-        print(f"[export] No new data to sync for {table_name}")
+        log("export", f"No new data to sync for {table_name}")
         return None
 
     row_count = count_result[0][0]
@@ -93,7 +94,7 @@ def flush_table_to_filesystem(
 
     file_path = table_dir / filename
 
-    print(f"[export] Exporting {row_count} rows from {table_name} to {file_path}")
+    log("export", f"Exporting {row_count} rows from {table_name} to {file_path}")
 
     # Export to filesystem
     cursor.execute(
@@ -117,7 +118,7 @@ def flush_table_to_filesystem(
         (table_name, current_time),
     )
 
-    print(f"[export] Successfully exported {row_count} rows to {file_path}")
+    log("export", f"Successfully exported {row_count} rows to {file_path}")
     return file_path
 
 
@@ -208,16 +209,16 @@ def export_periodic_filesystem(
     import threading
     import time
     import lib.render_duck as duck
+    from lib.log import log_next_in
 
     def export_loop():
         # Create a cursor for this thread (thread-safe per DuckDB docs)
         # Note: We access duck.CONN dynamically (not imported) to get the current value
         if duck.CONN is None:
-            print("[export] Error: DuckDB connection not initialized")
+            log("export", "Error: DuckDB connection not initialized")
             return
 
         cursor = duck.CONN.cursor()
-        from lib.log import log, log_next_in
 
         while True:
             try:
@@ -226,8 +227,6 @@ def export_periodic_filesystem(
                     log_next_in("export", f"Exported {len(paths)} files to filesystem", interval_seconds)
             except Exception as e:
                 log("export", f"Error during export: {e}")
-                import traceback
-                traceback.print_exc()
 
             time.sleep(interval_seconds)
 

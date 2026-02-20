@@ -17,6 +17,7 @@ from lib.ddp import get_rank
 from lib.stable_hash import json_dumps_dataclass_str
 import shutil
 import lib.render_duck as duck
+from lib.log import log
 
 # Re-export for backward compatibility
 from lib.serialize_human import serialize_human
@@ -70,8 +71,9 @@ def serialize(config: SerializeConfig):
     if (not keep_checkpoint_condition) and not_serialize_condition:
         # Save if this is the last epoch regardless
         if train_epoch_state.epoch != train_run.epochs:
-            print(
-                f"Not serializing....{train_epoch_state.epoch},{train_run.epochs},{train_run.save_nth_epoch},{not_serialize_condition}"
+            log(
+                "serialize",
+                f"Not serializing....{train_epoch_state.epoch},{train_run.epochs},{train_run.save_nth_epoch},{not_serialize_condition}",
             )
             return
 
@@ -119,7 +121,7 @@ def serialize(config: SerializeConfig):
         train_epoch_state.batch,
         full_checkpoint_path_str,
     )
-    print("Serialized at ", checkpoint_path)
+    log("serialize", f"Serialized at {checkpoint_path}")
 
 
 def get_train_run_status(train_run: TrainRun):
@@ -145,14 +147,25 @@ def is_serialized(train_run: TrainRun):
     return checkpoint_path.is_file()
 
 
-def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
-    train_config = config.train_run.train_config
+def instantiate_model(train_config: TrainConfig):
     data_spec = (
         data_factory.get_factory()
         .get_class(train_config.train_data_config)
         .data_spec(train_config.train_data_config)
     )
     model = model_factory.get_factory().create(train_config.model_config, data_spec)
+    return model
+
+
+def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
+    train_config = config.train_run.train_config
+    # data_spec = (
+    #     data_factory.get_factory()
+    #     .get_class(train_config.train_data_config)
+    #     .data_spec(train_config.train_data_config)
+    # )
+    # model = model_factory.get_factory().create(train_config.model_config, data_spec)
+    model = instantiate_model(config.train_run.train_config)
     model = model.to(torch.device(config.device_id))
 
     if config.train_run.compute_config.distributed:

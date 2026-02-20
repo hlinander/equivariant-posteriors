@@ -172,6 +172,7 @@ class ComputeConfig:
 @dataclass
 class GPUMonitorConfig:
     """Configuration for GPU monitoring during training."""
+
     enabled: bool = True
     sample_interval: float = 1.0  # How often to sample GPU stats (seconds)
     record_interval: float = 10.0  # How often to record metrics (seconds)
@@ -207,6 +208,7 @@ class TrainRun:
     keep_epoch_checkpoints: bool = False
     keep_nth_epoch_checkpoints: int = 1
     visualize_terminal: bool = True
+    visualize_interval_s: int = 10
     gpu_monitor: GPUMonitorConfig = field(default_factory=GPUMonitorConfig)
     notes: object = None
     argv: str = " ".join(sys.argv)
@@ -232,6 +234,7 @@ class TrainRun:
             epochs=self.epochs,
             save_nth_epoch=self.save_nth_epoch,
             visualize_terminal=self.visualize_terminal,
+            visualize_interval_s=self.visualize_interval_s,
             gpu_monitor=self.gpu_monitor.serialize_human(),
             notes=self.notes,
             argv=self.argv,

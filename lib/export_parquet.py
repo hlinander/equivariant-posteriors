@@ -7,6 +7,7 @@ import time
 import duckdb
 from lib.train_dataclasses import TrainRun
 from lib.compute_env import env
+from lib.log import log
 import lib.render_duck as duck
 from lib.render_duck import (
     MODEL_PARAMETER,
@@ -98,7 +99,7 @@ def flush_table_to_s3(
     ).fetchall()
 
     if not count_result or count_result[0][0] == 0:
-        print(f"[export] No new data to sync for {table_name}")
+        log("export", f"No new data to sync for {table_name}")
         return None
 
     row_count = count_result[0][0]
@@ -114,7 +115,7 @@ def flush_table_to_s3(
         filename = f"{timestamp_str}.parquet"
     s3_path = f"s3://{s3_bucket}/{s3_prefix}/{table_name}/{filename}"
 
-    print(f"[export] Exporting {row_count} rows from {table_name} to {s3_path}")
+    log("export", f"Exporting {row_count} rows from {table_name} to {s3_path}")
 
     # Export to S3
     cursor.execute(
@@ -138,7 +139,7 @@ def flush_table_to_s3(
         (table_name, current_time),
     )
 
-    print(f"[export] Successfully exported {row_count} rows to {s3_path}")
+    log("export", f"Successfully exported {row_count} rows to {s3_path}")
     return s3_path
 
 
@@ -281,11 +282,11 @@ def export_periodic(
         # Connection objects are NOT thread-safe, but cursors are
         # Note: We access duck.CONN dynamically (not imported) to get the current value
         if duck.CONN is None:
-            print("[export] Error: DuckDB connection not initialized")
+            log("export", "Error: DuckDB connection not initialized")
             return
 
         cursor = duck.CONN.cursor()
-        from lib.log import log, log_next_in
+        from lib.log import log_next_in
 
         while True:
             try:
@@ -294,8 +295,6 @@ def export_periodic(
                     log_next_in("export", f"Exported {len(paths)} files to S3", interval_seconds)
             except Exception as e:
                 log("export", f"Error during export: {e}")
-                import traceback
-                traceback.print_exc()
 
             time.sleep(interval_seconds)
 
