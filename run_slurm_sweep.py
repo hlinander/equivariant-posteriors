@@ -81,7 +81,7 @@ def cmd_worker(sweep_path: str, task_index: int):
 
 def cmd_run_local(sweep_path: str):
     """Run all configs sequentially without SLURM."""
-    os.environ["EP_DEBUG"] = "1"
+    # os.environ["EP_DEBUG"] = "1"
     module = load_sweep_module(sweep_path)
     configs = module.create_configs()
     print(f"[sweep] Running {len(configs)} configs locally")

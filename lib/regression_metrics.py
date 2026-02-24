@@ -18,25 +18,5 @@ def create_regression_metrics(loss, data_visualizer):
     return TrainEval(
         train_metrics=create_regression_metric_list(loss),
         validation_metrics=create_regression_metric_list(loss),
-        # train_metrics=[
-        #     lambda: Metric(
-        #         tm.functional.accuracy,
-        #         metric_kwargs=dict(task="multiclass", num_classes=n_classes),
-        #         # metric_kwargs=dict(num_classes=n_classes),
-        #     ),
-        #     lambda: Metric(loss, raw_output=True),
-        #     lambda: Metric(calibration_error, metric_kwargs=dict(n_classes=n_classes)),
-        #     # lambda: Metric(calibration_error),
-        # ],
-        # validation_metrics=[
-        #     lambda: Metric(
-        #         tm.functional.accuracy,
-        #         metric_kwargs=dict(task="multiclass", num_classes=n_classes),
-        #         # metric_kwargs=dict(num_classes=n_classes),
-        #     ),
-        #     lambda: Metric(calibration_error, metric_kwargs=dict(n_classes=n_classes)),
-        #     # lambda: Metric(calibration_error),
-        #     lambda: Metric(loss, raw_output=True),
-        # ],
         data_visualizer=data_visualizer,
     )
