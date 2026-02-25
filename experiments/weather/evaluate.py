@@ -117,7 +117,7 @@ if __name__ == "__main__":
     insert_model_with_model_id(train_run, deser_model.model_id)
 
     result_path = prepare_results(
-        f"{train_run.serialize_human()["run_id"]}",
+        f'{train_run.serialize_human()["run_id"]}',
         train_run,
     )
 
