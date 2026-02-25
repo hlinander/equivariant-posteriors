@@ -61,17 +61,10 @@ from experiments.weather.metrics import (
 )
 
 
-if __name__ == "__main__":
+def evaluate_weather(create_config, epoch, lead_time_days):
     device_id = ddp_setup()
-
-    module_name = Path(sys.argv[1]).stem
-    spec = importlib.util.spec_from_file_location(module_name, sys.argv[1])
-    config_file = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config_file)
-    train_run = config_file.create_config(0, 10)
-
-    lead_time_days = int(os.environ.get("LEADTIME", "1"))
     print(f"Lead time {lead_time_days}d")
+    train_run = create_config(0, 10)
 
     ds_train = DataHP(train_run.train_config.train_data_config)
     ds_rmse_config = (
@@ -98,8 +91,6 @@ if __name__ == "__main__":
         drop_last=False,
     )
     era5_meta = MeteorologicalData()
-
-    epoch = int(sys.argv[2])
 
     print(f"[eval] Epoch {epoch}")
     deser_config = DeserializeConfig(
@@ -255,3 +246,20 @@ if __name__ == "__main__":
         print("[eval] No new metrics to export")
 
     print("[eval] Evaluation complete!")
+
+
+def load_create_config(module_file_path):
+    module_name = Path(module_file_path).stem
+    spec = importlib.util.spec_from_file_location(module_name, module_file_path)
+    config_file = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_file)
+    return config_file.create_config
+
+
+if __name__ == "__main__":
+    device_id = ddp_setup()
+
+    create_config = load_create_config(sys.argv[1])
+    epoch = int(sys.argv[2])
+    lead_time_days = int(os.environ.get("LEADTIME", "1"))
+    evaluate_weather(create_config, epoch, lead_time_days)
