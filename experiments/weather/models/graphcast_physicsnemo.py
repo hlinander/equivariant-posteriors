@@ -1,21 +1,29 @@
 import sys
 import types
 
-# GraphCast's processor imports transformer_engine unconditionally, but only
-# the GraphTransformer processor (not the default MessagePassing) uses it.
-# Provide a stub so the import succeeds without CUDA. Any actual usage
-# (e.g. te.pytorch.TransformerLayer(...)) will raise an error.
-if "transformer_engine" not in sys.modules:
-    _te = types.ModuleType("transformer_engine")
-    _te.pytorch = types.ModuleType("transformer_engine.pytorch")
-    sys.modules["transformer_engine"] = _te
-    sys.modules["transformer_engine.pytorch"] = _te.pytorch
-
 import torch
 from dataclasses import dataclass
 
 from lib.serialize_human import serialize_human
-from physicsnemo.models.graphcast import GraphCastNet
+
+# graph_cast_processor.py does `import transformer_engine as te` at module level,
+# but only the GraphTransformer processor actually uses it. The rest of physicsnemo
+# handles missing transformer_engine via try/except. We temporarily inject a stub
+# for the import, then remove it so the try/except fallbacks elsewhere work correctly.
+_te_was_absent = "transformer_engine" not in sys.modules
+if _te_was_absent:
+    _te = types.ModuleType("transformer_engine")
+    _te_pt = types.ModuleType("transformer_engine.pytorch")
+    _te_pt.LayerNorm = torch.nn.LayerNorm
+    _te.pytorch = _te_pt
+    sys.modules["transformer_engine"] = _te
+    sys.modules["transformer_engine.pytorch"] = _te_pt
+
+from physicsnemo.models.graphcast import GraphCastNet  # noqa: E402
+
+if _te_was_absent:
+    sys.modules.pop("transformer_engine", None)
+    sys.modules.pop("transformer_engine.pytorch", None)
 
 from experiments.weather.data import DataSpecHP, DataHP, DataHPConfig
 
