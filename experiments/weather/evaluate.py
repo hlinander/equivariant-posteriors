@@ -95,7 +95,7 @@ def evaluate_weather(create_config, epoch, lead_time_days):
     print(f"[eval] Epoch {epoch}")
     deser_config = DeserializeConfig(
         train_run=create_ensemble_config(
-            lambda eid: config_file.create_config(eid, epoch),
+            lambda eid: create_config(eid, epoch),
             1,
         ).members[0],
         device_id=device_id,

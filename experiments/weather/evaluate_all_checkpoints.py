@@ -17,4 +17,4 @@ def create_configs():
 
 def run(config):
     create_config = load_create_config(os.environ["CONFIG"])
-    evaluate_weather(create_config, config["epoch"], config["load_time_days"])
+    evaluate_weather(create_config, config["epoch"], config["lead_time_days"])

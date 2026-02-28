@@ -17,7 +17,7 @@ from experiments.weather.data import DataHPConfig
 NSIDE = 64
 
 
-def create_config(ensemble_id, epoch, dataset_years=10):
+def create_config(ensemble_id, epoch=300, dataset_years=10):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):

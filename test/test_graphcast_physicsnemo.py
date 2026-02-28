@@ -1,25 +1,15 @@
 import torch
 import pytest
 
-try:
-    from experiments.weather.models.graphcast_physicsnemo import (
-        GraphCastPhysicsNemo,
-        GraphCastPhysicsNemoConfig,
-        N_SURFACE,
-        N_UPPER_VARS,
-        N_PRESSURE_LEVELS,
-        N_TOTAL,
-    )
-    from experiments.weather.data import DataSpecHP
-
-    _graphcast_available = True
-except ImportError:
-    _graphcast_available = False
-
-pytestmark = pytest.mark.skipif(
-    not _graphcast_available,
-    reason="GraphCast dependencies not available (transformer_engine, sklearn, torch_geometric)",
+from experiments.weather.models.graphcast_physicsnemo import (
+    GraphCastPhysicsNemo,
+    GraphCastPhysicsNemoConfig,
+    N_SURFACE,
+    N_UPPER_VARS,
+    N_PRESSURE_LEVELS,
+    N_TOTAL,
 )
+from experiments.weather.data import DataSpecHP
 
 
 @pytest.fixture
