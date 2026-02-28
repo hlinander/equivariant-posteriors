@@ -1,3 +1,15 @@
+import sys
+import types
+
+# GraphCast's processor imports transformer_engine unconditionally, but only
+# the GraphTransformer processor (not the default MessagePassing) uses it.
+# Provide a stub so the import succeeds without CUDA.
+if "transformer_engine" not in sys.modules:
+    _te = types.ModuleType("transformer_engine")
+    _te.pytorch = types.ModuleType("transformer_engine.pytorch")
+    sys.modules["transformer_engine"] = _te
+    sys.modules["transformer_engine.pytorch"] = _te.pytorch
+
 import torch
 from dataclasses import dataclass
 
