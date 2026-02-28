@@ -6,16 +6,8 @@ import types
 # Provide a stub so the import succeeds without CUDA. Any actual usage
 # (e.g. te.pytorch.TransformerLayer(...)) will raise an error.
 if "transformer_engine" not in sys.modules:
-
-    class _TeStub(types.ModuleType):
-        def __getattr__(self, name):
-            raise ImportError(
-                f"transformer_engine.{name} is not available. "
-                "Install transformer_engine or use processor_type='MessagePassing'."
-            )
-
-    _te = _TeStub("transformer_engine")
-    _te.pytorch = _TeStub("transformer_engine.pytorch")
+    _te = types.ModuleType("transformer_engine")
+    _te.pytorch = types.ModuleType("transformer_engine.pytorch")
     sys.modules["transformer_engine"] = _te
     sys.modules["transformer_engine.pytorch"] = _te.pytorch
 
