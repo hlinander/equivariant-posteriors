@@ -346,7 +346,7 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
             init_model, train_run=train_run
         )
 
-    init_model = init_model.to(torch.device(device_id))
+    init_model = init_model.to(device=torch.device(device_id))
     if train_run.compute_config.distributed:
         device_id_list = [device_id]
         init_model = torch.nn.parallel.DistributedDataParallel(

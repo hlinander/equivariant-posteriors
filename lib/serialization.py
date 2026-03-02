@@ -166,7 +166,7 @@ def create_model(config: DeserializeConfig, state_dict: torch.Tensor):
     # )
     # model = model_factory.get_factory().create(train_config.model_config, data_spec)
     model = instantiate_model(config.train_run.train_config)
-    model = model.to(torch.device(config.device_id))
+    model = model.to(device=torch.device(config.device_id))
 
     if config.train_run.compute_config.distributed:
         device_id_list = [config.device_id]

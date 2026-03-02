@@ -60,6 +60,9 @@ find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu124.html"]
 [tool.hatch.build.targets.wheel]
 packages = ["lib", "experiments"]
 
+[tool.uv]
+find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu124.html"]
+
 [tool.pytest.ini_options]
 addopts = [
     # Allow test files to have the same name in different directories.
