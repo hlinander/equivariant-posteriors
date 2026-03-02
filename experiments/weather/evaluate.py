@@ -122,6 +122,7 @@ def evaluate_weather(create_config, epoch, lead_time_days):
 
     # Initialize local DuckDB (no Postgres connection needed)
     ensure_duck(train_run)
+    insert_or_update_train_run(train_run, deser_model.model_id)
 
     model = deser_model.model
     model.eval()
