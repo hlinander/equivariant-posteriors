@@ -61,6 +61,10 @@ class GraphCastPhysicsNemo(torch.nn.Module):
             hidden_dim=config.hidden_dim,
         )
 
+    def to(self, *args, **kwargs):
+        self.model = self.model.to(*args, **kwargs)
+        return super().to(*args, **kwargs)
+
     def forward(self, batch):
         x_surface = batch["input_surface"]
         x_upper = batch["input_upper"]
