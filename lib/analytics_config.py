@@ -138,6 +138,9 @@ class AnalyticsConfig:
     export_interval_seconds: int = 300  # How often clients export
     ingest_interval_seconds: int = 300  # How often central ingests
 
+    # Optional healthchecks.io ping URL for continuous ingest monitoring
+    healthcheck_url: str = ""  # e.g. "https://hc-ping.com/your-uuid-here"
+
     def is_s3_staging(self) -> bool:
         """Check if using S3 for staging"""
         return self.staging.type == "s3"

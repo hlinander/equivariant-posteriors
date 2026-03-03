@@ -642,6 +642,23 @@ def ingest_all_from_config(config, dry_run: bool = False):
     conn.close()
 
 
+def _ping_healthcheck(url: str, error: Exception | None = None):
+    """Ping healthchecks.io to signal success or failure."""
+    if not url:
+        return
+    import urllib.request
+    try:
+        if error is not None:
+            ping_url = url.rstrip("/") + "/fail"
+            body = str(error).encode("utf-8")
+            req = urllib.request.Request(ping_url, data=body, method="POST")
+        else:
+            req = urllib.request.Request(url)
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"[ingest] Health check ping failed: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ingest unified Parquet files from staging into central database using AnalyticsConfig from env.py"
@@ -670,13 +687,17 @@ def main():
     if args.continuous:
         interval = config.ingest_interval_seconds
         print(f"[ingest] Running in continuous mode (interval: {interval}s from config)")
+        if config.healthcheck_url:
+            print(f"[ingest] Health check enabled: {config.healthcheck_url}")
         while True:
             try:
                 ingest_all_from_config(config, dry_run=args.dry_run)
+                _ping_healthcheck(config.healthcheck_url)
             except Exception as e:
                 print(f"[ingest] Error during ingestion: {e}")
                 import traceback
                 traceback.print_exc()
+                _ping_healthcheck(config.healthcheck_url, error=e)
 
             print(f"[ingest] Sleeping for {interval} seconds...")
             time.sleep(interval)
