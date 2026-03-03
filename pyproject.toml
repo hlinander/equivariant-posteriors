@@ -45,11 +45,11 @@ dependencies = [
     "h5py>=3.15.1",
     "scipy>=1.15.3",
     "scikit-learn>=1.7.2",
+    "torch-geometric>=2.7.0",
 ]
 
 [project.optional-dependencies]
 graphcast = [
-    "torch-geometric>=2.7.0",
     "torch-scatter==2.1.2",
 ]
 test = [

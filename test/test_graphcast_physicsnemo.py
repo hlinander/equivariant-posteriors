@@ -1,7 +1,9 @@
 import torch
 import pytest
 
-from experiments.weather.models.graphcast_physicsnemo import (
+pytest.importorskip("torch_scatter", reason="Requires graphcast extra")
+
+from experiments.weather.models.graphcast_physicsnemo import (  # noqa: E402
     GraphCastPhysicsNemo,
     GraphCastPhysicsNemoConfig,
     N_SURFACE,
