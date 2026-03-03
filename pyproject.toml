@@ -56,8 +56,10 @@ test = [
     "moto[server]>=5.0.0",
 ]
 
-[tool.uv]
-find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu124.html"]
+[[tool.uv.index]]
+name = "pyg-wheels"
+url = "https://data.pyg.org/whl/torch-2.5.1+cu124.html"
+format = "flat"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lib", "experiments"]
