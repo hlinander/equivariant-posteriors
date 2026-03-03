@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Requires the 'graphcast' optional dependencies:
+#   uv pip install --extra graphcast .
 import torch
 
 from lib.train_dataclasses import TrainConfig

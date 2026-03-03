@@ -44,14 +44,20 @@ dependencies = [
     "h5netcdf>=1.8.1",
     "h5py>=3.15.1",
     "scipy>=1.15.3",
-    "torch-geometric>=2.7.0",
     "scikit-learn>=1.7.2",
 ]
 
 [project.optional-dependencies]
+graphcast = [
+    "torch-geometric>=2.7.0",
+    "torch-scatter==2.1.2",
+]
 test = [
     "moto[server]>=5.0.0",
 ]
+
+[tool.uv]
+find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu124.html"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["lib", "experiments"]
