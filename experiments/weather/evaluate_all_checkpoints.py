@@ -17,4 +17,10 @@ def create_configs():
 
 def run(config):
     create_config = load_create_config(os.environ["CONFIG"])
-    evaluate_weather(create_config, config["epoch"], config["lead_time_days"])
+    ensemble_id = int(os.environ.get("EID", default="0"))
+    evaluate_weather(
+        create_config,
+        config["epoch"],
+        config["lead_time_days"],
+        ensemble_id=ensemble_id,
+    )

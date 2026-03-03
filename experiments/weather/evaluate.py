@@ -61,7 +61,7 @@ from experiments.weather.metrics import (
 )
 
 
-def evaluate_weather(create_config, epoch, lead_time_days):
+def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
     device_id = ddp_setup()
     print(f"Lead time {lead_time_days}d")
     train_run = create_config(0, 10)
@@ -94,10 +94,7 @@ def evaluate_weather(create_config, epoch, lead_time_days):
 
     print(f"[eval] Epoch {epoch}")
     deser_config = DeserializeConfig(
-        train_run=create_ensemble_config(
-            lambda eid: create_config(eid, epoch),
-            1,
-        ).members[0],
+        train_run=create_config(ensemble_id, epoch),
         device_id=device_id,
     )
     deser_model = deserialize_model(deser_config)
