@@ -28,6 +28,12 @@ def main():
         default=None,
         help="SLURM job name (default: script stem)",
     )
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        help="Optional dependency group to include (e.g. --extra graphcast)",
+    )
     parser.add_argument("script", help="Python script to run")
 
     args, remaining = parser.parse_known_args()
@@ -35,7 +41,8 @@ def main():
     slurm = load_slurm_config_from_env()
     job_name = args.job_name or Path(args.script).stem
 
-    run_parts = ["uv run python run.py", args.script] + remaining
+    extras = [f"--extra {e}" for e in args.extra]
+    run_parts = ["uv run"] + extras + ["python run.py", args.script] + remaining
     run_command = " ".join(run_parts)
 
     script = generate_batch_script(

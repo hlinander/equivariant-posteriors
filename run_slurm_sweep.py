@@ -41,7 +41,7 @@ def load_slurm_config(sweep_module) -> SlurmConfig:
     return load_slurm_config_from_env()
 
 
-def cmd_submit(sweep_path: str, dry_run: bool, max_concurrent: int | None):
+def cmd_submit(sweep_path: str, dry_run: bool, max_concurrent: int | None, extras: list[str] = []):
     """Submit mode: generate batch script and submit via sbatch."""
     module = load_sweep_module(sweep_path)
     configs = module.create_configs()
@@ -54,10 +54,13 @@ def cmd_submit(sweep_path: str, dry_run: bool, max_concurrent: int | None):
     if max_concurrent is not None:
         array_spec += f"%{max_concurrent}"
 
+    extra_flags = " ".join(f"--extra {e}" for e in extras)
+    uv_run = f"uv run {extra_flags}".strip()
+
     script = generate_batch_script(
         job_name=Path(sweep_path).stem,
         slurm=slurm,
-        run_command=f"uv run python run.py run_slurm_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID",
+        run_command=f"{uv_run} python run.py run_slurm_sweep.py --worker {sweep_path} $SLURM_ARRAY_TASK_ID",
         array_spec=array_spec,
     )
 
@@ -119,6 +122,12 @@ def main():
     parser.add_argument(
         "--max-concurrent", type=int, default=None, help="Limit SLURM array concurrency"
     )
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        help="Optional dependency group to include (e.g. --extra graphcast)",
+    )
     parser.add_argument("sweep_file", help="Path to sweep file")
     parser.add_argument(
         "task_index", nargs="?", type=int, help="Task index (worker mode only)"
@@ -133,7 +142,7 @@ def main():
     elif args.run_local:
         cmd_run_local(args.sweep_file)
     else:
-        cmd_submit(args.sweep_file, args.dry_run, args.max_concurrent)
+        cmd_submit(args.sweep_file, args.dry_run, args.max_concurrent, args.extra)
 
 
 if __name__ == "__main__":
