@@ -39,6 +39,8 @@ def main():
     args, remaining = parser.parse_known_args()
 
     slurm = load_slurm_config_from_env()
+    # slurm.gpus = 0
+    # slurm.partition = "berzelius-cpu"
     job_name = args.job_name or Path(args.script).stem
 
     extras = [f"--extra {e}" for e in args.extra]

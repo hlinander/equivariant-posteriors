@@ -145,6 +145,8 @@ def day_index_to_climatology_indices(day_index, start_year, end_year):
     return indices
 
 
+
+
 class Climatology(torch.utils.data.Dataset):
     def __init__(self, data_config: DataHPConfig):
         self.ds = DataHP(data_config)
@@ -344,6 +346,7 @@ def numpy_hp_to_e5(
 
     return final
 
+    
 
 class DataHP(torch.utils.data.Dataset):
     def __init__(self, data_config: DataHPConfig):
@@ -469,8 +472,8 @@ class DataHP(torch.utils.data.Dataset):
             return sample
 
     def _get_24h(self, idx):
-        if idx >= len(self):
-            raise StopIteration()
+        # if idx >= len(self):
+        #     raise StopIteration()
         fs_cache_path = self.get_cache_dir() / f"{idx}"
         fs_cache_path_tmp = self.get_cache_dir() / f"{idx}_constructing"
         names = dict(
@@ -544,6 +547,60 @@ class DataHP(torch.utils.data.Dataset):
 
     def __len__(self):
         return days_between_years(self.config.start_year, self.config.end_year)
+
+class DataHPConvConfig(DataHPConfig):
+    input_time_dim: int = 1 # Number of input time steps
+    output_time_dim: int = 1 # Number of output time steps (NOT SURE IF I NEED THIS HERE)
+
+    def short_name(self):
+        return super().short_name() + "_conv"
+
+class DataHPConv(DataHP):
+    """
+    This dataset is designed to provide multiple time steps of input data for convolutional models, which can leverage temporal information. 
+    It extends the DataHP class to include a sequence of input time steps (input_time_dim) and a single output time step (output_time_dim). 
+    The __getitem__ method is overridden to return a sequence of input data and the corresponding target data for the specified time steps.
+    """
+
+    def __init__(self, data_config: DataHPConvConfig):
+        super().__init__(data_config)
+
+    # TODO need to adapt the dataset to differnt hour of the day
+    def __getitem__(self, idx):
+        input_time_dim = self.config.input_time_dim
+        output_time_dim = self.config.output_time_dim
+
+        if idx >= len(self):
+            raise StopIteration()
+
+        input_sequence = []
+        for i in range(input_time_dim):
+            input_sequence.append(super().__getitem__(idx + i))
+        
+        target_sequence = []
+        for i in range(output_time_dim):
+            target_sequence.append(super().__getitem__(idx + input_time_dim + i))
+
+        # Stack the input sequence along a new time dimension
+        input_surface_sequence = np.stack([item['input_surface'] for item in input_sequence], axis=0) # Shape: (input_time_dim, n_channels, n_pix)
+        input_upper_sequence = np.stack([item['input_upper'] for item in input_sequence], axis=0) # Shape: (input_time_dim, n_channels, n_pix)
+        target_surface_sequence = np.stack([item['target_surface'] for item in target_sequence], axis=0) # Shape: (output_time_dim, n_channels, n_pix)
+        target_upper_sequence = np.stack([item['target_upper'] for item in target_sequence], axis=0) # Shape: (output_time_dim, n_channels, n_pix)
+
+        
+
+        return {
+            'sample_id': idx,
+            'input_surface': input_surface_sequence,
+            'input_upper': input_upper_sequence,
+            'target_surface': target_surface_sequence,
+            'target_upper': target_upper_sequence,
+            'prediction_timedelta_hours': target_sequence[0]['prediction_timedelta_hours'],
+        }
+
+    def __len__(self):
+        # The length is reduced by the number of input and output time steps to ensure we don't go out of bounds
+        return super().__len__() - self.config.input_time_dim - self.config.output_time_dim + 1
 
 
 def deserialize_dataset_statistics(nside):
@@ -690,3 +747,17 @@ def serialize_dataset_statistics(nside, test_with_one_sample=False):
     ds.get_cache_dir().mkdir(parents=True, exist_ok=True)
     np.save(ds.get_statistics_path(), statistics_dict)
     print(f"Saved npy {ds.get_statistics_path()}")
+
+
+if __name__ == "__main__":
+
+    cnf = DataHPConfig(nside=64, end_year=2012, normalized=False)
+    ds = DataHP(cnf)
+    print(ds[0].keys())
+    print(ds[0]['sample_id'])
+
+
+    config = DataHPConvConfig(nside=64, end_year=2012, normalized=False)
+    dataset = DataHPConv(config)
+
+    print(dataset[0].keys())

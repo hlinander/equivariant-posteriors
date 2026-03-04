@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+from pathlib import Path
+
 import torch
 
 from lib.train_dataclasses import TrainConfig
@@ -12,14 +14,15 @@ from lib.ensemble import create_ensemble_config
 from lib.ensemble import request_ensemble
 from lib.ensemble import is_ensemble_serialized
 from lib.distributed_trainer import distributed_train
-
-from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPadConfig
-from experiments.weather.data import DataHPConfig
+from experiments.weather.models.hp_pear_conv import HEALPixPearConv, HEALPixPearConvConfig
+from experiments.weather.data import DataHPConfig, DataHPConv, DataHPConvConfig
+from lib.train_distributed import request_train_run
 
 NSIDE = 64
 
 
-def create_config(ensemble_id, epoch=200, dataset_years=10):
+
+def create_config(ensemble_id, epoch=100, dataset_years=10):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):
@@ -29,43 +32,25 @@ def create_config(ensemble_id, epoch=200, dataset_years=10):
 
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
-        model_config=SwinHPPanguPadConfig(
-            base_pix=12,
-            nside=NSIDE,
-            dev_mode=False,
-            depths=[2, 6, 6, 2],
-            num_heads=[6, 12, 12, 6],
-            embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
-            window_size=[2, 64],
-            use_cos_attn=False,
-            use_v2_norm_placement=True,
-            drop_rate=0,
-            attn_drop_rate=0,
-            drop_path_rate=0,
-            rel_pos_bias="single",
-            shift_size=4,
-            shift_strategy="ring_shift",
-            ape=False,
-            patch_size=16,
-        ),
-        train_data_config=DataHPConfig(nside=NSIDE, end_year=2007 + dataset_years),
-        val_data_config=None,
+        model_config=HEALPixPearConvConfig(),
+        train_data_config=DataHPConvConfig(nside=NSIDE, end_year=2007 + dataset_years),
+        val_data_config=DataHPConvConfig(nside=NSIDE, start_year=2019, end_year=2019),
         loss=reg_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=3e-6, lr=5e-4),
         ),
-        batch_size=1,
+        batch_size=16,
         ensemble_id=ensemble_id,
         _version=17,
     )
     train_eval = TrainEval(
         train_metrics=[create_metric(reg_loss)],
-        validation_metrics=[],
+        validation_metrics=[create_metric(reg_loss)],
         log_gradient_norm=True,
     )
     train_run = TrainRun(
-        project="weather",
+        project="weather_conv",
         compute_config=ComputeConfig(),
         train_config=train_config,
         train_eval=train_eval,
@@ -76,6 +61,9 @@ def create_config(ensemble_id, epoch=200, dataset_years=10):
         validate_nth_epoch=20,
         visualize_terminal=False,
     )
+
+    print(ComputeConfig().serialize_human())
+
     return train_run
 
 
@@ -98,3 +86,7 @@ if __name__ == "__main__":
         request_ensemble(ensemble_config)
         distributed_train(ensemble_config.members)
         exit(0)
+
+
+    
+

@@ -14,7 +14,7 @@ from lib.log import log
 # import ssl
 
 # ssl._create_default_https_context = ssl._create_unverified_context
-WEATHER_BASE = Path(os.getenv("WEATHER_DATASET", env().paths.datasets / "era5_lite"))
+WEATHER_BASE = Path(os.getenv("WEATHER_DATASET", env().paths.datasets / "era5_lite_hourly"))
 ERA5_GRIB_DATA_PATH = WEATHER_BASE / "era5_grib_monthly"
 
 
@@ -41,7 +41,7 @@ class ERA5SampleConfig:
     time: str
 
     def ident(self):
-        return f"{self.year}_{self.month}_{self.time}"
+        return f"{self.year}_{self.month}_{self.day}_{self.time}"
 
     def surface_ident(self):
         return f"surface_{self.ident()}"

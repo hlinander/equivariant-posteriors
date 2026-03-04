@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import dill
+dill.settings["recurse"] = False
 from filelock import FileLock, Timeout
 import os
 from pathlib import Path
@@ -56,7 +57,7 @@ def request_train_run(train_run: TrainRun):
             request_path = get_distributed_training_request_path(train_run)
             tmp_path = request_path.with_suffix(".dill.tmp")
             with open(tmp_path, "wb") as request_file:
-                dill.dump(train_run, request_file)
+                dill.dump(train_run, request_file, byref=True, recurse=False)
             os.replace(tmp_path, request_path)
             print(
                 f"Wrote request file {get_distributed_training_request_lock_path(train_run)}"
