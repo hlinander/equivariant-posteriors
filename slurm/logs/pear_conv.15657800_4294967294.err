@@ -1,0 +1,47 @@
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/home/x_piero/equivariant-posteriors/lib/serialization.py:245: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model_epoch = torch.load(checkpoint_path / "epoch")
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+/home/x_piero/equivariant-posteriors/lib/serialization.py:245: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model_epoch = torch.load(checkpoint_path / "epoch")
+/home/x_piero/equivariant-posteriors/lib/serialization.py:269: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  torch.load(
+Traceback (most recent call last):
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/persisted_configs/pear_conv.py", line 85, in <module>
+    distributed_train(ensemble_config.members)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 96, in distributed_train
+    do_train_run(distributed_train_run, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 54, in do_train_run
+    do_training(distributed_train_run.train_run, state, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 464, in do_training
+    do_training_unlocked(train_run, state, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 437, in do_training_unlocked
+    train(train_run, state, train_epoch_spec)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 178, in train
+    output = model(batch)
+             ^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/models/hp_pear_conv.py", line 152, in forward
+    self._assert_no_grad_state()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/nn/modules/module.py", line 1931, in __getattr__
+    raise AttributeError(
+AttributeError: 'HEALPixPearConv' object has no attribute '_assert_no_grad_state'
+[2026-03-03T11:19:12.356] error: *** JOB 15657800 ON node077 CANCELLED AT 2026-03-03T11:19:12 DUE to SIGNAL Terminated ***

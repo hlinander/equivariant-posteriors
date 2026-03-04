@@ -1,0 +1,528 @@
+Warp DeprecationWarning: The namespace `warp.context` will soon be removed from the public API. It can still be accessed from `warp._src.context` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.context.Device` will soon be removed from the public API. Use `warp.Device` instead.
+[92m[Compute environment] paths: 
+[92m[Paths] checkpoints: /proj/heal_pangu/eqp/checkpoints (/proj/heal_pangu/eqp/checkpoints)[0m
+[92m[Paths] locks: locks (/home/x_piero/equivariant-posteriors/locks)[0m
+[92m[Paths] distributed_requests: distributed_requests (/home/x_piero/equivariant-posteriors/distributed_requests)[0m
+[92m[Paths] artifacts: /proj/heal_pangu/eqp/artifacts (/proj/heal_pangu/eqp/artifacts)[0m
+[92m[Paths] datasets: /proj/heal_pangu/datasets (/proj/heal_pangu/datasets)[0m[0m
+Using device cuda
+Using 16 workers [SLURM_CPUS_ON_NODE]
+Using 16 workers [SLURM_CPUS_ON_NODE]
+{'num_workers': 16, 'distributed': False, 'num_gpus': 1}
+Wrote request file distributed_training_requests/lock_4bb76e75950ed195
+/proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[Device] cuda
+Wrote request file distributed_training_requests/lock_4bb76e75950ed195
+Trying to fetch train run...
+Aquired lock distributed_training_requests/lock_4bb76e75950ed195
+locks/lock_24c01aed0df42976
+Skipping large file croc
+Skipping large file croc_v10.3.1_Linux-64bit.tar.gz
+Trying to deserialize at /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Connecting to duck...
+Connected.
+Serializing config...
+Render duck
+[analytics] Loaded config from env.py: Analytics: S3 (eqp-metrics-staging2) → DuckLake (37.27.45.22)
+Starting periodic export to s3 staging (interval: 300s)...
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[16:22:24] [gpu_monitor] Initialized with 1 GPU(s)
+[16:22:24] [gpu_monitor] Started (sample: 1.0s, record: 10.0s)
+Run epochs...
+[export] Exporting 217 rows from model_parameter to s3://eqp-metrics-staging2/staging/model_parameter/1239797130602367747_1772551344_970766.parquet
+[export] Successfully exported 217 rows to s3://eqp-metrics-staging2/staging/model_parameter/1239797130602367747_1772551344_970766.parquet
+[export] No new data to sync for train_step_metric
+[export] No new data to sync for train_steps
+[export] No new data to sync for checkpoint_sample_metric
+[export] Exporting 1 rows from models to s3://eqp-metrics-staging2/staging/models/1772551345_556869.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/models/1772551345_556869.parquet
+[export] Exporting 1 rows from runs to s3://eqp-metrics-staging2/staging/runs/1772551345_945241.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/runs/1772551345_945241.parquet
+[export] Exporting 1 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772551346_443360.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772551346_443360.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:22:26] [export] Exported 4 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2692 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772551647_091064.parquet
+[export] Successfully exported 2692 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772551647_091064.parquet
+[export] Exporting 857 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772551647_560786.parquet
+[export] Successfully exported 857 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772551647_560786.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772551648_326716.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772551648_326716.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:27:29] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2843 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772551949_074286.parquet
+[export] Successfully exported 2843 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772551949_074286.parquet
+[export] Exporting 901 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772551949_549900.parquet
+[export] Successfully exported 901 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772551949_549900.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772551949_932038.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772551949_932038.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:32:30] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2681 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552250_447243.parquet
+[export] Successfully exported 2681 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552250_447243.parquet
+[export] Exporting 849 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552251_930305.parquet
+[export] Successfully exported 849 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552251_930305.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772552255_333732.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772552255_333732.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:37:41] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 3036 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552561_133505.parquet
+[export] Successfully exported 3036 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552561_133505.parquet
+[export] Exporting 965 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552561_613090.parquet
+[export] Successfully exported 965 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552561_613090.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772552563_519220.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772552563_519220.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:42:43] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2840 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552863_873641.parquet
+[export] Successfully exported 2840 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772552863_873641.parquet
+[export] Exporting 901 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552864_838830.parquet
+[export] Successfully exported 901 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772552864_838830.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772552865_485120.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772552865_485120.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:47:45] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2584 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553165_918515.parquet
+[export] Successfully exported 2584 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553165_918515.parquet
+[export] Exporting 816 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553166_470685.parquet
+[export] Successfully exported 816 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553166_470685.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772553166_787898.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772553166_787898.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:52:47] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2728 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553467_341661.parquet
+[export] Successfully exported 2728 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553467_341661.parquet
+[export] Exporting 866 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553467_750187.parquet
+[export] Successfully exported 866 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553467_750187.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772553468_097054.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772553468_097054.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[16:57:48] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2759 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553768_569672.parquet
+[export] Successfully exported 2759 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772553768_569672.parquet
+[export] Exporting 873 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553769_174942.parquet
+[export] Successfully exported 873 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772553769_174942.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772553769_692294.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772553769_692294.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:02:50] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2714 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554070_920615.parquet
+[export] Successfully exported 2714 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554070_920615.parquet
+[export] Exporting 858 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554071_447872.parquet
+[export] Successfully exported 858 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554071_447872.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772554071_906826.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772554071_906826.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:07:52] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2757 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554372_338547.parquet
+[export] Successfully exported 2757 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554372_338547.parquet
+[export] Exporting 875 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554372_815569.parquet
+[export] Successfully exported 875 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554372_815569.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772554373_619925.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772554373_619925.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:12:54] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2671 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554674_755568.parquet
+[export] Successfully exported 2671 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554674_755568.parquet
+[export] Exporting 855 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554680_483651.parquet
+[export] Successfully exported 855 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554680_483651.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772554681_168603.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772554681_168603.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:18:01] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2850 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554981_739291.parquet
+[export] Successfully exported 2850 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772554981_739291.parquet
+[export] Exporting 892 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554982_218796.parquet
+[export] Successfully exported 892 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772554982_218796.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772554982_742031.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772554982_742031.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:23:03] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2705 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555283_174834.parquet
+[export] Successfully exported 2705 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555283_174834.parquet
+[export] Exporting 854 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555283_634807.parquet
+[export] Successfully exported 854 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555283_634807.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772555284_335030.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772555284_335030.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:28:05] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2783 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555585_270804.parquet
+[export] Successfully exported 2783 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555585_270804.parquet
+[export] Exporting 885 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555586_313130.parquet
+[export] Successfully exported 885 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555586_313130.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772555586_840302.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772555586_840302.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:33:07] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2763 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555887_603610.parquet
+[export] Successfully exported 2763 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772555887_603610.parquet
+[export] Exporting 867 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555887_995173.parquet
+[export] Successfully exported 867 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772555887_995173.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772555888_404146.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772555888_404146.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:38:08] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2856 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556188_890151.parquet
+[export] Successfully exported 2856 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556188_890151.parquet
+[export] Exporting 908 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556189_412945.parquet
+[export] Successfully exported 908 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556189_412945.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772556189_846679.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772556189_846679.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:43:10] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2700 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556490_343763.parquet
+[export] Successfully exported 2700 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556490_343763.parquet
+[export] Exporting 856 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556491_143089.parquet
+[export] Successfully exported 856 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556491_143089.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772556492_065183.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772556492_065183.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:48:12] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2720 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556792_551875.parquet
+[export] Successfully exported 2720 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772556792_551875.parquet
+[export] Exporting 859 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556792_974513.parquet
+[export] Successfully exported 859 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772556792_974513.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772556793_439070.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772556793_439070.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:53:14] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2789 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557094_055377.parquet
+[export] Successfully exported 2789 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557094_055377.parquet
+[export] Exporting 883 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557094_733317.parquet
+[export] Successfully exported 883 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557094_733317.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772557095_254423.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772557095_254423.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[17:58:15] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2911 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557395_992660.parquet
+[export] Successfully exported 2911 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557395_992660.parquet
+[export] Exporting 920 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557396_580648.parquet
+[export] Successfully exported 920 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557396_580648.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772557397_202168.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772557397_202168.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:03:18] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2902 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557698_569330.parquet
+[export] Successfully exported 2902 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772557698_569330.parquet
+[export] Exporting 920 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557699_070529.parquet
+[export] Successfully exported 920 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772557699_070529.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772557699_816671.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772557699_816671.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:08:20] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2799 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558000_570255.parquet
+[export] Successfully exported 2799 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558000_570255.parquet
+[export] Exporting 888 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558001_066566.parquet
+[export] Successfully exported 888 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558001_066566.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772558001_550200.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772558001_550200.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:13:22] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2770 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558302_153398.parquet
+[export] Successfully exported 2770 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558302_153398.parquet
+[export] Exporting 881 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558302_751992.parquet
+[export] Successfully exported 881 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558302_751992.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772558303_751433.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772558303_751433.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:18:25] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2753 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558605_252683.parquet
+[export] Successfully exported 2753 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558605_252683.parquet
+[export] Exporting 872 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558605_899331.parquet
+[export] Successfully exported 872 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558605_899331.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772558606_382108.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772558606_382108.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:23:27] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2811 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558907_545446.parquet
+[export] Successfully exported 2811 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772558907_545446.parquet
+[export] Exporting 885 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558907_915166.parquet
+[export] Successfully exported 885 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772558907_915166.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772558908_455793.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772558908_455793.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:28:28] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2706 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559208_984404.parquet
+[export] Successfully exported 2706 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559208_984404.parquet
+[export] Exporting 859 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559209_446863.parquet
+[export] Successfully exported 859 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559209_446863.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772559209_756060.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772559209_756060.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:33:30] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2757 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559510_736720.parquet
+[export] Successfully exported 2757 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559510_736720.parquet
+[export] Exporting 874 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559511_535726.parquet
+[export] Successfully exported 874 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559511_535726.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 6 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772559512_017137.parquet
+[export] Successfully exported 6 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772559512_017137.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:38:32] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[export] No new data to sync for model_parameter
+[export] Exporting 2801 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559812_530117.parquet
+[export] Successfully exported 2801 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559812_530117.parquet
+[export] Exporting 885 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559812_900056.parquet
+[export] Successfully exported 885 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559812_900056.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 8 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772559813_770977.parquet
+[export] Successfully exported 8 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772559813_770977.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[18:43:34] [export] Exported 3 files to S3 (next in 300s)
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+Final analytics export...
+[export] No new data to sync for model_parameter
+[export] Exporting 1563 rows from train_step_metric to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559977_607998.parquet
+[export] Successfully exported 1563 rows to s3://eqp-metrics-staging2/staging/train_step_metric/1239797130602367747_1772559977_607998.parquet
+[export] Exporting 496 rows from train_steps to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559978_255942.parquet
+[export] Successfully exported 496 rows to s3://eqp-metrics-staging2/staging/train_steps/1239797130602367747_1772559978_255942.parquet
+[export] No new data to sync for checkpoint_sample_metric
+[export] No new data to sync for models
+[export] No new data to sync for runs
+[export] Exporting 4 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772559978_648883.parquet
+[export] Successfully exported 4 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772559978_648883.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+Worker reported 4bb76e75950ed195 done
+10 minutes since last aquired training, stopping...
+[run] Mode: torchrun, Device: cuda
+[run] torchrun --nnodes=1 --nproc_per_node=1 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 experiments/weather/persisted_configs/pear_conv.py
+

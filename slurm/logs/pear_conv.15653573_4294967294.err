@@ -1,0 +1,76 @@
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+Traceback (most recent call last):
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/persisted_configs/pear_conv.py", line 83, in <module>
+    distributed_train(ensemble_config.members)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 96, in distributed_train
+    do_train_run(distributed_train_run, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 53, in do_train_run
+    state = load_or_create_state(distributed_train_run.train_run, device_id)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 384, in load_or_create_state
+    code_path = prepare_results("code", train_run)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/lib/files.py", line 107, in prepare_results
+    write_config_human(config, result_path / "config.json")
+  File "/home/x_piero/equivariant-posteriors/lib/files.py", line 29, in write_config_human
+    f.write(json.dumps(serialize_human(config), indent=2))
+                       ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/lib/serialize_human.py", line 7, in serialize_human
+    return instance.serialize_human()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/lib/train_dataclasses.py", line 228, in serialize_human
+    train_config=self.train_config.serialize_human(),
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/lib/train_dataclasses.py", line 84, in serialize_human
+    config=self.model_config.serialize_human(),
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/models/hp_pear_conv.py", line 34, in serialize_human
+    dict["model_config_path"] = str(dict["model_config_path"])
+                                    ~~~~^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'model_config_path'
+E0302 17:21:19.080000 3805962 .venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 3806195) of binary: /home/x_piero/equivariant-posteriors/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/x_piero/equivariant-posteriors/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+experiments/weather/persisted_configs/pear_conv.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-02_17:21:19
+  host      : node052
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3806195)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

@@ -1,0 +1,16 @@
+Warp DeprecationWarning: The namespace `warp.context` will soon be removed from the public API. It can still be accessed from `warp._src.context` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.context.Device` will soon be removed from the public API. Use `warp.Device` instead.
+[92m[Compute environment] paths: 
+[92m[Paths] checkpoints: /proj/heal_pangu/eqp/checkpoints (/proj/heal_pangu/eqp/checkpoints)[0m
+[92m[Paths] locks: locks (/home/x_piero/equivariant-posteriors/locks)[0m
+[92m[Paths] distributed_requests: distributed_requests (/home/x_piero/equivariant-posteriors/distributed_requests)[0m
+[92m[Paths] artifacts: /proj/heal_pangu/eqp/artifacts (/proj/heal_pangu/eqp/artifacts)[0m
+[92m[Paths] datasets: /proj/heal_pangu/datasets (/proj/heal_pangu/datasets)[0m[0m
+Using device cuda
+Using 16 workers [SLURM_CPUS_ON_NODE]
+Using 16 workers [SLURM_CPUS_ON_NODE]
+{'num_workers': 16, 'distributed': False, 'num_gpus': 1}
+/proj/heal_pangu/eqp/checkpoints/checkpoint_24c01aed0df42976
+[run] Mode: torchrun, Device: cuda
+[run] torchrun --nnodes=1 --nproc_per_node=1 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 experiments/weather/persisted_configs/pear_conv.py
+

@@ -1,0 +1,12 @@
+Warp DeprecationWarning: The namespace `warp.context` will soon be removed from the public API. It can still be accessed from `warp._src.context` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.context.Device` will soon be removed from the public API. Use `warp.Device` instead.
+[92m[Compute environment] paths: 
+[92m[Paths] checkpoints: /proj/heal_pangu/eqp/checkpoints (/proj/heal_pangu/eqp/checkpoints)[0m
+[92m[Paths] locks: locks (/home/x_piero/equivariant-posteriors/locks)[0m
+[92m[Paths] distributed_requests: distributed_requests (/home/x_piero/equivariant-posteriors/distributed_requests)[0m
+[92m[Paths] artifacts: /proj/heal_pangu/eqp/artifacts (/proj/heal_pangu/eqp/artifacts)[0m
+[92m[Paths] datasets: /proj/heal_pangu/datasets (/proj/heal_pangu/datasets)[0m[0m
+Using device cpu
+[run] Mode: cpu, Device: cpu
+[run] /home/x_piero/equivariant-posteriors/.venv/bin/python3 experiments/weather/persisted_configs/pear_conv.py
+

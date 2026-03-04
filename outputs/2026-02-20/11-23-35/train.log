@@ -1,0 +1,105 @@
+[2026-02-20 11:23:36,826][train][INFO] - [94mexperiment working directory: /home/x_piero/equivariant-posteriors[0m
+[2026-02-20 11:23:45,853][physicsnemo.datapipes.healpix.data_modules][INFO] - merging input datasets
+[2026-02-20 11:23:45,853][physicsnemo.datapipes.healpix.data_modules][DEBUG] - open nc dataset /datasets/healpix/HPX64/era5_0.25deg_3h_HPX64_1979-2021_t2m0.nc
+[2026-02-20 11:23:46,361][findlibs][DEBUG] - about to search for libeccodes.so/eccodeslib in <function _find_in_package at 0x7fe8fe2cf420>
+[2026-02-20 11:23:46,363][findlibs][DEBUG] - found package eccodeslib; with preload_deps=True
+[2026-02-20 11:23:46,364][findlibs][DEBUG] - consider transitive dependency preload of eckitlib
+[2026-02-20 11:23:46,366][findlibs][DEBUG] - initiating recursive search at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,366][findlibs][DEBUG] - considering cmake
+[2026-02-20 11:23:46,368][findlibs][DEBUG] - considering libeckit.so
+[2026-02-20 11:23:46,369][findlibs][DEBUG] - loading libeckit.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,395][findlibs][DEBUG] - loaded libeckit.so
+[2026-02-20 11:23:46,395][findlibs][DEBUG] - considering libeckit_codec.so
+[2026-02-20 11:23:46,397][findlibs][DEBUG] - loading libeckit_codec.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,399][findlibs][DEBUG] - loaded libeckit_codec.so
+[2026-02-20 11:23:46,399][findlibs][DEBUG] - considering libeckit_distributed.so
+[2026-02-20 11:23:46,400][findlibs][DEBUG] - loading libeckit_distributed.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,401][findlibs][DEBUG] - loaded libeckit_distributed.so
+[2026-02-20 11:23:46,401][findlibs][DEBUG] - considering libeckit_geo.so
+[2026-02-20 11:23:46,402][findlibs][DEBUG] - loading libeckit_geo.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,407][findlibs][DEBUG] - loaded libeckit_geo.so
+[2026-02-20 11:23:46,407][findlibs][DEBUG] - considering libeckit_geometry.so
+[2026-02-20 11:23:46,408][findlibs][DEBUG] - loading libeckit_geometry.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,409][findlibs][DEBUG] - loaded libeckit_geometry.so
+[2026-02-20 11:23:46,409][findlibs][DEBUG] - considering libeckit_linalg.so
+[2026-02-20 11:23:46,409][findlibs][DEBUG] - loading libeckit_linalg.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,411][findlibs][DEBUG] - loaded libeckit_linalg.so
+[2026-02-20 11:23:46,411][findlibs][DEBUG] - considering libeckit_maths.so
+[2026-02-20 11:23:46,411][findlibs][DEBUG] - loading libeckit_maths.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,414][findlibs][DEBUG] - loaded libeckit_maths.so
+[2026-02-20 11:23:46,414][findlibs][DEBUG] - considering libeckit_mpi.so
+[2026-02-20 11:23:46,415][findlibs][DEBUG] - loading libeckit_mpi.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,417][findlibs][DEBUG] - loaded libeckit_mpi.so
+[2026-02-20 11:23:46,417][findlibs][DEBUG] - considering libeckit_option.so
+[2026-02-20 11:23:46,418][findlibs][DEBUG] - loading libeckit_option.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,420][findlibs][DEBUG] - loaded libeckit_option.so
+[2026-02-20 11:23:46,420][findlibs][DEBUG] - considering libeckit_sql.so
+[2026-02-20 11:23:46,421][findlibs][DEBUG] - loading libeckit_sql.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,425][findlibs][DEBUG] - loaded libeckit_sql.so
+[2026-02-20 11:23:46,425][findlibs][DEBUG] - considering libeckit_web.so
+[2026-02-20 11:23:46,427][findlibs][DEBUG] - loading libeckit_web.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,428][findlibs][DEBUG] - loaded libeckit_web.so
+[2026-02-20 11:23:46,428][findlibs][DEBUG] - considering pkgconfig
+[2026-02-20 11:23:46,428][findlibs][DEBUG] - consider transitive dependency preload of fckitlib
+[2026-02-20 11:23:46,432][findlibs][DEBUG] - consider transitive dependency preload of eckitlib
+[2026-02-20 11:23:46,432][findlibs][DEBUG] - initiating recursive search at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,433][findlibs][DEBUG] - considering cmake
+[2026-02-20 11:23:46,454][findlibs][DEBUG] - considering libeckit.so
+[2026-02-20 11:23:46,456][findlibs][DEBUG] - loading libeckit.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,456][findlibs][DEBUG] - loaded libeckit.so
+[2026-02-20 11:23:46,457][findlibs][DEBUG] - considering libeckit_codec.so
+[2026-02-20 11:23:46,457][findlibs][DEBUG] - loading libeckit_codec.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,457][findlibs][DEBUG] - loaded libeckit_codec.so
+[2026-02-20 11:23:46,458][findlibs][DEBUG] - considering libeckit_distributed.so
+[2026-02-20 11:23:46,458][findlibs][DEBUG] - loading libeckit_distributed.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,458][findlibs][DEBUG] - loaded libeckit_distributed.so
+[2026-02-20 11:23:46,459][findlibs][DEBUG] - considering libeckit_geo.so
+[2026-02-20 11:23:46,460][findlibs][DEBUG] - loading libeckit_geo.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,460][findlibs][DEBUG] - loaded libeckit_geo.so
+[2026-02-20 11:23:46,460][findlibs][DEBUG] - considering libeckit_geometry.so
+[2026-02-20 11:23:46,461][findlibs][DEBUG] - loading libeckit_geometry.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,461][findlibs][DEBUG] - loaded libeckit_geometry.so
+[2026-02-20 11:23:46,461][findlibs][DEBUG] - considering libeckit_linalg.so
+[2026-02-20 11:23:46,462][findlibs][DEBUG] - loading libeckit_linalg.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,463][findlibs][DEBUG] - loaded libeckit_linalg.so
+[2026-02-20 11:23:46,463][findlibs][DEBUG] - considering libeckit_maths.so
+[2026-02-20 11:23:46,464][findlibs][DEBUG] - loading libeckit_maths.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,464][findlibs][DEBUG] - loaded libeckit_maths.so
+[2026-02-20 11:23:46,464][findlibs][DEBUG] - considering libeckit_mpi.so
+[2026-02-20 11:23:46,464][findlibs][DEBUG] - loading libeckit_mpi.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,465][findlibs][DEBUG] - loaded libeckit_mpi.so
+[2026-02-20 11:23:46,466][findlibs][DEBUG] - considering libeckit_option.so
+[2026-02-20 11:23:46,466][findlibs][DEBUG] - loading libeckit_option.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,467][findlibs][DEBUG] - loaded libeckit_option.so
+[2026-02-20 11:23:46,467][findlibs][DEBUG] - considering libeckit_sql.so
+[2026-02-20 11:23:46,467][findlibs][DEBUG] - loading libeckit_sql.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,468][findlibs][DEBUG] - loaded libeckit_sql.so
+[2026-02-20 11:23:46,468][findlibs][DEBUG] - considering libeckit_web.so
+[2026-02-20 11:23:46,468][findlibs][DEBUG] - loading libeckit_web.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eckitlib/lib64
+[2026-02-20 11:23:46,469][findlibs][DEBUG] - loaded libeckit_web.so
+[2026-02-20 11:23:46,470][findlibs][DEBUG] - considering pkgconfig
+[2026-02-20 11:23:46,470][findlibs][DEBUG] - initiating recursive search at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,471][findlibs][DEBUG] - considering cmake
+[2026-02-20 11:23:46,472][findlibs][DEBUG] - considering libfckit.so
+[2026-02-20 11:23:46,472][findlibs][DEBUG] - loading libfckit.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,496][findlibs][DEBUG] - loaded libfckit.so
+[2026-02-20 11:23:46,496][findlibs][DEBUG] - considering libifcoremt.so.5
+[2026-02-20 11:23:46,496][findlibs][DEBUG] - loading libifcoremt.so.5 at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,498][findlibs][DEBUG] - loaded libifcoremt.so.5
+[2026-02-20 11:23:46,498][findlibs][DEBUG] - considering libifport.so.5
+[2026-02-20 11:23:46,498][findlibs][DEBUG] - loading libifport.so.5 at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,500][findlibs][DEBUG] - loaded libifport.so.5
+[2026-02-20 11:23:46,500][findlibs][DEBUG] - considering libimf.so
+[2026-02-20 11:23:46,501][findlibs][DEBUG] - loading libimf.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,502][findlibs][DEBUG] - loaded libimf.so
+[2026-02-20 11:23:46,502][findlibs][DEBUG] - considering libintlc.so.5
+[2026-02-20 11:23:46,502][findlibs][DEBUG] - loading libintlc.so.5 at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,503][findlibs][DEBUG] - loaded libintlc.so.5
+[2026-02-20 11:23:46,504][findlibs][DEBUG] - considering libirc.so
+[2026-02-20 11:23:46,504][findlibs][DEBUG] - loading libirc.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,505][findlibs][DEBUG] - loaded libirc.so
+[2026-02-20 11:23:46,505][findlibs][DEBUG] - considering libsvml.so
+[2026-02-20 11:23:46,505][findlibs][DEBUG] - loading libsvml.so at /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/fckitlib/lib64
+[2026-02-20 11:23:46,506][findlibs][DEBUG] - loaded libsvml.so
+[2026-02-20 11:23:46,506][findlibs][DEBUG] - found libeccodes.so/eccodeslib in <function _find_in_package at 0x7fe8fe2cf420>
+[2026-02-20 11:23:46,507][gribapi.bindings][DEBUG] - eccodes lib search: findlibs returned /home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/eccodeslib/lib64/libeccodes.so

@@ -1,0 +1,96 @@
+experiment_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
+output_dir: outputs/${experiment_name}
+checkpoint_dir: ${output_dir}/tensorboard/checkpoints
+checkpoint_name: last
+load_weights_only: false
+seed: 0
+batch_size: 8
+learning_rate: 0.0002
+num_workers: 8
+port: 29450
+master_address: localhost
+model:
+  encoder:
+    conv_block:
+      activation:
+        _target_: experiments.weather.models.dlwp_healpix.nn.CappedGELU
+        cap_value: 10
+      _target_: experiments.weather.models.dlwp_healpix.layers.ConvNeXtBlock
+      _recursive_: true
+      in_channels: 3
+      out_channels: 1
+      kernel_size: 3
+      dilation: 1
+      upscale_factor: 4
+    down_sampling_block:
+      _target_: experiments.weather.models.dlwp_healpix.nn.HEALPixAvgPool
+      pooling: 2
+    recurrent_block:
+      _target_: experiments.weather.models.dlwp_healpix.layers.ConvGRUBlock
+      _recursive_: false
+      in_channels: 3
+      kernel_size: 1
+    _target_: experiments.weather.models.dlwp_healpix.layers.UNetEncoder
+    _recursive_: false
+    n_channels:
+    - 136
+    - 68
+    - 34
+    dilations:
+    - 1
+    - 2
+    - 4
+  decoder:
+    conv_block:
+      activation:
+        _target_: experiments.weather.models.dlwp_healpix.nn.CappedGELU
+        cap_value: 10
+      _target_: experiments.weather.models.dlwp_healpix.layers.ConvNeXtBlock
+      _recursive_: true
+      in_channels: 3
+      out_channels: 1
+      kernel_size: 3
+      dilation: 1
+      upscale_factor: 4
+    up_sampling_block:
+      activation:
+        _target_: experiments.weather.models.dlwp_healpix.nn.CappedGELU
+        cap_value: 10
+      _target_: experiments.weather.models.dlwp_healpix.layers.TransposedConvUpsample
+      in_channels: 3
+      out_channels: 1
+      upsampling: 2
+    recurrent_block:
+      _target_: experiments.weather.models.dlwp_healpix.layers.ConvGRUBlock
+      _recursive_: false
+      in_channels: 3
+      kernel_size: 1
+    output_layer:
+      _target_: experiments.weather.models.dlwp_healpix.layers.BasicConvBlock
+      in_channels: 3
+      out_channels: 2
+      kernel_size: 1
+      dilation: 1
+      n_layers: 1
+    _target_: experiments.weather.models.dlwp_healpix.layers.UNetDecoder
+    _recursive_: false
+    n_channels:
+    - 34
+    - 68
+    - 136
+    dilations:
+    - 4
+    - 2
+    - 1
+  _target_: experiments.weather.models.dlwp_healpix.HEALPixRecUNet
+  _recursive_: false
+  presteps: 1
+  input_time_dim: ${data.input_time_dim}
+  output_time_dim: ${data.output_time_dim}
+  delta_time: ${data.time_step}
+  input_channels: 7
+  output_channels: 7
+  n_constants: 2
+  decoder_input_channels: 1
+  enable_nhwc: false
+  enable_healpixpad: false

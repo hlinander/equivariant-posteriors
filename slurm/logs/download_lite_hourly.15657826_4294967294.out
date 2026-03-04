@@ -1,0 +1,40 @@
+[92m[Compute environment] paths: 
+[92m[Paths] checkpoints: /proj/heal_pangu/eqp/checkpoints (/proj/heal_pangu/eqp/checkpoints)[0m
+[92m[Paths] locks: locks (/home/x_piero/equivariant-posteriors/locks)[0m
+[92m[Paths] distributed_requests: distributed_requests (/home/x_piero/equivariant-posteriors/distributed_requests)[0m
+[92m[Paths] artifacts: /proj/heal_pangu/eqp/artifacts (/proj/heal_pangu/eqp/artifacts)[0m
+[92m[Paths] datasets: /proj/heal_pangu/datasets (/proj/heal_pangu/datasets)[0m[0m
+Downloaded 2019_01_1_00:00:00
+Downloaded 2019_01_1_02:00:00
+Downloaded 2019_01_1_04:00:00
+Downloaded 2019_01_1_06:00:00
+Downloaded 2019_01_1_08:00:00
+Downloaded 2019_01_1_10:00:00
+Downloaded 2019_01_1_12:00:00
+Downloaded 2019_01_1_14:00:00
+Downloaded 2019_01_1_16:00:00
+Downloaded 2019_01_1_18:00:00
+Downloaded 2019_01_1_20:00:00
+Downloaded 2019_01_1_22:00:00
+Downloaded 2019_01_2_00:00:00
+Downloaded 2019_01_2_02:00:00
+Downloaded 2019_01_2_04:00:00
+Downloaded 2019_01_2_06:00:00
+Downloaded 2019_01_2_08:00:00
+Downloaded 2019_01_2_10:00:00
+Downloaded 2019_01_2_12:00:00
+Downloaded 2019_01_2_14:00:00
+Downloaded 2019_01_2_16:00:00
+Downloaded 2019_01_2_18:00:00
+Downloaded 2019_01_2_20:00:00
+Downloaded 2019_01_2_22:00:00
+Downloaded 2019_01_3_00:00:00
+Downloaded 2019_01_3_02:00:00
+Downloaded 2019_01_3_04:00:00
+Downloaded 2019_01_3_06:00:00
+[Does not exist] /proj/heal_pangu/datasets/era5_lite_hourly/era5_grib_monthly/surface_2019_01_3_08:00:00.nc
+Downloading ERA5SampleConfig(year='2019', month='01', day=np.int64(3), time='08:00:00')
+Target /proj/heal_pangu/datasets/era5_lite_hourly/era5_grib_monthly
+[run] Mode: cpu, Device: cpu
+[run] /home/x_piero/equivariant-posteriors/.venv/bin/python3 experiments/weather/download_lite_hourly.py
+

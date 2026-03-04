@@ -1,0 +1,61 @@
+Warp DeprecationWarning: The namespace `warp.context` will soon be removed from the public API. It can still be accessed from `warp._src.context` but might be changed or removed without notice.
+Warp DeprecationWarning: The symbol `warp.context.Device` will soon be removed from the public API. Use `warp.Device` instead.
+[92m[Compute environment] paths: 
+[92m[Paths] checkpoints: /proj/heal_pangu/eqp/checkpoints (/proj/heal_pangu/eqp/checkpoints)[0m
+[92m[Paths] locks: locks (/home/x_piero/equivariant-posteriors/locks)[0m
+[92m[Paths] distributed_requests: distributed_requests (/home/x_piero/equivariant-posteriors/distributed_requests)[0m
+[92m[Paths] artifacts: /proj/heal_pangu/eqp/artifacts (/proj/heal_pangu/eqp/artifacts)[0m
+[92m[Paths] datasets: /proj/heal_pangu/datasets (/proj/heal_pangu/datasets)[0m[0m
+Using device cuda
+Using 16 workers [SLURM_CPUS_ON_NODE]
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+Wrote request file distributed_training_requests/lock_b214d4e872231022
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+[Device] cuda
+Wrote request file distributed_training_requests/lock_b214d4e872231022
+Trying to fetch train run...
+Aquired lock distributed_training_requests/lock_b214d4e872231022
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+locks/lock_e377dad78167f2c9
+Skipping large file slurm/logs/train_adapted.15615231_4294967294.err
+Skipping large file croc
+Skipping large file slurm/logs/train_adapted.15614327_4294967294.err
+Skipping large file croc_v10.3.1_Linux-64bit.tar.gz
+Trying to deserialize at /proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/model_id
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/model
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/optimizer
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/epoch
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/batch
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/train_metrics
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/validation_metrics
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/train_run
+/proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9/timing_metric
+Connecting to duck...
+Connected.
+Serializing config...
+Render duck
+[analytics] Loaded config from env.py: Analytics: S3 (eqp-metrics-staging2) → DuckLake (37.27.45.22)
+Starting periodic export to s3 staging (interval: 300s)...
+Serialized at  /proj/heal_pangu/eqp/checkpoints/checkpoint_e377dad78167f2c9
+[10:11:00] [gpu_monitor] Initialized with 1 GPU(s)
+[10:11:00] [gpu_monitor] Started (sample: 1.0s, record: 10.0s)
+Run epochs...
+[export] Exporting 204 rows from model_parameter to s3://eqp-metrics-staging2/staging/model_parameter/7815995448756826076_1772529061_037703.parquet
+[export] Successfully exported 204 rows to s3://eqp-metrics-staging2/staging/model_parameter/7815995448756826076_1772529061_037703.parquet
+[export] No new data to sync for train_step_metric
+[export] No new data to sync for train_steps
+[export] No new data to sync for checkpoint_sample_metric
+[export] Exporting 1 rows from models to s3://eqp-metrics-staging2/staging/models/1772529061_714439.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/models/1772529061_714439.parquet
+[export] Exporting 1 rows from runs to s3://eqp-metrics-staging2/staging/runs/1772529062_155022.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/runs/1772529062_155022.parquet
+[export] Exporting 1 rows from checkpoints to s3://eqp-metrics-staging2/staging/checkpoints/1772529062_471212.parquet
+[export] Successfully exported 1 rows to s3://eqp-metrics-staging2/staging/checkpoints/1772529062_471212.parquet
+[export] No new data to sync for artifacts
+[export] No new data to sync for artifact_chunks
+[10:11:03] [export] Exported 4 files to S3 (next in 300s)
+[run] Mode: torchrun, Device: cuda
+[run] torchrun --nnodes=1 --nproc_per_node=1 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 experiments/weather/persisted_configs/pear_conv.py
+

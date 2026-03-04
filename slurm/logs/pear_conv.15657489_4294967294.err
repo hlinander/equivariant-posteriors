@@ -1,0 +1,33 @@
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+/home/x_piero/equivariant-posteriors/.venv/lib64/python3.11/site-packages/dill/_dill.py:422: PicklingWarning: Cannot locate reference to <class 'torch.optim.adamw.AdamW'>.
+  StockPickler.save(self, obj, save_persistent_id)
+Traceback (most recent call last):
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/persisted_configs/pear_conv.py", line 83, in <module>
+    distributed_train(ensemble_config.members)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 96, in distributed_train
+    do_train_run(distributed_train_run, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/distributed_trainer.py", line 54, in do_train_run
+    do_training(distributed_train_run.train_run, state, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 464, in do_training
+    do_training_unlocked(train_run, state, device_id)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 437, in do_training_unlocked
+    train(train_run, state, train_epoch_spec)
+  File "/home/x_piero/equivariant-posteriors/lib/train.py", line 180, in train
+    loss_val = loss(output, batch)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/home/x_piero/equivariant-posteriors/experiments/weather/persisted_configs/pear_conv.py", line 29, in reg_loss
+    return loss(output["logits_surface"], batch["target_surface"])
+                ~~~~~~^^^^^^^^^^^^^^^^^^
+TypeError: tuple indices must be integers or slices, not str
+[2026-03-03T10:08:04.069] error: *** JOB 15657489 ON node004 CANCELLED AT 2026-03-03T10:08:04 DUE to SIGNAL Terminated ***
