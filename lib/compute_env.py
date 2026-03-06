@@ -73,7 +73,7 @@ def _create_default_env():
         env_path.write_text(_DEFAULT_ENV_TEMPLATE)
 
 
-def env():
+def env() -> ComputeEnvironment:
     global _current_env
     if _current_env is None:
         _create_default_env()

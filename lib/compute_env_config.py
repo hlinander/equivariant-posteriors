@@ -6,6 +6,7 @@ NOTE: For S3 and Postgres configuration, use AnalyticsConfig (lib/analytics_conf
 - Central database (DuckDB/DuckLake) configuration
 - Export/ingestion intervals
 """
+
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -43,3 +44,4 @@ class Paths:
 @dataclass
 class ComputeEnvironment:
     paths: Paths = field(default_factory=lambda: Paths())
+    envs: dict = None  # Extra environment variables

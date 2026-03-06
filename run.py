@@ -15,11 +15,13 @@ import sys
 import subprocess
 import resource
 from dataclasses import dataclass
+from lib.compute_env import env as compute_env
 
 
 @dataclass
 class RunConfig:
     """Configuration for a run mode"""
+
     device: str
     runner: list[str]  # Command prefix
     env_vars: dict[str, str]
@@ -67,6 +69,7 @@ def detect_default_mode() -> str:
     """Auto-detect the best mode based on available hardware"""
     try:
         import torch
+
         if torch.cuda.is_available():
             return "torchrun"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -82,13 +85,15 @@ def main():
         usage="%(prog)s [--mode MODE] script.py [script_args...]",
     )
     parser.add_argument(
-        "--mode", "-m",
+        "--mode",
+        "-m",
         choices=["auto", "torchrun", "cuda", "mps", "cpu", "debug"],
         default="auto",
         help="Run mode (default: auto-detect)",
     )
     parser.add_argument(
-        "--nproc", "-n",
+        "--nproc",
+        "-n",
         type=int,
         default=1,
         help="Number of processes for torchrun (default: 1)",
@@ -117,6 +122,8 @@ def main():
     env["PYTHONBREAKPOINT"] = "ipdb.set_trace"
     env["PYTHONUNBUFFERED"] = "1"
     env.update(config.env_vars)
+    if compute_env().envs is not None:
+        env.update(compute_env().envs)
 
     # Build command
     cmd = config.runner + [args.script] + remaining
