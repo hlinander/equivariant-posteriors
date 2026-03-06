@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Union
 from typing import Sequence
@@ -5,12 +6,12 @@ import numpy as np
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
-from physicsnemo.models.dlwp_healpix.layers.healpix_blocks import ConvNeXtBlock, TransposedConvUpsample
-from physicsnemo.models.dlwp_healpix.layers.healpix_encoder import UNetEncoder
-from omegaconf import DictConfig, OmegaConf, OmegaConf
+from omegaconf import DictConfig
 from hydra.utils import instantiate
 
 from hydra import compose, initialize_config_dir
+
+from experiments.weather.data import DataHP, DataHPConfig 
 
 def _load_original_config(config_dir: str | Path, config_name: str = "config", overrides=["model.presteps=0"]) -> DictConfig: 
     """Load Hydra config, original NVIDIA's config"""
@@ -28,8 +29,8 @@ class HEALPixPearConvConfig:
     """
     model_config_path: str = "experiments/weather/persisted_configs/dlwp_healpix/configs"
     input_channels: int = 69 # 4 surface + 65 upper (13 levels * 5 variables)
-    n_channels: Sequence = (16, 32)
-    n_layers: Sequence = (2, 2)
+    n_channels: Sequence = (136, 68, 34)
+    n_layers: Sequence = (2, 2, 1)
 
     def serialize_human(self):
         dict = self.__dict__.copy()
@@ -42,10 +43,12 @@ class HEALPixPearConv(nn.Module):
     changing attention blocks with ConvNext blocks described in this paper: https://arxiv.org/abs/2311.06253.
     """
 
-    def __init__(self, config: HEALPixPearConvConfig, data_spec):
+    def __init__(self, config: HEALPixPearConvConfig, data_spec=None):
         super().__init__()
 
         original_config = _load_original_config(config.model_config_path)
+        self.data_spec = data_spec
+
 
         self.encoder = instantiate(
             original_config['model']['encoder'],
@@ -64,57 +67,61 @@ class HEALPixPearConv(nn.Module):
         )
 
     def dataset_input_reshape(self, batch):
+        """
+        I am considering that the input shape should be:
+        - (B, C, n_pix), (B, C, L, n_pix)
+        """
+
         surface = batch['input_surface']
         upper = batch['input_upper']
         upper = upper.reshape(
             upper.shape[0],
-            upper.shape[1],
-            upper.shape[2] * upper.shape[3],
-            upper.shape[4],
+            upper.shape[1] * upper.shape[2],
+            upper.shape[3],
         )
 
         # Concat of surface and upper 
-        x = torch.cat([surface, upper], dim=2) # (B, T, C, n_pix)
+        x = torch.cat([surface, upper], dim=1) # (B, C, n_pix)
         x = x.reshape(
             x.shape[0],
             12,
+            1, # Time dimension, we will consider it as one for now
             x.shape[1], 
-            x.shape[2], 
-            np.sqrt(x.shape[3] // 12).astype(int),
-            np.sqrt(x.shape[3] // 12).astype(int),
+            np.sqrt(x.shape[2] // 12).astype(int),
+            np.sqrt(x.shape[2] // 12).astype(int),
         ) # (B, F, T, C, H, W)
-
-        # Now we assume that T is one
-        if x.shape[2] != 1:
-            raise ValueError(f"Expected input time dimension to be 1, but got {x.shape[2]}")
         
         x = x.reshape(x.shape[0] * x.shape[1] * x.shape[2], x.shape[3], x.shape[4], x.shape[5]) # (B*F*T, C, H, W)
         
         return x
 
     def dataset_output_reshape(self, x, batch):
+        """
+        x.shape is (B*F*T, C, H, W)
+        I am considering that the output shape should be:
+        - (B, C, n_pix), (B, C, L, n_pix)
+        """
         B = batch['input_surface'].shape[0]
         F = 12
         T = 1
         C = x.shape[1]
         layer_upper = batch['input_upper'].shape[2]
-        C_upper = batch['input_upper'].shape[3]
-        C_surface = batch['input_surface'].shape[2]
+        C_upper = batch['input_upper'].shape[1]
+        C_surface = batch['input_surface'].shape[1]
         H = x.shape[2]
         W = x.shape[3]
 
-        x = x.reshape(B, F, T, C, H, W) # (B, F, T, C, H, W)
-        x = x.reshape(B, T, C, F*H*W) # (B, T, C, n_pix)
+        x = x.reshape(B, F, C, H, W) # (B, F, C, H, W)
+        x = x.reshape(B, C, F*H*W) # (B, C, n_pix)
 
-        x_surface = x[:, :, :C_surface, :] # (B, T, C_surface, n_pix)
-        x_upper = x[:, :, C_surface:, :] # (B, T, C_upper*layer_upper, n_pix)
+        x_surface = x[:, :C_surface, :] # (B, C_surface, n_pix)
+        x_upper = x[:, C_surface:, :] # (B, C_upper*layer_upper, n_pix)
         x_upper = x_upper.reshape(
             x_upper.shape[0],
-            x_upper.shape[1],
-            layer_upper,
             C_upper,
-            x_upper.shape[3],
-        ) # (B, T, layer_upper, C_upper//layer_upper, n_pix)
+            layer_upper,
+            x_upper.shape[2],
+        ) # (B, layer_upper, C_upper//layer_upper, n_pix)
 
         return x_surface, x_upper
     
@@ -153,8 +160,8 @@ if __name__ == "__main__":
     
     from experiments.weather.data import DataHPConvConfig, DataHPConv
 
-    data_config = DataHPConvConfig(nside=64, start_year=2007, end_year=2007)
-    data = DataHPConv(data_config) 
+    data_config = DataHPConfig(nside=64, start_year=2007, end_year=2007)
+    data = DataHP(data_config) 
     keys = ['input_surface', 'input_upper']
 
     batch = {key: torch.asarray(data[0][key]).unsqueeze(0) for key in keys} # Add batch dimension
@@ -162,9 +169,9 @@ if __name__ == "__main__":
 
     model = HEALPixPearConv(HEALPixPearConvConfig())
 
-    pred_surface, pred_upper = model(batch)
+    pred = model(batch)
 
-    print("Output shape:", pred_surface.shape, pred_upper.shape)
+    print("Output shape:", pred['logits_surface'].shape, pred['logits_upper'].shape)
 
 
 

@@ -33,8 +33,8 @@ def create_config(ensemble_id, epoch=100, dataset_years=10):
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
         model_config=HEALPixPearConvConfig(),
-        train_data_config=DataHPConvConfig(nside=NSIDE, end_year=2007 + dataset_years),
-        val_data_config=DataHPConvConfig(nside=NSIDE, start_year=2019, end_year=2019),
+        train_data_config=DataHPConfig(nside=NSIDE, end_year=2007 + dataset_years),
+        val_data_config=DataHPConfig(nside=NSIDE, start_year=2019, end_year=2019),
         loss=reg_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
@@ -62,7 +62,6 @@ def create_config(ensemble_id, epoch=100, dataset_years=10):
         visualize_terminal=False,
     )
 
-    print(ComputeConfig().serialize_human())
 
     return train_run
 
