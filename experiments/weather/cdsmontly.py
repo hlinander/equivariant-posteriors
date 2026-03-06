@@ -9,6 +9,7 @@ import urllib3
 import os
 from datetime import datetime, timedelta
 from lib.compute_env import env
+from lib.log import log
 
 # import ssl
 
@@ -94,21 +95,26 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
     os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
     if not sample_config.surface_grib_path().is_file():
-        print(f"Downloading {sample_config}")
-        print(f"Target {ERA5_GRIB_DATA_PATH}")
+        log("CDS", f"Downloading {sample_config}")
+        log("CDS", f"Target {ERA5_GRIB_DATA_PATH}")
         get_surface_variables(
             sample_config.surface_grib_path(), **sample_config.__dict__
         )
-    xr_grib = xr.load_dataset(sample_config.surface_grib_path())
+    log("CDS", "Loading surface grib...")
+    xr_grib = xr.load_dataset(sample_config.surface_grib_path(), engine="cfgrib")
     surface_nc_file = get_tmp_netcat_file()
+    log("CDS", "To netcdf...")
     xr_grib.to_netcdf(surface_nc_file)
 
     if not sample_config.upper_grib_path().is_file():
         get_upper_variables(sample_config.upper_grib_path(), **sample_config.__dict__)
-    xr_grib = xr.load_dataset(sample_config.upper_grib_path())
+    log("CDS", "Loading upper grib...")
+    xr_grib = xr.load_dataset(sample_config.upper_grib_path(), engine="cfgrib")
     upper_nc_file = get_tmp_netcat_file()
+    log("CDS", "To netcdf...")
     xr_grib.to_netcdf(upper_nc_file)
 
+    log("CDS", "Preloading NC...")
     surface_ds = xr.open_dataset(surface_nc_file, backend_kwargs=dict(lock=False))
     upper_ds = xr.open_dataset(upper_nc_file, backend_kwargs=dict(lock=False))
     surface_ds = surface_ds.sel(
@@ -118,6 +124,7 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
         time=f"{sample_config.year}-{sample_config.month}-{sample_config.day} {sample_config.time}"
     ).load()
 
+    log("CDS", "Closing and removing...")
     surface_ds.close()
     upper_ds.close()
     os.remove(surface_nc_file)
