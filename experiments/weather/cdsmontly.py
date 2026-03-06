@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 import xarray as xr
 import numpy as np
@@ -14,6 +15,21 @@ from lib.compute_env import env
 # ssl._create_default_https_context = ssl._create_unverified_context
 WEATHER_BASE = Path(os.getenv("WEATHER_DATASET", env().paths.datasets / "era5_lite"))
 ERA5_GRIB_DATA_PATH = WEATHER_BASE / "era5_grib_monthly"
+
+
+def get_netcat_tmp_dir():
+    if "SNIC_TMP" in os.environ:
+        tmpdir = Path(os.environ["SNIC_TMP"])
+        if tmpdir.is_dir():
+            return tmpdir
+    return Path("/tmp")
+
+
+def get_tmp_netcat_file():
+    tmp_dir = get_netcat_tmp_dir()
+    fd, path_str = tempfile.mkstemp(dir=tmp_dir, suffix=".nc")
+    os.close(fd)
+    return path_str
 
 
 @dataclass
@@ -43,12 +59,6 @@ class ERA5SampleConfig:
 
     def upper_grib(self):
         return Path(f"{self.upper_ident()}.grib")
-
-    def surface_path(self):
-        return ERA5_GRIB_DATA_PATH / self.surface_file()
-
-    def upper_path(self):
-        return ERA5_GRIB_DATA_PATH / self.upper_file()
 
     def surface_grib_path(self):
         return ERA5_GRIB_DATA_PATH / self.surface_grib()
@@ -83,57 +93,35 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
-    if not sample_config.surface_path().is_file():
-        print(f"[Does not exist] {sample_config.surface_path()}")
+    if not sample_config.surface_grib_path().is_file():
         print(f"Downloading {sample_config}")
         print(f"Target {ERA5_GRIB_DATA_PATH}")
-        if not sample_config.surface_grib_path().is_file():
-            get_surface_variables(
-                sample_config.surface_grib_path(), **sample_config.__dict__
-            )
-        xr_grib = xr.load_dataset(sample_config.surface_grib_path())
-        tmp_path = f"{sample_config.surface_path().absolute().as_posix()}_tmp"
-        xr_grib.to_netcdf(tmp_path)
-        shutil.move(tmp_path, sample_config.surface_path())
-        # np.save(sample_config.surface_path(), xr_grib.to_array().to_numpy())
+        get_surface_variables(
+            sample_config.surface_grib_path(), **sample_config.__dict__
+        )
+    xr_grib = xr.load_dataset(sample_config.surface_grib_path())
+    surface_nc_file = get_tmp_netcat_file()
+    xr_grib.to_netcdf(surface_nc_file)
 
-    if not sample_config.upper_path().is_file():
-        if not sample_config.upper_grib_path().is_file():
-            get_upper_variables(
-                sample_config.upper_grib_path(), **sample_config.__dict__
-            )
-        xr_grib = xr.load_dataset(sample_config.upper_grib_path())
-        tmp_path = f"{sample_config.upper_path().absolute().as_posix()}_tmp"
-        xr_grib.to_netcdf(tmp_path)
-        shutil.move(tmp_path, sample_config.upper_path())
-        # np.save(sample_config.upper_path(), xr_grib.to_array().to_numpy())
+    if not sample_config.upper_grib_path().is_file():
+        get_upper_variables(sample_config.upper_grib_path(), **sample_config.__dict__)
+    xr_grib = xr.load_dataset(sample_config.upper_grib_path())
+    upper_nc_file = get_tmp_netcat_file()
+    xr_grib.to_netcdf(upper_nc_file)
 
-    surface_ds = xr.open_dataset(
-        sample_config.surface_path(), backend_kwargs=dict(lock=False)
-    )
-    upper_ds = xr.open_dataset(
-        sample_config.upper_path(), backend_kwargs=dict(lock=False)
-    )
+    surface_ds = xr.open_dataset(surface_nc_file, backend_kwargs=dict(lock=False))
+    upper_ds = xr.open_dataset(upper_nc_file, backend_kwargs=dict(lock=False))
     surface_ds = surface_ds.sel(
         time=f"{sample_config.year}-{sample_config.month}-{sample_config.day} {sample_config.time}"
-    )
+    ).load()
     upper_ds = upper_ds.sel(
         time=f"{sample_config.year}-{sample_config.month}-{sample_config.day} {sample_config.time}"
-    )
+    ).load()
 
-    # surface = np.load(sample_config.surface_path()).astype(np.float32)
-    # upper = np.load(sample_config.upper_path()).astype(np.float32)
-
-    # xr_grib = xr.load_dataset(sample_config.surface_grib_path())
-    # metadata_ds = xr.Dataset(attrs=xr_grib.attrs)
-
-    # for var in xr_grib.data_vars:
-    # Add the variable structure with dummy data (e.g., a scalar 0)
-    # metadata_ds[var] = (xr_grib[var].dims, 0, xr_grib[var].attrs)
-
-    # Copy coordinates (without data) and their attributes
-    # for coord in xr_grib.coords:
-    # metadata_ds.coords[coord] = (xr_grib[coord].dims, 0, xr_grib[coord].attrs)
+    surface_ds.close()
+    upper_ds.close()
+    os.remove(surface_nc_file)
+    os.remove(upper_nc_file)
 
     return ERA5Sample(surface=surface_ds, upper=upper_ds)
 
