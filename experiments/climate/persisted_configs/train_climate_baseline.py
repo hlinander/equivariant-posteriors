@@ -7,6 +7,7 @@ import json
 from typing import List
 import math
 import matplotlib.pyplot as plt
+import os
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
@@ -21,8 +22,8 @@ from lib.regression_metrics import create_regression_metrics
 
 from lib.ddp import ddp_setup
 
-# from lib.ensemble import create_ensemble_config
-# from lib.ensemble import create_ensemble
+from lib.ensemble import create_ensemble_config
+from lib.ensemble import create_ensemble
 
 # from lib.ensemble import request_ensemble
 # from lib.ensemble import symlink_checkpoint_files
@@ -49,25 +50,88 @@ from lib.serialization import (
 )
 
 
-from experiments.climate.climateset_data import ClimatesetHPConfig
-from experiments.climate.climateset_data import ClimatesetDataHP
+from experiments.climate.climateset_data_hp import ClimatesetHPConfig
+from experiments.climate.climateset_data_hp import ClimatesetDataHP
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig
 from experiments.climate.models.swin_hp_climateset import SwinHPClimateset
 
+ORIGINAL_OPENBURNING_MODEL_MAPPING = {
+    "other": ("all-fires", "all-fires"),
+    "CESM2-WACCM": ("no-fires", "no-fires"),
+    "CNRM-ESM2-1": ("anthro-fires", "anthro-fires"),
+    "CMCC-ESM2": ("no-fires", "no-fires"),
+    "EC-Earth3-Veg": ("anthro-fires", "anthro-fires"),
+    "EC-Earth3-Veg-LR": ("anthro-fires", "anthro-fires"),
+    "MPI-ESM1-2-LR": ("anthro-fires", "anthro-fires"),
+    "NorESM2-LM": ("no-fires", "no-fires"),
+    "NorESM2-MM": ("no-fires", "no-fires"),
+    "GFDL-ESM4": ("no-fires", "no-fires"),
+    "TaiESM1": ("anthro-fires", "all-fires"),
+    "CESM2": ("anthro-fires", "all-fires"),
+    "MRI-ESM-2.0": ("anthro-fires", "all-fires"),
+}
 
-NSIDE = 32
+NSIDE = 64
+CLIMATE_MODELS = [
+    ("AWI-CM-1-1-MR", "r1i1p1f1"),
+    ("BCC-CSM2-MR", "r1i1p1f1"),
+    ("CAS-ESM2-0",   "r3i1p1f1"),
+    ("CNRM-CM6-1-HR", "r1i1p1f2"),
+    ("EC-Earth3",    "r1i1p1f1"),
+    ("EC-Earth3-Veg-LR", "r1i1p1f1"),
+    ("FGOALS-f3-L",  "r1i1p1f1"),
+    ("GFDL-ESM4",    "r1i1p1f1"),
+    ("INM-CM4-8",    "r1i1p1f1"),
+    ("INM-CM5-0",    "r1i1p1f1"),
+    ("MPI-ESM1-2-HR", "r1i1p1f1"),
+    ("MRI-ESM2-0",   "r1i1p1f1"),
+    ("NorESM2-LM",   "r1i1p1f1"), # Note: NorESM2-LM has multiple ensemble members
+    ("NorESM2-MM",   "r1i1p1f1"),
+    ("TaiESM1",      "r1i1p1f1"),
+]
+
+# Not included now
+# CAMS-CSM1-0/r1i1p1f1
+# CMIP6/CESM2/r4i1p1f1
+# CMIP6/CMCC-CM2-SR5/r1i1p1f1
+#("EC-Earth3-Veg", "r1i1p1f1"),
 
 
-# def create_config(ensemble_id, epoch=200, dataset_years=10):
-def create_config(ensemble_id, epoch=200):
-    loss = torch.nn.L1Loss()
+# CMIP6/CMCC-ESM2/r1i1p1f1
+# CMIP6/CNRM-CM6-1-HR/r1i1p1f2
+# CMIP6/EC-Earth3/r1i1p1f1
+# CMIP6/EC-Earth3-Veg/r1i1p1f1
+# CMIP6/EC-Earth3-Veg-LR/r1i1p1f1
+# CMIP6/FGOALS-f3-L/r1i1p1f1
+# CMIP6/GFDL-ESM4/r1i1p1f1
+# CMIP6/INM-CM4-8/r1i1p1f1
+# CMIP6/INM-CM5-0/r1i1p1f1
+# CMIP6/MPI-ESM1-2-HR/r1i1p1f1
+# CMIP6/MRI-ESM2-0/r1i1p1f1
+# CMIP6/NorESM2-LM/r1i1p1f1
+# CMIP6/NorESM2-LM/r2i1p1f1
+# CMIP6/NorESM2-LM/r3i1p1f1
+# CMIP6/NorESM2-MM/r1i1p1f1
+# CMIP6/TaiESM1/r1i1p1f1
 
-    def reg_loss(output, batch): # TODO: Change to something appropriate for climate
-        # return loss(output["logits_output"], batch["target"]) + 0.25 * loss(
-        #     output["logits_output"], batch["target"]
-        # )
-        return loss(output["logits_output"], batch["target"])
+
+
+def create_config(ensemble_id, epoch=200, batch_size=12,):
+    loss = torch.nn.MSELoss()
     
+    model, ensemble = CLIMATE_MODELS[ensemble_id]
+    print(model, ensemble)
+
+    def loss_fn(output, batch):
+        return loss(output["logits_output"], batch["target"])
+
+    # params same for train and val
+    random_seed = 7
+    val_fraction = 0.1
+    seq_len = 1
+    seq_to_seq = True
+    normalized = True
+
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
         model_config=SwinHPClimatesetConfig(
@@ -77,37 +141,65 @@ def create_config(ensemble_id, epoch=200):
             depths=[2, 6, 6, 2],
             num_heads=[6, 12, 12, 6],
             embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
-            window_size=[1, 64],  # int(32 * (NSIDE / 256)),
+            window_size=[1, 64],
             use_cos_attn=False,
             use_v2_norm_placement=True,
-            drop_rate=0,  # ,0.1,
-            attn_drop_rate=0.0,  # ,0.1,
+            drop_rate=0,
+            attn_drop_rate=0.0,
             drop_path_rate=0,
             rel_pos_bias="single",
-            shift_size=4,  # int(16 * (NSIDE / 256)),
+            shift_size=4,
             shift_strategy="ring_shift",
             ape=False,
             patch_size=16,
         ),
-        train_data_config=ClimatesetHPConfig(nside=NSIDE, years="2015-2100"),
-        val_data_config=None,  # DataHPConfig(nside=NSIDE),
-        loss=reg_loss,
+        train_data_config=ClimatesetHPConfig(
+            nside=NSIDE,
+            climate_model=model,
+            ensemble=ensemble,
+            scenarios=[#"historical", 
+                       "ssp126", "ssp370", "ssp585"],
+            split="train",
+            val_fraction=val_fraction,
+            random_seed=random_seed,
+            seq_len=seq_len,
+            seq_to_seq=seq_to_seq,
+            normalized=normalized,
+            cache=True,
+        ),
+        val_data_config=ClimatesetHPConfig(
+            nside=NSIDE,
+            climate_model=model,
+            ensemble=ensemble,
+            scenarios=[#"historical",
+                       "ssp126", "ssp370", "ssp585"],
+            split="val",
+            val_fraction=val_fraction,
+            random_seed=random_seed,
+            seq_len=seq_len,
+            seq_to_seq=seq_to_seq,
+            normalized=normalized,
+            cache=True,
+        ),
+        loss=loss_fn,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW,
-            kwargs=dict(weight_decay=3e-6, lr=5e-4),
+            kwargs=dict(
+                weight_decay=3e-6,
+                lr=2e-4
+            ),
         ),
-        batch_size=12, # kanske ska ökas?
+        batch_size=batch_size,
         ensemble_id=ensemble_id,
-        _version=17, # TODO: AM I even using versioning here?
+        _version=3,
     )
 
     train_eval = TrainEval(
-        train_metrics=[create_metric(reg_loss)],
-        validation_metrics=[],
+        train_metrics=[create_metric(loss_fn)],
+        validation_metrics=[create_metric(loss_fn)],
         log_gradient_norm=True,
-    )  # create_regression_metrics(torch.nn.functional.l1_loss, None)
-
-    train_run = TrainRun( # TODO: Change
+    )
+    train_run = TrainRun( 
         project="climate",
         compute_config=ComputeConfig(),
         train_config=train_config,
@@ -116,15 +208,17 @@ def create_config(ensemble_id, epoch=200):
         save_nth_epoch=1,
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=10,
-        validate_nth_epoch=20,
+        validate_nth_epoch=5,
         visualize_terminal=False,
-        notes=dict(shift="fixed: ring shift uses shift_size instead of window/2"),
     )
     return train_run
 
 
 if __name__ == "__main__":
-    #ddp_setup() should this be here, what does it do
+    task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0").strip()
+    variant_idx = int(task_id) if task_id else 0
+    print(f"SLURM_ARRAY_TASK_ID = {variant_idx}")
+
     data_factory.get_factory()
     data_factory.register_dataset(ClimatesetHPConfig, ClimatesetDataHP)
 
@@ -132,20 +226,20 @@ if __name__ == "__main__":
     mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
     
     print("Starting distributed training...")
-    config = create_config(ensemble_id=0)
+    config = create_config(ensemble_id=variant_idx, epoch=200)
     request_train_run(config)
     distributed_train([config])
     exit(0)
     
-    # ablation test for later 
+    # ablation test
     # configs = generic_ablation(
     #     create_config,
     #     dict(
-    #         ensemble_id=[0],
-    #         attn_drop_rate=[0.0, 0.1],
+    #         ensemble_id=[variant_idx],
+    #         batch_size=[24, 48, 96],
     #     ),
     # )
-    # distributed_train(config)
+    # distributed_train(configs)
 
     # ensemble_config = create_ensemble_config(
     #    lambda eid: create_config(eid, dataset_years=dataset_years), 1

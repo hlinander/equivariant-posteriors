@@ -1,15 +1,3 @@
-#!/usr/bin/env python
-"""
-Updated evaluation script using the new AnalyticsConfig-based export system.
-
-Key changes from old version:
-1. Removed db_prefix="pg." - metrics go to local DuckDB first
-2. Removed attach_pg() and insert_checkpoint_pg() - use export instead
-3. Added export_all() at the end to push to staging
-4. Metrics flow: Local DuckDB → Staging (S3/filesystem) → Central DB
-
-This allows the script to work in any environment (with or without Postgres access).
-"""
 import os
 import sys
 import importlib
@@ -17,6 +5,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from filelock import FileLock, Timeout
+import copy
 
 from lib.train_dataclasses import TrainConfig
 from lib.train_dataclasses import TrainRun
@@ -51,50 +40,33 @@ from lib.export import export_all
 
 from lib.distributed_trainer import distributed_train
 
-from experiments.climate.climateset_data import ClimatesetHPConfig, ClimatesetDataHP
+from experiments.climate.climateset_data_hp import ClimatesetHPConfig, ClimatesetDataHP
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig, SwinHPClimateset
 from experiments.climate.metrics import rmse_climate_hp
+from experiments.climate.climateset_data_hp import load_training_stats_from_config
 
 sys.stdout.flush()
 if __name__ == "__main__":
+    device_id = ddp_setup()
 
     print("Registering datasets and models...")
     data_factory.get_factory()
     data_factory.register_dataset(ClimatesetHPConfig, ClimatesetDataHP)
-
-    # anv'nder mf ist'llet f;r att registrera modellen f;rst h'r, borde jag g;ra det?
     mf = model_factory.get_factory()
     mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
 
-    device_id = ddp_setup()
-    
     module_name = Path(sys.argv[1]).stem
     spec = importlib.util.spec_from_file_location(module_name, sys.argv[1])
     config_file = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config_file)
+    train_run = config_file.create_config(0)
+
+    ds_train = ClimatesetDataHP(train_run.train_config.train_data_config)
 
     epoch = int(sys.argv[2])
     print(f"[eval] Evaluating epoch {epoch}")
-    train_run = config_file.create_config(0)
     train_run.epochs = epoch
-    
-    ds_train = ClimatesetDataHP(train_run.train_config.train_data_config)
 
-    val_config = train_run.train_config.val_data_config
-    if val_config is None:
-        print("No validation config specified, using train config with validation split")
-        val_config = train_run.train_config.train_data_config
-    
-    ds_val = ClimatesetDataHP(val_config)
-    dl_val = torch.utils.data.DataLoader(
-        ds_val,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-    )
-
-
-    # Deserialize with single train_run
     deser_config = DeserializeConfig(
         train_run=train_run,
         device_id=device_id,
@@ -108,13 +80,24 @@ if __name__ == "__main__":
     #     device_id=device_id,
     # )
 
+    test_config = copy.deepcopy(deser_config)
+    test_config.scenarios = ["ssp245"]
+    test_config.split = "test"
+    test_ds = ClimatesetDataHP(test_config)
+    test_sample = test_ds[0]
+    print("Test sample keys:", test_sample.keys())
+    stats = load_training_stats_from_config(deser_config)
+    print("Loaded training stats:", stats)
+    test_ds.set_normalization_stats(**stats)
+    test_sample = test_ds[0]
+    print("Test sample keys:", test_sample.keys())
+
     deser_model = deserialize_model(deser_config)
     if deser_model is None:
         print("Can't deserialize")
         exit(0)
     
-    ensure_duck(train_run)
-    insert_model_with_model_id(train_run, deser_model.model_id)
+    #insert_model_with_model_id(train_run, deser_model.model_id)
 
     result_path = prepare_results(
         f"{train_run.serialize_human()["run_id"]}",
@@ -129,11 +112,13 @@ if __name__ == "__main__":
         )
         insert_artifact(deser_model.model_id, name, path, ".npy")
 
+    #ensure_duck(train_run)
+
     model = deser_model.model
     model.eval()
 
     print("Computing RMSE...")
-    rmse_results = rmse_climate_hp(model, dl_val, device_id)
+    rmse_results = rmse_climate_hp(model, test_ds, device_id)
     print("RMSE results", rmse_results)
     
     # Save results
@@ -142,14 +127,10 @@ if __name__ == "__main__":
         rmse_results['rmse_per_channel']
     )
     
-    # Get variable names from dataset metadata
-    meta = ds_val.get_meta()
-    output_var_names = meta['output']['names']
-    
     # Get dataset class name for logging
     dataset_name = ClimatesetDataHP.__name__
-    
     # Log metrics per variable
+    output_var_names = deser_config.train_run.train_config.output_vars
     for var_idx, var_name in enumerate(output_var_names):
         rmse_value = rmse_results['rmse_per_channel'][var_idx].item()
         print(f"  RMSE {var_name}: {rmse_value:.6f}")

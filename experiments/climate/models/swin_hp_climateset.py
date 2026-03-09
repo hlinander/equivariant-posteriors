@@ -30,7 +30,7 @@ from experiments.weather.models.hp_windowing import (
     get_nest_win_idcs,
 )
 
-from experiments.climate.climateset_data import ClimatesetDataSpec
+from experiments.climate.climateset_data_hp import ClimatesetDataSpec
 
 from lib.serialize_human import serialize_human
 

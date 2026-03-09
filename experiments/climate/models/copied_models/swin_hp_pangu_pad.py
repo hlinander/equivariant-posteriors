@@ -1,8 +1,4 @@
 """
-Adapted duplicate of swin_hp_pangu_pad
-"""
-"""
-This implementation of the HEAL-SWIN-UNet was adapted from
 https://github.com/HuCaoFighting/Swin-Unet/blob/1c8b3e860dfaa89c98fa8e5ad1d4abd2251744f9/networks/swin_transformer_unet_skip_expand_decoder_sys.py
 """
 
@@ -21,18 +17,17 @@ import healpix as hp
 
 from lib.dataspec import DataSpec
 
-#from experiments.weather.models import hp_shifting
-from experiments.climate.models import hp_shifting # EDITED! FOR TESTING WITH D=1
-
+from experiments.weather.models import hp_shifting
 from experiments.weather.models.hp_windowing import (
     window_partition,
     window_reverse,
     get_nest_win_idcs,
 )
-
-from experiments.climate.climateset_data_hp import ClimatesetDataSpec
-
+from experiments.weather.data import DataSpecHP
 from lib.serialize_human import serialize_human
+
+INJECT_SAVE = None
+
 
 class Mlp(nn.Module):
     def __init__(
@@ -469,28 +464,38 @@ class PatchExpand(nn.Module):
 
         return x
 
+
 class FinalPatchExpand_Transpose(nn.Module):
-    # Changed to include output data spec
-    def __init__(self, patch_size, dim, data_spec_hp: ClimatesetDataSpec): # TODO: Make sure it has same input and output data spec
+    def __init__(self, patch_size, dim, data_spec_hp: DataSpecHP):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
-        
-        # if output_data_spec_hp is None:
-        #     output_data_spec_hp = data_spec_hp
-            
         self.conv_surface = nn.ConvTranspose1d(
             dim,
-            data_spec_hp.n_output_channels,
+            data_spec_hp.n_surface,
             kernel_size=patch_size,
             stride=patch_size,
+            # padding=patch_size + 2,
         )
+        self.conv_upper = nn.ConvTranspose2d(
+            dim,
+            data_spec_hp.n_upper,
+            kernel_size=[2, patch_size],
+            stride=[2, patch_size],
+            # padding=[0, patch_size + 2],
+        )
+        # self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: torch.Tensor):
+        # B D N C -> B C D N
         x = x.permute(0, 3, 1, 2)
+        # breakpoint()
         x_surface = self.conv_surface(x[:, :, 0, :])
+        x_upper = self.conv_upper(x[:, :, 1:, :])
         x_surface = x_surface.permute(0, 2, 1)
-        return x_surface
+        x_upper = x_upper.permute(0, 2, 3, 1)
+        # x = self.norm(x)
+        return x_surface, x_upper
 
 
 class FinalPatchExpand_X4(nn.Module):
@@ -618,7 +623,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, config, data_spec: ClimatesetDataSpec):
+    def __init__(self, config, data_spec: DataSpecHP):
         super().__init__()
         # assert config.patch_size % 4 == 0, "required for valid nside in deeper layers"
 
@@ -628,38 +633,36 @@ class PatchEmbed(nn.Module):
         self.num_hp_patches = hp.nside2npix(data_spec.nside) // config.patch_size
 
         self.proj_surface = nn.Conv1d(
-            data_spec.n_input_channels,
+            data_spec.n_surface,
             config.embed_dims[0],
             kernel_size=config.patch_size,
             stride=config.patch_size,
         )
-        # self.proj_upper = nn.Conv2d(
-        #     data_spec.n_upper,
-        #     config.embed_dims[0],
-        #     kernel_size=[2, config.patch_size],
-        #     stride=[2, config.patch_size],
-        # )
+        self.proj_upper = nn.Conv2d(
+            data_spec.n_upper,
+            config.embed_dims[0],
+            kernel_size=[2, config.patch_size],
+            stride=[2, config.patch_size],
+        )
 
-    def forward(self, x):
-        #print("PatchEmbed input shape:", x.shape)
-        B, C, N = x.shape
+    def forward(self, x_surface, x_upper):
+        B, C, N = x_surface.shape
         assert N == hp.nside2npix(
             self.data_spec.nside
         ), f"Input image size ({N}) doesn't match model ({self.data_spec.input_shape[0]})."
-        x = self.proj_surface(x)[:, :, None, :]
+        x_surface = self.proj_surface(x_surface)[:, :, None, :]
+        x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
+        x_upper = self.proj_upper(x_upper)
+        # breakpoint()
         # x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
-        # x_upper = self.proj_upper(x_upper)
-        # # breakpoint()
-        # # x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
-        # x = torch.concatenate([x_surface, x_upper], dim=2)
-        # # breakpoint()
+        x = torch.concatenate([x_surface, x_upper], dim=2)
+        # breakpoint()
         x = x.permute(0, 2, 3, 1)
         return x
 
 
-
 @dataclass
-class SwinHPSurfaceFlatConfig:
+class SwinHPPanguPadConfig:
     base_pix: int = 12
     nside: int = 64
     patch_size: int = 16
@@ -690,41 +693,98 @@ class SwinHPSurfaceFlatConfig:
     def serialize_human(self):
         return serialize_human(self.__dict__)  # dict(validation=self.validation)
 
-class SwinHPPanguPadSurfaceFlat(nn.Module):
-    def __init__(self, config: SwinHPSurfaceFlatConfig, data_spec: DataSpec, **kwargs):
+
+class SwinHPPanguPad(nn.Module):
+    r"""Swin Transformer A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer
+        using Shifted Windows` - https://arxiv.org/pdf/2103.14030
+
+    Args:
+        img_size (int | tuple(int)): Input image size. Default 224
+        patch_size (int | tuple(int)): Patch size. Default: 4
+        in_chans (int): Number of input image channels. Default: 3
+        num_classes (int): Number of classes for classification head. Default: 1000
+        embed_dim (int): Patch embedding dimension. Default: 96
+        depths (tuple(int)): Depth of each Swin Transformer layer.
+        num_heads (tuple(int)): Number of attention heads in different layers.
+        window_size (int): Window size. Default: 7
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
+        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None
+        drop_rate (float): Dropout rate. Default: 0
+        attn_drop_rate (float): Attention dropout rate. Default: 0
+        drop_path_rate (float): Stochastic depth rate. Default: 0.1
+        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
+        use_v2_norm_placement (bool): Whether to use changed norm layer placement from version 2
+        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False
+        patch_norm (bool): If True, add normalization after patch embedding. Default: True
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
+        use_cos_attn (bool): Whether to use cosine attention as in version 2 of swin transformer
+
+    """
+
+    def __init__(self, config: SwinHPPanguPadConfig, data_spec: DataSpec, **kwargs):
         super().__init__()
+
         self.config = config
         self.data_spec = data_spec
+
         self.num_layers = len(config.depths)
+        # self.num_features = int(config.embed_dim * 2 ** (self.num_layers - 1))
+        # self.num_features_up = int(config.embed_dim * 2)
 
-        self.patch_embed = PatchEmbed(config, data_spec)
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(config, data_spec=data_spec)
         num_hp_patches = self.patch_embed.num_hp_patches
-
         self.input_resolutions = [
-            [1, num_hp_patches],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches],
+            [8, num_hp_patches],
+            [8, num_hp_patches // 4],
+            [8, num_hp_patches // 4],
+            [8, num_hp_patches],
         ]
+
+        # absolute position embedding
+        # if config.ape:
+        #     self.absolute_pos_embed = nn.Parameter(
+        #         torch.zeros(1, num_patches, config.embed_dims[0])
+        #     )
+        #     trunc_normal_(self.absolute_pos_embed, std=0.02)
 
         self.pos_drop = nn.Dropout(p=config.drop_rate)
 
+        # stochastic depth
         dpr = [
             x.item()
             for x in torch.linspace(0, config.drop_path_rate, sum(config.depths))
-        ]
+        ]  # stochastic depth decay rule
 
+        # build encoder and bottleneck layers
         self.downsample = PatchMerging(config.embed_dims[0], dim_scale=2)
         self.upsample = PatchExpand(config.embed_dims[1], dim_scale=2)
-
+        # self.final_up = FinalPatchExpand_X4(
+        #     patch_size=config.patch_size,
+        #     dim=2 * config.embed_dims[-1],
+        # )
         self.final_up = FinalPatchExpand_Transpose(
             patch_size=config.patch_size,
             dim=2 * config.embed_dims[-1],
             data_spec_hp=data_spec,
         )
+        # self.final_up = FinalPatchExpand_Transpose(
+        #     patch_size=config.patch_size, dim=config.embed_dims[0]
+        # )
+        # self.output = nn.Conv1d(
+        #     in_channels=2 * config.embed_dims[-1],
+        #     # in_channels=config.embed_dims[0],  # 2 * config.embed_dims[-1],
+        #     out_channels=1,  # data_spec.output_shape[0],
+        #     kernel_size=1,
+        #     bias=False,
+        # )
 
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
+            # if config.decoder_class == UnetDecoder:
+            # downsample = PatchMerging if (i_layer < self.num_layers - 1) else None
+
             layer = BasicLayer(
                 dim=config.embed_dims[i_layer],
                 input_resolution=self.input_resolutions[i_layer],
@@ -747,36 +807,145 @@ class SwinHPPanguPadSurfaceFlat(nn.Module):
                 norm_layer=config.norm_layer,
                 use_v2_norm_placement=config.use_v2_norm_placement,
                 use_checkpoint=config.use_checkpoint,
-            ) # = SwinTransformerLayers in certain depth
+            )
             self.layers.append(layer)
 
+        # out_channels = self.num_features
         self.norm = config.norm_layer(config.embed_dims[1])
+        # self.mlp_in = torch.nn.Linear(
+        #     data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
+        #     # 147456,
+        #     # data_spec.input_shape[0] // config.patch_size * config.embed_dims[0],
+        #     256,
+        #     bias=True,
+        # )
+        # self.mlps = torch.nn.ModuleList(
+        #     [torch.nn.Linear(in_dim, out_dim) for in_dim, out_dim in [(256, 256)]]
+        # )
+        # self.mlp_out = torch.nn.Linear(
+        #     256,
+        #     data_spec.input_shape[1] // config.patch_size * config.embed_dims[0],
+        #     bias=True,
+        # )
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
+            if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def _forward(self, x_surface):
-        # x_surface: B, C_surface, N_pix
-        x = self.patch_embed(x_surface)   # B,1,N,C
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {"absolute_pos_embed"}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {"relative_position_bias_table"}
+
+    def _forward(self, batch_tuple):  # , batch):
+        x_surface, x_upper = batch_tuple  # ["input_surface"]
+        layer_out = []
+        # x_upper = batch["input_upper"]
+        # input = x
+        x = self.patch_embed(x_surface, x_upper)
+        # layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
+        # skip2 = x
+        # x = x + self.absolute_pos_embed
+        # x = x.permute(0, 2, 1)
         x = self.layers[0](x)
+        # layer_out.append(("layer0", x[0, 0].permute(1, 0).detach()))
         skip = x
         x = self.downsample(x)
+        # layer_out.append(("downsample", x[0, 0, :, 0].detach()))
         x = self.layers[1](x)
+        # layer_out.append(("layer1", x[0, 0].permute(1, 0).detach()))
         x = self.layers[2](x)
+        # layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
         x = self.norm(x)
+        # # layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
+        # # layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
+        # # layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
+        # # layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
         x = self.upsample(x)
+        # layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
         x = self.layers[3](x)
-        x = torch.concatenate([skip, x], dim=-1)
-        x_surface = self.final_up(x)
-        return x_surface
+        # layer_out.append(("layer3", x[0, 0].permute(1, 0).detach()))
+        x = torch.concatenate([skip, x], -1)
+        # layer_out.append(("post_skip", x[0, 0].permute(1, 0).detach()))
+        # breakpoint()
+        # x = torch.concatenate([x, x], -1)
+        x_surface, x_upper = self.final_up(x)
+        # layer_out.append(("final_up_surface", x_surface[0, :, 0].detach()))
+        # layer_out.append(("final_up_upper", x_upper[0, 0, :, 0].detach()))
+        x_surface = x_surface.permute(0, 2, 1)
+        x_upper = x_upper.permute(0, 3, 1, 2)
+        return x_surface, x_upper[:, :, :13, :], layer_out
+
+    def _forward_debug(self, batch_tuple):  # , batch):
+        x_surface, x_upper = batch_tuple  # ["input_surface"]
+        layer_out = []
+        # x_upper = batch["input_upper"]
+        # input = x
+        x = self.patch_embed(x_surface, x_upper)
+        layer_out.append(("patch_embed", x[0, 0, :, 0].detach()))
+        # skip2 = x
+        # x = x + self.absolute_pos_embed
+        # x = x.permute(0, 2, 1)
+        x = self.layers[0](x)
+        layer_out.append(("layer0", x[0, 0].permute(1, 0).detach()))
+        skip = x
+        x = self.downsample(x)
+        layer_out.append(("downsample", x[0, 0, :, 0].detach()))
+        x = self.layers[1](x)
+        layer_out.append(("layer1", x[0, 0].permute(1, 0).detach()))
+        x = self.layers[2](x)
+        layer_out.append(("layer2", x[0, 0].permute(1, 0).detach()))
+        x = self.norm(x)
+        # layer_out.append(("norm_c0", x[0, 0, :, 0].detach()))
+        # layer_out.append(("norm_c10", x[0, 0, :, 10].detach()))
+        # layer_out.append(("norm_c95", x[0, 0, :, 95].detach()))
+        # layer_out.append(("norm_c50", x[0, 0, :, 50].detach()))
+        x = self.upsample(x)
+        layer_out.append(("upsample", x[0, 0].permute(1, 0).detach()))
+        x = self.layers[3](x)
+        layer_out.append(("layer3", x[0, 0].permute(1, 0).detach()))
+        x = torch.concatenate([skip, x], -1)
+        layer_out.append(("post_skip", x[0, 0].permute(1, 0).detach()))
+        # breakpoint()
+        # x = torch.concatenate([x, x], -1)
+        x_surface, x_upper = self.final_up(x)
+        layer_out.append(("final_up_surface", x_surface[0, :, 0].detach()))
+        layer_out.append(("final_up_upper", x_upper[0, 0, :, 0].detach()))
+        x_surface = x_surface.permute(0, 2, 1)
+        x_upper = x_upper.permute(0, 3, 1, 2)
+        return x_surface, x_upper[:, :, :13, :], layer_out
+
+    def forward_tuple(self, batch):
+        surface, upper, _ = self._forward(
+            (batch["input_surface"], batch["input_upper"])
+        )
+        return surface, upper
 
     def forward(self, batch):
-        x_surface = self._forward(batch["input"])
-        return dict(logits_surface=x_surface)
+        # x = x.permute(0, 2, 1)  # B,C,N
+        # x = self.output(x)
+        x_surface, x_upper, layer_out = self._forward(
+            (batch["input_surface"], batch["input_upper"])
+        )
+
+        return dict(logits_surface=x_surface, logits_upper=x_upper)
+
+    def forward_debug(self, batch):
+        # x = x.permute(0, 2, 1)  # B,C,N
+        # x = self.output(x)
+        x_surface, x_upper, layer_out = self._forward_debug(
+            (batch["input_surface"], batch["input_upper"])
+        )
+
+        # return dict(logits_surface=x_surface, logits_upper=x_upper)
+        return dict(logits_surface=x_surface, logits_upper=x_upper, layer_out=layer_out)
