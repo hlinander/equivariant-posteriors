@@ -34,13 +34,22 @@ def main():
         default=[],
         help="Optional dependency group to include (e.g. --extra graphcast)",
     )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Use CPU resources instead of GPU (overrides SLURM config)",
+    )
     parser.add_argument("script", help="Python script to run")
 
     args, remaining = parser.parse_known_args()
 
     slurm = load_slurm_config_from_env()
-    # slurm.gpus = 0
-    # slurm.partition = "berzelius-cpu"
+    if args.cpu:
+        slurm.gpus = 0
+        slurm.cpus_per_task = 1
+        slurm.partition = "berzelius-cpu"
+        slurm.mem = "100G"
+
     job_name = args.job_name or Path(args.script).stem
 
     extras = [f"--extra {e}" for e in args.extra]
