@@ -31,7 +31,13 @@ from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
 from lib.ddp import ddp_setup
 from lib.ensemble import create_ensemble_config
 from lib.files import prepare_results
-from lib.serialization import deserialize_model, DeserializeConfig
+from lib.serialization import (
+    deserialize_model,
+    DeserializeConfig,
+    load_model_from_checkpoint,
+    load_checkpoint_data_config,
+    load_checkpoint_train_run_json,
+)
 
 from lib.data_factory import get_factory as get_dataset_factory
 
@@ -61,67 +67,24 @@ from experiments.weather.metrics import (
 )
 
 
-def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
-    device_id = ddp_setup()
-    print(f"Lead time {lead_time_days}d")
-    train_run = create_config(0, 10)
-
-    ds_train = DataHP(train_run.train_config.train_data_config)
-    ds_rmse_config = (
-        train_run.train_config.train_data_config.validation().with_lead_time_days(
-            lead_time_days
-        )
-    )
-    ds_rmse = DataHP(ds_rmse_config)
+def _create_eval_data(data_config, lead_time_days):
+    val_config = data_config.validation().with_lead_time_days(lead_time_days)
+    ds_rmse = DataHP(val_config)
     dl_rmse = torch.utils.data.DataLoader(
-        ds_rmse,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
+        ds_rmse, batch_size=1, shuffle=False, drop_last=False,
     )
     ds_acc = Climatology(
-        train_run.train_config.train_data_config.validation().with_lead_time_days(
-            lead_time_days
-        )
+        data_config.validation().with_lead_time_days(lead_time_days)
     )
     dl_acc = torch.utils.data.DataLoader(
-        ds_acc,
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
+        ds_acc, batch_size=1, shuffle=False, drop_last=False,
     )
+    return val_config, dl_rmse, dl_acc
+
+
+def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
+                    dl_rmse, dl_acc, device_id):
     era5_meta = MeteorologicalData()
-
-    print(f"[eval] Epoch {epoch}")
-    deser_config = DeserializeConfig(
-        train_run=create_config(ensemble_id, epoch),
-        device_id=device_id,
-    )
-    deser_model = deserialize_model(deser_config)
-    if deser_model is None:
-        print("Can't deserialize")
-        exit(0)
-
-    insert_model_with_model_id(train_run, deser_model.model_id)
-
-    result_path = prepare_results(
-        f'{train_run.serialize_human()["run_id"]}',
-        train_run,
-    )
-
-    def save_and_register(name, array):
-        path = result_path / f"{name}.npy"
-        np.save(
-            path,
-            array.detach().cpu().float().numpy(),
-        )
-        insert_artifact(deser_model.model_id, name, path, ".npy")
-
-    # Initialize local DuckDB (no Postgres connection needed)
-    ensure_duck(train_run)
-    insert_or_update_train_run(train_run, deser_model.model_id)
-
-    model = deser_model.model
     model.eval()
 
     print("ACC")
@@ -131,10 +94,9 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
         )
         acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
 
-        # CHANGED: Removed db_prefix="pg." - metrics go to local DuckDB
         for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
             insert_checkpoint_sample_metric(
-                deser_model.model_id,
+                model_id,
                 epoch * len(ds_train),
                 f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
@@ -146,7 +108,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
                 var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
-                    deser_model.model_id,
+                    model_id,
                     epoch * len(ds_train),
                     var_name,
                     ds_rmse_config.short_name(),
@@ -162,10 +124,9 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
         rmse_res = rmse_dh(model, dl_rmse, device_id)
         rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
 
-        # CHANGED: Removed db_prefix="pg."
         for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
             insert_checkpoint_sample_metric(
-                deser_model.model_id,
+                model_id,
                 epoch * len(ds_train),
                 f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
@@ -177,7 +138,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
                 var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
-                    deser_model.model_id,
+                    model_id,
                     epoch * len(ds_train),
                     var_name,
                     ds_rmse_config.short_name(),
@@ -188,10 +149,9 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
     else:
         rmse_res = rmse_hp(model, dl_rmse, device_id)
 
-    # CHANGED: Removed db_prefix="pg."
     for var_idx, var_data in enumerate(rmse_res.mean_surface):
         insert_checkpoint_sample_metric(
-            deser_model.model_id,
+            model_id,
             epoch * len(ds_train),
             f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
@@ -203,7 +163,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
         for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
             var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
             insert_checkpoint_sample_metric(
-                deser_model.model_id,
+                model_id,
                 epoch * len(ds_train),
                 var_name,
                 ds_rmse_config.short_name(),
@@ -213,7 +173,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
             )
     for var_idx, var_data in enumerate(acc_res.acc_surface):
         insert_checkpoint_sample_metric(
-            deser_model.model_id,
+            model_id,
             epoch * len(ds_train),
             f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
@@ -225,7 +185,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
         for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
             var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
             insert_checkpoint_sample_metric(
-                deser_model.model_id,
+                model_id,
                 epoch * len(ds_train),
                 var_name,
                 ds_rmse_config.short_name(),
@@ -234,8 +194,10 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
                 [],
             )
 
-    # NEW: Export metrics to staging using AnalyticsConfig
-    # This replaces the old sync(train_run) call
+    print("[eval] Evaluation complete!")
+
+
+def _export(train_run):
     print("[eval] Exporting metrics to staging...")
     exported_paths = export_all(train_run)
     if exported_paths:
@@ -243,7 +205,72 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
     else:
         print("[eval] No new metrics to export")
 
-    print("[eval] Evaluation complete!")
+
+def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
+    device_id = ddp_setup()
+    print(f"Lead time {lead_time_days}d")
+    train_run = create_config(0, 10)
+
+    ds_train = DataHP(train_run.train_config.train_data_config)
+    ds_rmse_config, dl_rmse, dl_acc = _create_eval_data(
+        train_run.train_config.train_data_config, lead_time_days
+    )
+
+    print(f"[eval] Epoch {epoch}")
+    deser_config = DeserializeConfig(
+        train_run=create_config(ensemble_id, epoch),
+        device_id=device_id,
+    )
+    deser_model = deserialize_model(deser_config)
+    if deser_model is None:
+        print("Can't deserialize")
+        exit(0)
+
+    ensure_duck(train_run)
+    insert_model_with_model_id(train_run, deser_model.model_id)
+    insert_or_update_train_run(train_run, deser_model.model_id)
+
+    _run_evaluation(
+        deser_model.model, deser_model.model_id, epoch, ds_train,
+        ds_rmse_config, dl_rmse, dl_acc, device_id,
+    )
+    _export(train_run)
+
+
+def evaluate_weather_from_checkpoint(checkpoint_hash, epoch, lead_time_days):
+    """Evaluate a model loaded by checkpoint hash.
+
+    Reconstructs model, data config, and metric reporting from the saved
+    checkpoint — no config .py file needed.
+    """
+    from lib.render_duck import setup_duck_from_checkpoint
+
+    device_id = ddp_setup()
+    print(f"Lead time {lead_time_days}d, checkpoint {checkpoint_hash}")
+
+    data_config = load_checkpoint_data_config(checkpoint_hash)
+    ds_train = DataHP(data_config)
+    ds_rmse_config, dl_rmse, dl_acc = _create_eval_data(
+        data_config, lead_time_days
+    )
+
+    print(f"[eval] Epoch {epoch}")
+    deser_model = load_model_from_checkpoint(
+        checkpoint_hash, device_id, epoch=epoch
+    )
+    if deser_model is None:
+        print("Can't deserialize from checkpoint hash")
+        exit(0)
+
+    saved_json = load_checkpoint_train_run_json(checkpoint_hash)
+    setup_duck_from_checkpoint(
+        checkpoint_hash, deser_model.model_id, saved_json
+    )
+
+    _run_evaluation(
+        deser_model.model, deser_model.model_id, epoch, ds_train,
+        ds_rmse_config, dl_rmse, dl_acc, device_id,
+    )
 
 
 def load_create_config(module_file_path):

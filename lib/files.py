@@ -38,8 +38,8 @@ def copy_tracked_and_untracked_to_destination(dest_path):
     dest_path = Path(dest_path)
     dest_path.mkdir(parents=True, exist_ok=True)  # Ensure destination exists
 
-    # Collect all tracked and untracked files
-    all_files = {item.a_path for item in repo.index.diff(None)}
+    # All tracked files (working tree versions) + untracked files
+    all_files = {item.path for item in repo.head.commit.tree.traverse()}
     all_files.update(repo.untracked_files)
 
     # Directories to skip

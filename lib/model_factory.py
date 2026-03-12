@@ -46,31 +46,31 @@ from experiments.weather.models.swin_hp_pangu_isolatitude_conv import (
 class _ModelFactory:
     def __init__(self):
         self.models = dict()
-        self.models[DenseConfig.__name__] = Dense
-        self.models[ConvSmallConfig.__name__] = ConvSmall
-        self.models[ConvConfig.__name__] = Conv
-        self.models[ConvLAPConfig.__name__] = ConvLAP
-        self.models[TransformerConfig.__name__] = Transformer
-        self.models[MLPConfig.__name__] = MLP
-        self.models[MLPClassConfig.__name__] = MLPClass
-        self.models[MLPProjClassConfig.__name__] = MLPProjClass
-        self.models[ResnetConfig.__name__] = Resnet
-        self.models[SwinTinyConfig.__name__] = SwinTiny
-        self.models[LLaMA2GenerativeConfig.__name__] = LLaMA2Generative
-        self.models[SwinHPPanguConfig.__name__] = SwinHPPangu
-        self.models[SwinHPPanguMaskConfig.__name__] = SwinHPPanguMask
-        self.models[SwinHPPanguPadConfig.__name__] = SwinHPPanguPad
-        self.models[SwinHPPanguIsolatitudeConfig.__name__] = SwinHPPanguIsolatitude
-        self.models[SwinHPPanguIsolatitudeConvConfig.__name__] = (
-            SwinHPPanguIsolatitudeConv
-        )
-        self.models[PanguConfig.__name__] = Pangu
-        self.models[PanguParametrizedConfig.__name__] = PanguParametrized
-        self.models[PanguPhysicsNemoConfig.__name__] = PanguPhysicsNemo
-        self.models[FengwuPhysicsNemoConfig.__name__] = FengwuPhysicsNemo
+        self.config_classes = dict()
+        self.register(DenseConfig, Dense)
+        self.register(ConvSmallConfig, ConvSmall)
+        self.register(ConvConfig, Conv)
+        self.register(ConvLAPConfig, ConvLAP)
+        self.register(TransformerConfig, Transformer)
+        self.register(MLPConfig, MLP)
+        self.register(MLPClassConfig, MLPClass)
+        self.register(MLPProjClassConfig, MLPProjClass)
+        self.register(ResnetConfig, Resnet)
+        self.register(SwinTinyConfig, SwinTiny)
+        self.register(LLaMA2GenerativeConfig, LLaMA2Generative)
+        self.register(SwinHPPanguConfig, SwinHPPangu)
+        self.register(SwinHPPanguMaskConfig, SwinHPPanguMask)
+        self.register(SwinHPPanguPadConfig, SwinHPPanguPad)
+        self.register(SwinHPPanguIsolatitudeConfig, SwinHPPanguIsolatitude)
+        self.register(SwinHPPanguIsolatitudeConvConfig, SwinHPPanguIsolatitudeConv)
+        self.register(PanguConfig, Pangu)
+        self.register(PanguParametrizedConfig, PanguParametrized)
+        self.register(PanguPhysicsNemoConfig, PanguPhysicsNemo)
+        self.register(FengwuPhysicsNemoConfig, FengwuPhysicsNemo)
 
     def register(self, config_class, model_class):
         self.models[config_class.__name__] = model_class
+        self.config_classes[config_class.__name__] = config_class
 
     def create(self, model_config, data_config) -> torch.nn.Module:
         return self.models[model_config.__class__.__name__](model_config, data_config)

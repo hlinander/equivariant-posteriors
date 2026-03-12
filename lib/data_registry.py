@@ -15,18 +15,16 @@ from experiments.weather.data import DataHP, DataHPConfig
 # from experiments.lora_ensembles.configs import NLPDataset
 
 
-def register_datasets():
-    datasets = dict()
-    datasets[DataSpiralsConfig.__name__] = DataSpirals
-    datasets[DataSineConfig.__name__] = DataSine
-    datasets[DataUniformConfig.__name__] = DataUniform
-    datasets[DataMNISTConfig.__name__] = DataMNIST
-    datasets[DataMNIST2Config.__name__] = DataMNIST2
-    datasets[DataCIFARConfig.__name__] = DataCIFAR
-    datasets[DataCIFAR10CConfig.__name__] = DataCIFAR10C
-    datasets[DataCIFAR2Config.__name__] = DataCIFAR2
-    datasets[DataSubsetConfig.__name__] = DataSubset
-    datasets[DataJoinConfig.__name__] = DataJoin
-    datasets[DataCommonsenseQaConfig.__name__] = DataCommonsenseQa
-    datasets[DataHPConfig.__name__] = DataHP
-    return datasets
+def register_datasets(factory):
+    factory.register(DataSpiralsConfig, DataSpirals)
+    factory.register(DataSineConfig, DataSine)
+    factory.register(DataUniformConfig, DataUniform)
+    factory.register(DataMNISTConfig, DataMNIST)
+    factory.register(DataMNIST2Config, DataMNIST2)
+    factory.register(DataCIFARConfig, DataCIFAR)
+    factory.register(DataCIFAR10CConfig, DataCIFAR10C)
+    factory.register(DataCIFAR2Config, DataCIFAR2)
+    factory.register(DataSubsetConfig, DataSubset)
+    factory.register(DataJoinConfig, DataJoin)
+    factory.register(DataCommonsenseQaConfig, DataCommonsenseQa)
+    factory.register(DataHPConfig, DataHP)

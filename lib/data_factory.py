@@ -4,9 +4,11 @@ import torch
 class _DataFactory:
     def __init__(self):
         self.datasets = dict()  # register_datasets()
+        self.config_classes = dict()
 
     def register(self, config_class, data_class):
         self.datasets[config_class.__name__] = data_class
+        self.config_classes[config_class.__name__] = config_class
 
     def create(self, data_config) -> torch.utils.data.Dataset:
         # breakpoint()
@@ -29,6 +31,6 @@ def get_factory():
         from lib.data_registry import register_datasets
 
         _data_factory = _DataFactory()
-        _data_factory.datasets = register_datasets()
+        register_datasets(_data_factory)
 
     return _data_factory

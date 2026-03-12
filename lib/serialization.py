@@ -1,6 +1,9 @@
+import json
+import os
 import torch
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from lib.train_dataclasses import TrainEpochState
 from lib.train_dataclasses import TrainRun, TrainConfig
@@ -18,6 +21,8 @@ from lib.stable_hash import json_dumps_dataclass_str
 import shutil
 import lib.render_duck as duck
 from lib.log import log
+from lib.compute_env import env
+from lib.files import copy_tracked_and_untracked_to_destination
 
 # Re-export for backward compatibility
 from lib.serialize_human import serialize_human
@@ -115,6 +120,10 @@ def serialize(config: SerializeConfig):
     shutil.move(
         checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
     )
+    code_path = checkpoint_path / "code"
+    if not code_path.exists() and "NOCOPY" not in os.environ:
+        copy_tracked_and_untracked_to_destination(code_path)
+
     write_status_file(config)
     duck.insert_checkpoint(
         train_epoch_state.model_id,
@@ -371,3 +380,133 @@ def deserialize(config: DeserializeConfig):
         next_visualizer=0,
         timing_metric=timing_metric,
     )
+
+
+def _get_config_class_registry():
+    registry = {}
+    registry.update(model_factory.get_factory().config_classes)
+    registry.update(data_factory.get_factory().config_classes)
+    return registry
+
+
+def _deserialize_dataclass(json_dict, class_registry):
+    """Reconstruct a dataclass instance from the __class__/__data__ format
+    produced by serialize_dataclass."""
+    class_name = json_dict["__class__"]
+    cls = class_registry[class_name]
+    data = {}
+    for k, v in json_dict["__data__"].items():
+        if isinstance(v, dict) and "__class__" in v:
+            data[k] = _deserialize_dataclass(v, class_registry)
+        elif isinstance(v, list):
+            data[k] = [
+                _deserialize_dataclass(item, class_registry)
+                if isinstance(item, dict) and "__class__" in item
+                else item
+                for item in v
+            ]
+        else:
+            data[k] = v
+    return cls(**data)
+
+
+def load_model_from_checkpoint(checkpoint_hash_hex, device_id, epoch=None):
+    """Load a model from a checkpoint using the config saved in train_run.json.
+
+    This allows loading checkpoints whose TrainConfig no longer exists in code,
+    as long as the model and data config classes are still registered in the
+    factories.
+
+    Args:
+        checkpoint_hash_hex: The hex hash string identifying the checkpoint
+            (e.g. "a1b2c3d4e5f67890").
+        device_id: The torch device to load the model onto.
+        epoch: If provided, load the epoch-specific checkpoint
+            (model_epoch_XXXX) instead of the latest model.
+
+    Returns:
+        A DeserializedModel, or None if the checkpoint doesn't exist.
+    """
+    checkpoint_dir = env().paths.checkpoints
+    checkpoint_path = checkpoint_dir / f"checkpoint_{checkpoint_hash_hex}"
+    json_path = checkpoint_path / "train_run.json"
+    if not json_path.is_file():
+        print(f"No train_run.json found at {checkpoint_path}")
+        return None
+
+    saved = json.loads(json_path.read_text())
+    train_config_data = saved["__data__"]["train_config"]["__data__"]
+    registry = _get_config_class_registry()
+
+    model_config = _deserialize_dataclass(
+        train_config_data["model_config"], registry
+    )
+    data_config = _deserialize_dataclass(
+        train_config_data["train_data_config"], registry
+    )
+
+    data_spec = (
+        data_factory.get_factory()
+        .get_class(data_config)
+        .data_spec(data_config)
+    )
+    model = model_factory.get_factory().create(model_config, data_spec)
+    model = model.to(device=torch.device(device_id))
+
+    model_id = torch.load(
+        checkpoint_path / "model_id", map_location=torch.device(device_id)
+    )
+
+    if epoch is not None:
+        model_path = checkpoint_path / f"model_epoch_{epoch:04d}"
+    else:
+        model_path = checkpoint_path / "model"
+
+    if not model_path.is_file():
+        print(f"No model file found at {model_path}")
+        return None
+
+    loaded_epoch = epoch if epoch is not None else torch.load(
+        checkpoint_path / "epoch", map_location=torch.device(device_id)
+    )
+    state_dict = torch.load(model_path, map_location=torch.device(device_id))
+    model.load_state_dict(state_dict)
+
+    return DeserializedModel(model=model, epoch=loaded_epoch, model_id=model_id)
+
+
+def load_checkpoint_train_run_json(checkpoint_hash_hex):
+    """Load the raw train_run.json dict from a checkpoint."""
+    checkpoint_dir = env().paths.checkpoints
+    checkpoint_path = checkpoint_dir / f"checkpoint_{checkpoint_hash_hex}"
+    return json.loads((checkpoint_path / "train_run.json").read_text())
+
+
+def load_checkpoint_data_config(checkpoint_hash_hex):
+    """Load the train data config from a checkpoint's saved train_run.json."""
+    checkpoint_dir = env().paths.checkpoints
+    checkpoint_path = checkpoint_dir / f"checkpoint_{checkpoint_hash_hex}"
+    json_path = checkpoint_path / "train_run.json"
+    saved = json.loads(json_path.read_text())
+    train_config_data = saved["__data__"]["train_config"]["__data__"]
+    registry = _get_config_class_registry()
+    return _deserialize_dataclass(
+        train_config_data["train_data_config"], registry
+    )
+
+
+def list_checkpoint_epochs(checkpoint_hash_hex):
+    """List available epoch checkpoints for a given checkpoint hash.
+
+    Returns a sorted list of epoch numbers that have saved model files.
+    """
+    checkpoint_dir = env().paths.checkpoints
+    checkpoint_path = checkpoint_dir / f"checkpoint_{checkpoint_hash_hex}"
+    epochs = []
+    for p in checkpoint_path.glob("model_epoch_*"):
+        try:
+            epoch = int(p.name.split("_")[-1])
+            epochs.append(epoch)
+        except ValueError:
+            continue
+    return sorted(epochs)

@@ -347,6 +347,32 @@ def insert_model_with_model_id(train_run: TrainRun, model_id: int):
     return model_id
 
 
+def setup_duck_from_checkpoint(checkpoint_hash_hex, model_id, saved_train_run_json):
+    """Set up duck reporting using saved checkpoint metadata instead of a live TrainRun.
+
+    Args:
+        checkpoint_hash_hex: The checkpoint hash (used as train_id).
+        model_id: The model id from the checkpoint.
+        saved_train_run_json: The parsed train_run.json dict from the checkpoint.
+    """
+    ensure_duck(None)
+    run_id = random_positive_i64()
+
+    execute(
+        "INSERT INTO models (id, train_id, timestamp) VALUES (?, ?, now())",
+        (model_id, checkpoint_hash_hex),
+    )
+    insert_run(run_id, model_id)
+    insert_model_parameter(model_id, run_id, "train_config_hash", checkpoint_hash_hex)
+    insert_model_parameter(model_id, run_id, "model_id", model_id)
+
+    train_run_flat = dict_to_normalized_json(saved_train_run_json)
+    for key, value in train_run_flat.items():
+        insert_model_parameter(model_id, run_id, key, value)
+
+    return run_id
+
+
 def create_standalone_model(train_id: str, in_memory: bool = False) -> tuple[int, int]:
     """
     Create a standalone model and run for debug/testing purposes.
