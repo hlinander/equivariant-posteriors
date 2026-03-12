@@ -13,27 +13,44 @@ def _is_config_file(s):
     return s.endswith(".py")
 
 
+def _get_source():
+    return os.environ["CONFIG"]
+
+
 def create_configs():
-    create_config = load_create_config(os.environ["CONFIG"])
-    c = create_config(0)
+    source = _get_source()
+    if _is_config_file(source):
+        create_config = load_create_config(source)
+        c = create_config(0)
+        epochs = list(range(0, c.epochs, c.keep_nth_epoch_checkpoints))
+    else:
+        epochs = list_checkpoint_epochs(source)
     return get_config_grid(
         lambda **x: dict(**x),
         dict(
-            epoch=list(range(0, c.epochs, c.keep_nth_epoch_checkpoints)),
+            epoch=epochs,
             lead_time_days=list(range(1, 10)),
         ),
     )
 
 
 def run(config):
-    create_config = load_create_config(os.environ["CONFIG"])
-    ensemble_id = int(os.environ.get("EID", default="0"))
-    evaluate_weather(
-        create_config,
-        config["epoch"],
-        config["lead_time_days"],
-        ensemble_id=ensemble_id,
-    )
+    source = _get_source()
+    if _is_config_file(source):
+        create_config = load_create_config(source)
+        ensemble_id = int(os.environ.get("EID", default="0"))
+        evaluate_weather(
+            create_config,
+            config["epoch"],
+            config["lead_time_days"],
+            ensemble_id=ensemble_id,
+        )
+    else:
+        evaluate_weather_from_checkpoint(
+            source,
+            config["epoch"],
+            config["lead_time_days"],
+        )
 
 
 if __name__ == "__main__":
