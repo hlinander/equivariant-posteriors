@@ -27,8 +27,10 @@ def list_checkpoints():
         data = saved.get("__data__", {})
         project = data.get("project", "?")
         tc = data.get("train_config", {}).get("__data__", {})
-        model_class = tc.get("model_config", {}).get("__class__", "?")
-        data_class = tc.get("train_data_config", {}).get("__class__", "?")
+        mc = tc.get("model_config", {})
+        dc = tc.get("train_data_config", {})
+        model_class = mc.get("__class__", "?") if isinstance(mc, dict) else "?"
+        data_class = dc.get("__class__", "?") if isinstance(dc, dict) else "?"
         epoch_checkpoints = list(cp.glob("model_epoch_*"))
         has_latest = (cp / "model").is_file()
         if epoch_checkpoints:
