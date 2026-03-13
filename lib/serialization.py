@@ -1,3 +1,5 @@
+import dataclasses
+import importlib
 import json
 import os
 import torch
@@ -389,11 +391,47 @@ def _get_config_class_registry():
     return registry
 
 
+def _resolve_callable_string(value, field_def=None):
+    """Resolve a string back to a callable.
+
+    Tries fully qualified import first (e.g. "torch.nn.modules.normalization.LayerNorm"),
+    then falls back to known namespaces for legacy short names (e.g. "LayerNorm"),
+    then tries matching the field default.
+    """
+    if not isinstance(value, str):
+        return value
+
+    # Try fully qualified import: "some.module.ClassName"
+    if "." in value:
+        module_path, _, attr_name = value.rpartition(".")
+        try:
+            module = importlib.import_module(module_path)
+            return getattr(module, attr_name)
+        except (ImportError, AttributeError):
+            pass
+
+    # Try known namespaces for legacy short names
+    for namespace in [torch.nn, torch.optim]:
+        obj = getattr(namespace, value, None)
+        if obj is not None:
+            return obj
+
+    # Try matching the field default
+    if field_def is not None:
+        default = field_def.default
+        if default is not dataclasses.MISSING and callable(default):
+            if hasattr(default, "__name__") and default.__name__ == value:
+                return default
+
+    return value
+
+
 def _deserialize_dataclass(json_dict, class_registry):
     """Reconstruct a dataclass instance from the __class__/__data__ format
     produced by serialize_dataclass."""
     class_name = json_dict["__class__"]
     cls = class_registry[class_name]
+    fields = {f.name: f for f in dataclasses.fields(cls)} if dataclasses.is_dataclass(cls) else {}
     data = {}
     for k, v in json_dict["__data__"].items():
         if isinstance(v, dict) and "__class__" in v:
@@ -405,6 +443,8 @@ def _deserialize_dataclass(json_dict, class_registry):
                 else item
                 for item in v
             ]
+        elif k in fields:
+            data[k] = _resolve_callable_string(v, fields[k])
         else:
             data[k] = v
     return cls(**data)

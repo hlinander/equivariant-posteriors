@@ -2,12 +2,30 @@ import dataclasses
 import json
 import hashlib
 import numpy as np
+import torch
+
+# Callables that must keep their short __name__ for hash compatibility
+# with existing checkpoints.
+_LEGACY_SHORT_NAMES = {
+    torch.nn.LayerNorm,
+    torch.optim.Adam,
+    torch.optim.AdamW,
+    torch.optim.SGD,
+}
 
 
 def json_default(data):
-    try:
+    """Serialize non-JSON-serializable objects. Uses fully qualified names
+    for importable callables, with legacy exceptions for hash stability."""
+    if data in _LEGACY_SHORT_NAMES:
         return data.__name__
-    except:
+    try:
+        module = getattr(data, "__module__", None)
+        qualname = getattr(data, "__qualname__", None)
+        if module and qualname and "<" not in qualname:
+            return f"{module}.{qualname}"
+        return data.__name__
+    except Exception:
         return type(data).__name__
 
 
