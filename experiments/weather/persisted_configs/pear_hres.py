@@ -16,7 +16,7 @@ from lib.distributed_trainer import distributed_train
 from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPadConfig
 from experiments.weather.data import DataHPConfig
 
-NSIDE = 64
+NSIDE = 256
 
 
 def create_config(ensemble_id, epoch=200, dataset_years=10):
@@ -35,7 +35,7 @@ def create_config(ensemble_id, epoch=200, dataset_years=10):
             dev_mode=False,
             depths=[2, 6, 6, 2],
             num_heads=[6, 12, 12, 6],
-            embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
+            embed_dims=[192, 384, 384, 192],
             window_size=[2, 64],
             use_cos_attn=False,
             use_v2_norm_placement=True,
