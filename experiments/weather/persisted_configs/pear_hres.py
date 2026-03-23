@@ -13,6 +13,7 @@ from lib.ensemble import request_ensemble
 from lib.ensemble import is_ensemble_serialized
 from lib.distributed_trainer import distributed_train
 
+from lib.slurm import load_slurm_config_from_env
 from experiments.weather.models.swin_hp_pangu_pad import SwinHPPanguPadConfig
 from experiments.weather.data import DataHPConfig
 
@@ -80,6 +81,12 @@ def create_config(ensemble_id, epoch=200, dataset_years=10):
 
 
 N_MEMBERS = 5
+
+
+def get_slurm_config():
+    config = load_slurm_config_from_env()
+    config.constraint = "fat"
+    return config
 
 
 def create_configs():

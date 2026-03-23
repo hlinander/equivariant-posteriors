@@ -13,6 +13,7 @@ class SlurmConfig:
     account: Optional[str] = None
     output: str = "slurm/logs/%x.%A_%a.out"
     error: str = "slurm/logs/%x.%A_%a.err"
+    constraint: Optional[str] = None
     extra_sbatch: list = field(default_factory=list)
     modules: list = field(default_factory=list)
     setup_commands: list = field(default_factory=list)
@@ -40,6 +41,8 @@ def generate_batch_script(
         lines.append(f"#SBATCH --partition={slurm.partition}")
     if slurm.account:
         lines.append(f"#SBATCH --account={slurm.account}")
+    if slurm.constraint:
+        lines.append(f"#SBATCH -C {slurm.constraint}")
     lines.append(f"#SBATCH --output={slurm.output}")
     lines.append(f"#SBATCH --error={slurm.error}")
     for extra in slurm.extra_sbatch:
