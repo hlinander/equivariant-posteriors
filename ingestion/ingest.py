@@ -50,6 +50,7 @@ SYNC_TABLES = [
     ARTIFACT_CHUNKS_TABLE_NAME,
 ]
 TYPES = ["int", "float", "text"]
+_SCHEMA_ENSURED = False
 
 
 def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str):
@@ -581,10 +582,13 @@ def ingest_all_from_config(config, dry_run: bool = False):
     else:
         raise ValueError(f"Unknown central database type: {config.central.type}")
 
-    # Ensure schema exists (idempotent - safe to run every time)
-    print(f"[ingest] Ensuring central database schema exists")
-    ensure_central_schema(conn)
-    ensure_ingestion_state_table(conn)
+    # Ensure schema exists (once per process, not every ingestion cycle)
+    global _SCHEMA_ENSURED
+    if not _SCHEMA_ENSURED:
+        print(f"[ingest] Ensuring central database schema exists")
+        ensure_central_schema(conn)
+        ensure_ingestion_state_table(conn)
+        _SCHEMA_ENSURED = True
 
     # Get already processed files
     processed_files = get_processed_files(conn)

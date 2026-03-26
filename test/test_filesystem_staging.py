@@ -62,9 +62,11 @@ def filesystem_env(tmp_path):
         duck.CONN = None
         duck.SCHEMA_ENSURED = False
 
-    # Reset analytics config
+    # Reset analytics config and ingestion schema flag
     import lib.analytics_config as analytics_config_module
     analytics_config_module._analytics_config = None
+    import ingestion.ingest as ingest_module
+    ingest_module._SCHEMA_ENSURED = False
 
 
 def test_export_to_filesystem(filesystem_env):
