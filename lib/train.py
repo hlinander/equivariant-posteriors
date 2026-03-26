@@ -111,20 +111,28 @@ def flush_epoch_metrics(
             )
         metric.epoch_accumulator.reset()
 
-    # Gradient norm
-    result = train_epoch_state.gradient_norm_accumulator.result()
-    if result is not None:
-        mean, min_val, max_val, count = result
-        duck.insert_train_epoch_metric(
-            train_epoch_state.model_id,
-            train_run.run_id,
-            train_epoch_state.epoch,
-            train_epoch_state.batch,
-            "gradient_norm",
-            train_dataset,
-            mean, min_val, max_val, count,
-        )
-    train_epoch_state.gradient_norm_accumulator.reset()
+    # Built-in training diagnostics
+    for name, acc in [
+        ("gradient_norm", train_epoch_state.gradient_norm_accumulator),
+        ("grad_clip_ratio", train_epoch_state.grad_clip_ratio_accumulator),
+        ("learning_rate", train_epoch_state.learning_rate_accumulator),
+        ("parameter_norm", train_epoch_state.parameter_norm_accumulator),
+        ("batch_time", train_epoch_state.batch_time_accumulator),
+        ("batch_time_with_diagnostics", train_epoch_state.batch_time_diag_accumulator),
+    ]:
+        result = acc.result()
+        if result is not None:
+            mean, min_val, max_val, count = result
+            duck.insert_train_epoch_metric(
+                train_epoch_state.model_id,
+                train_run.run_id,
+                train_epoch_state.epoch,
+                train_epoch_state.batch,
+                name,
+                train_dataset,
+                mean, min_val, max_val, count,
+            )
+        acc.reset()
 
     # Validation metrics
     if train_run.train_config.val_data_config is not None:
@@ -226,15 +234,22 @@ def train(
     if dataloader.sampler.__class__.__name__ == "DistributedSampler":
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
+    diagnostics_interval = train_run.train_eval.diagnostics_interval
     visualizers = [visualize_progress_batches]
     for i, batch in enumerate(dataloader):
         batch_time = train_epoch_state.timing_metric.stop("batch")
         if batch_time is not None:
+            if train_epoch_state._last_step_had_diagnostics:
+                batch_time_name = "batch_time_with_diagnostics"
+                train_epoch_state.batch_time_diag_accumulator.update(batch_time)
+            else:
+                batch_time_name = "batch_time"
+                train_epoch_state.batch_time_accumulator.update(batch_time)
             if ddp.get_rank() == 0:
                 duck.insert_train_step_metric(
                     train_epoch_state.model_id,
                     train_run.run_id,
-                    "batch_time",
+                    batch_time_name,
                     train_epoch_state.batch,
                     batch_time,
                 )
@@ -259,29 +274,78 @@ def train(
             )
             train_epoch_state.timing_metric.stop("insert_duck_metric")
 
+        # Gradient clipping always runs (when configured), independent of diagnostics
         if train_run.train_config.gradient_clipping is not None:
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(), train_run.train_config.gradient_clipping
-            )
+            max_norm = train_run.train_config.gradient_clipping
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm
+            ).item()
+
+        run_diagnostics = (i % diagnostics_interval == 0)
+        train_epoch_state._last_step_had_diagnostics = run_diagnostics
+
+        if run_diagnostics:
+            # Gradient norm (reuse clip_grad_norm_ result if available)
+            if train_run.train_eval.log_gradient_norm:
+                if train_run.train_config.gradient_clipping is None:
+                    grad_norm = sum(
+                        p.grad.detach().norm().pow(2)
+                        for p in model.parameters()
+                        if p.grad is not None
+                    ).sqrt().item()
+                train_epoch_state.gradient_norm_accumulator.update(grad_norm)
+                if ddp.get_rank() == 0:
+                    duck.insert_train_step_metric(
+                        train_epoch_state.model_id,
+                        train_run.run_id,
+                        "gradient_norm",
+                        train_epoch_state.batch,
+                        grad_norm,
+                    )
+
+                # Clip ratio (only when clipping is active)
+                if train_run.train_config.gradient_clipping is not None:
+                    clip_ratio = min(max_norm / (grad_norm + 1e-8), 1.0)
+                    train_epoch_state.grad_clip_ratio_accumulator.update(clip_ratio)
+                    if ddp.get_rank() == 0:
+                        duck.insert_train_step_metric(
+                            train_epoch_state.model_id,
+                            train_run.run_id,
+                            "grad_clip_ratio",
+                            train_epoch_state.batch,
+                            clip_ratio,
+                        )
+
         optimizer.step()
 
-        if train_run.train_eval.log_gradient_norm:
-            grads = [
-                param.grad.detach().flatten()
-                for param in model.parameters()
-                if param.grad is not None
-            ]
-            norm = torch.cat(grads).norm()
-            norm_val = norm.item()
-            train_epoch_state.gradient_norm_accumulator.update(norm_val)
+        if run_diagnostics:
+            # Learning rate (essentially free)
+            lr = optimizer.param_groups[0]['lr']
+            train_epoch_state.learning_rate_accumulator.update(lr)
             if ddp.get_rank() == 0:
                 duck.insert_train_step_metric(
                     train_epoch_state.model_id,
                     train_run.run_id,
-                    "gradient_norm",
+                    "learning_rate",
                     train_epoch_state.batch,
-                    norm_val,
+                    lr,
                 )
+
+            # Parameter norm (O(1) extra memory)
+            if train_run.train_eval.log_parameter_norm:
+                param_norm = sum(
+                    p.detach().norm().pow(2) for p in model.parameters()
+                ).sqrt().item()
+                train_epoch_state.parameter_norm_accumulator.update(param_norm)
+                if ddp.get_rank() == 0:
+                    duck.insert_train_step_metric(
+                        train_epoch_state.model_id,
+                        train_run.run_id,
+                        "parameter_norm",
+                        train_epoch_state.batch,
+                        param_norm,
+                    )
+
         optimizer.zero_grad(set_to_none=True)
 
         if ddp.get_rank() > 0:

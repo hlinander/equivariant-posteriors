@@ -40,6 +40,12 @@ class TrainEpochState:
     code_path: Path = None
     gpu_monitor: object = None
     gradient_norm_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    parameter_norm_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    learning_rate_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    grad_clip_ratio_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    batch_time_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    batch_time_diag_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
+    _last_step_had_diagnostics: bool = False
 
 
 @dataclass
@@ -127,12 +133,16 @@ class TrainEval:
     validation_metrics: List[Callable[[], Metric]]
     data_visualizer: Callable[[object, TrainEpochState], None] = None
     log_gradient_norm: bool = False
+    log_parameter_norm: bool = False
+    diagnostics_interval: int = 10  # run diagnostics every N steps
 
     def serialize_human(self):
         return dict(
             train_metrics=[metric().name() for metric in self.train_metrics],
             val_metric=[metric().name() for metric in self.validation_metrics],
             log_gradient_norm=self.log_gradient_norm,
+            log_parameter_norm=self.log_parameter_norm,
+            diagnostics_interval=self.diagnostics_interval,
         )
 
 
