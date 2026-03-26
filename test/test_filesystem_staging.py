@@ -220,6 +220,7 @@ def create_central_db_schema(conn):
             step INTEGER,
             name TEXT,
             dataset TEXT,
+            dataset_split TEXT,
             mean FLOAT,
             min FLOAT,
             max FLOAT,
@@ -288,9 +289,9 @@ def test_full_filesystem_pipeline(filesystem_env):
         duck.insert_train_step_metric(model_id, train_run.run_id, "epoch", i, i)  # int
 
     # Insert epoch-level aggregated metrics
-    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=1, step=5, name="loss", dataset="train_ds", mean=0.45, min_val=0.41, max_val=0.50, count=5)
-    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="loss", dataset="train_ds", mean=0.40, min_val=0.36, max_val=0.44, count=5)
-    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="accuracy", dataset="val_ds", mean=0.88, min_val=0.82, max_val=0.93, count=5)
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=1, step=5, name="loss", dataset="train_ds", dataset_split="train", mean=0.45, min_val=0.41, max_val=0.50, count=5)
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="loss", dataset="train_ds", dataset_split="train", mean=0.40, min_val=0.36, max_val=0.44, count=5)
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="accuracy", dataset="val_ds", dataset_split="val", mean=0.88, min_val=0.82, max_val=0.93, count=5)
 
     # Insert checkpoint sample metrics
     sample_ids = [1, 2, 3, 4, 5]

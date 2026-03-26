@@ -218,6 +218,7 @@ def ensure_central_schema(conn):
             step INTEGER,
             name TEXT,
             dataset TEXT,
+            dataset_split TEXT,
             mean FLOAT,
             min FLOAT,
             max FLOAT,

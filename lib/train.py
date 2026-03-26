@@ -107,6 +107,7 @@ def flush_epoch_metrics(
                 train_epoch_state.batch,
                 metric.name(),
                 train_dataset,
+                "train",
                 mean, min_val, max_val, count,
             )
         metric.epoch_accumulator.reset()
@@ -130,6 +131,7 @@ def flush_epoch_metrics(
                 train_epoch_state.batch,
                 name,
                 train_dataset,
+                "train",
                 mean, min_val, max_val, count,
             )
         acc.reset()
@@ -152,6 +154,7 @@ def flush_epoch_metrics(
                     train_epoch_state.batch,
                     metric.name(),
                     val_dataset,
+                    "val",
                     mean, min_val, max_val, count,
                 )
             metric.epoch_accumulator.reset()

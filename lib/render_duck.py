@@ -272,6 +272,7 @@ def sql_create_table_train_epoch_metric():
             step INTEGER,
             name TEXT,
             dataset TEXT,
+            dataset_split TEXT,
             mean FLOAT,
             min FLOAT,
             max FLOAT,
@@ -279,12 +280,12 @@ def sql_create_table_train_epoch_metric():
         )"""
 
 
-def insert_train_epoch_metric(model_id, run_id, epoch, step, name, dataset, mean, min_val, max_val, count):
+def insert_train_epoch_metric(model_id, run_id, epoch, step, name, dataset, dataset_split, mean, min_val, max_val, count):
     sql = f"""
-        INSERT INTO {TRAIN_EPOCH_METRIC} (model_id, run_id, timestamp, epoch, step, name, dataset, mean, min, max, count)
-        VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {TRAIN_EPOCH_METRIC} (model_id, run_id, timestamp, epoch, step, name, dataset, dataset_split, mean, min, max, count)
+        VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    execute(sql, (model_id, run_id, epoch, step, name, dataset, mean, min_val, max_val, count))
+    execute(sql, (model_id, run_id, epoch, step, name, dataset, dataset_split, mean, min_val, max_val, count))
 
 
 def select_train_step_metric_float(model_id, name):
