@@ -8,9 +8,10 @@ from typing import Callable
 from typing import Union
 from typing import Set
 from typing import Dict
+from collections import defaultdict
 from pathlib import Path
 
-from lib.metric import Metric
+from lib.metric import Metric, EpochMetricAccumulator
 from lib.timing_metric import Timing
 from lib.stable_hash import stable_hash_str
 from lib.git import get_rev
@@ -38,6 +39,7 @@ class TrainEpochState:
     psql_starting_xs: Dict[str, float] = None
     code_path: Path = None
     gpu_monitor: object = None
+    gradient_norm_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
 
 
 @dataclass

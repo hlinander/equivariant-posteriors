@@ -37,6 +37,7 @@ class Metric:
         else:
             self.metric_name = name
         self.metric_kwargs = metric_kwargs if metric_kwargs is not None else dict()
+        self.epoch_accumulator = EpochMetricAccumulator()
 
     def __call__(self, metric_sample: MetricSample):
         values = (
@@ -64,6 +65,26 @@ class Metric:
 
     def name(self):
         return self.metric_name
+
+
+class EpochMetricAccumulator:
+    """Accumulates per-step metric values and computes epoch-level aggregates."""
+
+    def __init__(self):
+        self.values = []
+
+    def update(self, value: float):
+        self.values.append(value)
+
+    def result(self):
+        """Returns (mean, min, max, count) or None if no values."""
+        if not self.values:
+            return None
+        t = torch.tensor(self.values)
+        return t.mean().item(), t.min().item(), t.max().item(), len(self.values)
+
+    def reset(self):
+        self.values.clear()
 
 
 def detach_tensors(output, batch):

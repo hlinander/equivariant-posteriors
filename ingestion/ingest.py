@@ -28,6 +28,7 @@ import duckdb
 # Table configuration
 MODEL_PARAMETER = "model_parameter"
 TRAIN_STEP_METRIC = "train_step_metric"
+TRAIN_EPOCH_METRIC = "train_epoch_metric"
 CHECKPOINT_SAMPLE_METRIC = "checkpoint_sample_metric"
 MODELS_TABLE_NAME = "models"
 RUNS_TABLE_NAME = "runs"
@@ -39,6 +40,7 @@ ARTIFACT_CHUNKS_TABLE_NAME = "artifact_chunks"
 SYNC_TABLES = [
     MODEL_PARAMETER,
     TRAIN_STEP_METRIC,
+    TRAIN_EPOCH_METRIC,
     CHECKPOINT_SAMPLE_METRIC,
     MODELS_TABLE_NAME,
     RUNS_TABLE_NAME,
@@ -202,6 +204,23 @@ def ensure_central_schema(conn):
             sample_ids INTEGER[],
             mean TEXT,
             value_per_sample TEXT[]
+        )
+    """)
+
+    # Train epoch metric table (no type splitting - explicit columns)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_epoch_metric (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            epoch INTEGER,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            mean FLOAT,
+            min FLOAT,
+            max FLOAT,
+            count INTEGER
         )
     """)
 

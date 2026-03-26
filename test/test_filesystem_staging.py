@@ -208,6 +208,23 @@ def create_central_db_schema(conn):
         )
     """)
 
+    # Train epoch metric table (no type splitting)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS train_epoch_metric (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            epoch INTEGER,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            mean FLOAT,
+            min FLOAT,
+            max FLOAT,
+            count INTEGER
+        )
+    """)
+
     # Checkpoint sample metric tables (split by type)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_int (
@@ -267,6 +284,11 @@ def test_full_filesystem_pipeline(filesystem_env):
     for i in range(10):
         duck.insert_train_step_metric(model_id, train_run.run_id, "loss", i, 0.5 - i * 0.01)  # float
         duck.insert_train_step_metric(model_id, train_run.run_id, "epoch", i, i)  # int
+
+    # Insert epoch-level aggregated metrics
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=1, step=5, name="loss", dataset="train_ds", mean=0.45, min_val=0.41, max_val=0.50, count=5)
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="loss", dataset="train_ds", mean=0.40, min_val=0.36, max_val=0.44, count=5)
+    duck.insert_train_epoch_metric(model_id, train_run.run_id, epoch=2, step=10, name="accuracy", dataset="val_ds", mean=0.88, min_val=0.82, max_val=0.93, count=5)
 
     # Insert checkpoint sample metrics
     sample_ids = [1, 2, 3, 4, 5]
@@ -379,6 +401,34 @@ def test_full_filesystem_pipeline(filesystem_env):
         assert abs(actual - expected) < 1e-6, f"Value {i}: {actual} != {expected}"
     print(f"[test] ✓ Checkpoint metric mean: {checkpoint_data[0]}")
     print(f"[test] ✓ Checkpoint metric values: {checkpoint_data[1]}")
+
+    # Check epoch metrics
+    epoch_metric_count = central_conn.execute(
+        "SELECT COUNT(*) FROM train_epoch_metric"
+    ).fetchone()
+    assert epoch_metric_count[0] == 3, f"Should have 3 epoch metrics, got {epoch_metric_count[0]}"
+    print(f"[test] ✓ Found {epoch_metric_count[0]} epoch metrics")
+
+    # Verify epoch metric values
+    epoch_loss = central_conn.execute(
+        "SELECT epoch, mean, min, max, count, dataset FROM train_epoch_metric WHERE name = 'loss' ORDER BY epoch"
+    ).fetchall()
+    assert len(epoch_loss) == 2
+    assert epoch_loss[0][0] == 1  # epoch
+    assert abs(epoch_loss[0][1] - 0.45) < 1e-6  # mean
+    assert abs(epoch_loss[0][2] - 0.41) < 1e-6  # min
+    assert abs(epoch_loss[0][3] - 0.50) < 1e-6  # max
+    assert epoch_loss[0][4] == 5  # count
+    assert epoch_loss[0][5] == "train_ds"  # dataset
+    print(f"[test] ✓ Epoch loss values verified")
+
+    # Verify validation epoch metric
+    epoch_val = central_conn.execute(
+        "SELECT dataset, mean FROM train_epoch_metric WHERE name = 'accuracy'"
+    ).fetchone()
+    assert epoch_val[0] == "val_ds"
+    assert abs(epoch_val[1] - 0.88) < 1e-6
+    print(f"[test] ✓ Validation epoch metric verified (dataset={epoch_val[0]}, mean={epoch_val[1]})")
 
     # Step 6: Verify idempotency (run ingestion again, should not duplicate)
     print("\n[test] Step 6: Testing idempotency")

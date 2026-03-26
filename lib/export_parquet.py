@@ -12,6 +12,7 @@ import lib.render_duck as duck
 from lib.render_duck import (
     MODEL_PARAMETER,
     TRAIN_STEP_METRIC,
+    TRAIN_EPOCH_METRIC,
     CHECKPOINT_SAMPLE_METRIC,
     MODELS_TABLE_NAME,
     RUNS_TABLE_NAME,
@@ -25,6 +26,7 @@ from lib.render_duck import (
 SYNC_TABLES = [
     MODEL_PARAMETER,
     TRAIN_STEP_METRIC,
+    TRAIN_EPOCH_METRIC,
     CHECKPOINT_SAMPLE_METRIC,
     MODELS_TABLE_NAME,
     RUNS_TABLE_NAME,
@@ -165,7 +167,7 @@ def flush_all_to_s3(
     ensure_s3_credentials(cursor)
 
     # Tables that have run_id column (filter by run_id)
-    RUN_ID_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC, TRAIN_STEPS_TABLE_NAME]
+    RUN_ID_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC, TRAIN_EPOCH_METRIC, TRAIN_STEPS_TABLE_NAME]
 
     # Tables without run_id column (filter by timestamp only)
     TIMESTAMP_ONLY_TABLES = [

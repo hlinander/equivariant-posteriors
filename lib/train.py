@@ -84,6 +84,71 @@ def evaluate_metrics_on_data(
                 )
 
 
+def flush_epoch_metrics(
+    train_epoch_state: TrainEpochState,
+    train_run: TrainRun,
+):
+    """Flush accumulated epoch-level metrics to duck and reset accumulators."""
+    train_dataset = (
+        data_factory.get_factory()
+        .get_class(train_run.train_config.train_data_config)
+        .__name__
+    )
+
+    # Training metrics
+    for metric in train_epoch_state.train_metrics:
+        result = metric.epoch_accumulator.result()
+        if result is not None:
+            mean, min_val, max_val, count = result
+            duck.insert_train_epoch_metric(
+                train_epoch_state.model_id,
+                train_run.run_id,
+                train_epoch_state.epoch,
+                train_epoch_state.batch,
+                metric.name(),
+                train_dataset,
+                mean, min_val, max_val, count,
+            )
+        metric.epoch_accumulator.reset()
+
+    # Gradient norm
+    result = train_epoch_state.gradient_norm_accumulator.result()
+    if result is not None:
+        mean, min_val, max_val, count = result
+        duck.insert_train_epoch_metric(
+            train_epoch_state.model_id,
+            train_run.run_id,
+            train_epoch_state.epoch,
+            train_epoch_state.batch,
+            "gradient_norm",
+            train_dataset,
+            mean, min_val, max_val, count,
+        )
+    train_epoch_state.gradient_norm_accumulator.reset()
+
+    # Validation metrics
+    if train_run.train_config.val_data_config is not None:
+        val_dataset = (
+            data_factory.get_factory()
+            .get_class(train_run.train_config.val_data_config)
+            .__name__
+        )
+        for metric in train_epoch_state.validation_metrics:
+            result = metric.epoch_accumulator.result()
+            if result is not None:
+                mean, min_val, max_val, count = result
+                duck.insert_train_epoch_metric(
+                    train_epoch_state.model_id,
+                    train_run.run_id,
+                    train_epoch_state.epoch,
+                    train_epoch_state.batch,
+                    metric.name(),
+                    val_dataset,
+                    mean, min_val, max_val, count,
+                )
+            metric.epoch_accumulator.reset()
+
+
 def validate(
     train_epoch_state: TrainEpochState,
     train_epoch_spec: TrainEpochSpec,
@@ -126,6 +191,8 @@ def validate(
                         value_per_sample = values.tolist()
                     else:
                         value_per_sample = None
+
+                    metric.epoch_accumulator.update(values.mean().item())
 
                     duck.insert_checkpoint_sample_metric(
                         metric_sample.model_id,
@@ -205,13 +272,15 @@ def train(
                 if param.grad is not None
             ]
             norm = torch.cat(grads).norm()
+            norm_val = norm.item()
+            train_epoch_state.gradient_norm_accumulator.update(norm_val)
             if ddp.get_rank() == 0:
                 duck.insert_train_step_metric(
                     train_epoch_state.model_id,
                     train_run.run_id,
                     "gradient_norm",
                     train_epoch_state.batch,
-                    norm.item(),
+                    norm_val,
                 )
         optimizer.zero_grad(set_to_none=True)
 
@@ -231,6 +300,7 @@ def train(
         )
         for metric in train_epoch_state.train_metrics:
             value = metric(metric_sample)
+            metric.epoch_accumulator.update(value)
             duck.insert_train_step_metric(
                 metric_sample.model_id,
                 train_run.run_id,
@@ -450,6 +520,7 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
 
         validate(state, train_epoch_spec, train_run)
         if ddp.get_rank() == 0:
+            flush_epoch_metrics(state, train_run)
             serialize(serialize_config)
         if train_run.compute_config.distributed:
             torch.distributed.barrier()

@@ -29,6 +29,7 @@ TYPES = [INT, FLOAT, TEXT]
 
 MODEL_PARAMETER = "model_parameter"
 TRAIN_STEP_METRIC = "train_step_metric"
+TRAIN_EPOCH_METRIC = "train_epoch_metric"
 TRAIN_STATE = "train_state"
 CHECKPOINT_SAMPLE_METRIC = "checkpoint_sample_metric"
 CHECKPOINT_PARAMETER = "checkpoint_parameter"
@@ -72,6 +73,7 @@ ALL_TABLES = [
     ARTIFACT_CHUNKS_TABLE_NAME,
     MODEL_PARAMETER,
     TRAIN_STEP_METRIC,
+    TRAIN_EPOCH_METRIC,
     CHECKPOINT_SAMPLE_METRIC,
 ]
 
@@ -258,6 +260,31 @@ def insert_train_step_metric(model_id, run_id, name, step, value):
         VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?)
     """
     execute(sql_insert_train_step_metric, (model_id, run_id, name, step, type_def.name, value_int, value_float, value_text))
+
+
+def sql_create_table_train_epoch_metric():
+    return f"""
+        CREATE TABLE IF NOT EXISTS {TRAIN_EPOCH_METRIC} (
+            model_id BIGINT,
+            run_id BIGINT,
+            timestamp TIMESTAMPTZ,
+            epoch INTEGER,
+            step INTEGER,
+            name TEXT,
+            dataset TEXT,
+            mean FLOAT,
+            min FLOAT,
+            max FLOAT,
+            count INTEGER
+        )"""
+
+
+def insert_train_epoch_metric(model_id, run_id, epoch, step, name, dataset, mean, min_val, max_val, count):
+    sql = f"""
+        INSERT INTO {TRAIN_EPOCH_METRIC} (model_id, run_id, timestamp, epoch, step, name, dataset, mean, min, max, count)
+        VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    execute(sql, (model_id, run_id, epoch, step, name, dataset, mean, min_val, max_val, count))
 
 
 def select_train_step_metric_float(model_id, name):
@@ -496,6 +523,7 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_model_parameter())
     executor(sql_create_table_checkpoint_sample_metric())
     executor(sql_create_table_train_step_metric())
+    executor(sql_create_table_train_epoch_metric())
 
 
 def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
