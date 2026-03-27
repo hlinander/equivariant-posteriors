@@ -259,13 +259,17 @@ def train(
         train_epoch_state.timing_metric.start("batch")
         train_epoch_state.batch += ddp.get_world_size()
 
+        run_diagnostics = (i % diagnostics_interval == 0)
+        train_epoch_state._last_step_had_diagnostics = run_diagnostics
+
         batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
         output = model(batch)
 
         loss_val = loss(output, batch)
         loss_val.backward()
+
+        t_db = time.time()
         if ddp.get_rank() == 0:
-            train_epoch_state.timing_metric.start("insert_duck_metric")
             duck.insert_train_step(
                 train_epoch_state.model_id,
                 train_run.run_id,
@@ -275,7 +279,6 @@ def train(
                 .__name__,
                 batch["sample_id"].long().tolist(),
             )
-            train_epoch_state.timing_metric.stop("insert_duck_metric")
 
         # Gradient clipping always runs (when configured), independent of diagnostics
         if train_run.train_config.gradient_clipping is not None:
@@ -283,9 +286,6 @@ def train(
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), max_norm
             ).item()
-
-        run_diagnostics = (i % diagnostics_interval == 0)
-        train_epoch_state._last_step_had_diagnostics = run_diagnostics
 
         if run_diagnostics:
             # Gradient norm (reuse clip_grad_norm_ result if available)
@@ -376,6 +376,19 @@ def train(
                 value,
             )
         train_epoch_state.timing_metric.stop("train_metrics")
+        t_db_elapsed = time.time() - t_db
+
+        t_db_elapsed = time.time() - t_db
+
+        # Log DB + metrics timing on diagnostic steps
+        if run_diagnostics:
+            duck.insert_train_step_metric(
+                train_epoch_state.model_id,
+                train_run.run_id,
+                "t_db_and_metrics",
+                train_epoch_state.batch,
+                t_db_elapsed,
+            )
 
         # Record GPU metrics if monitor is active
         if train_epoch_state.gpu_monitor is not None:

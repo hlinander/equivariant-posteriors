@@ -100,7 +100,7 @@ SELECT * FROM backfill_epoch_metrics ORDER BY model_id, epoch, name LIMIT 50;
 --
 -- INSERT INTO local.backfill_log
 -- SELECT
---     hash(now()::TEXT) AS backfill_id,
+--     (hash(now()::TEXT) % 9223372036854775807)::BIGINT AS backfill_id,
 --     now() AS timestamp,
 --     'epoch_metrics_from_step_data' AS description,
 --     model_id,
