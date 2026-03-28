@@ -296,7 +296,8 @@ def export_periodic(
                 if paths:
                     log_next_in("export", f"Exported {len(paths)} files to S3", interval_seconds)
             except Exception as e:
-                log("export", f"Error during export: {e}")
+                import traceback
+                log("export", f"Error during export: {e}\n{traceback.format_exc()}")
 
             time.sleep(interval_seconds)
 
