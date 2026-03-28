@@ -531,13 +531,7 @@ def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
     global CONN
     global SCHEMA_ENSURED
 
-    if run_run is None or in_memory:
-        db_path = ":memory:"
-    else:
-        db_path = (
-            get_or_create_checkpoint_path(run_run.train_config)
-            / f"duck_{run_run.run_id:x}.db"
-        )
+    db_path = ":memory:"
     if CONN is None:
         print("Connecting to duck...")
         CONN = duckdb.connect()
