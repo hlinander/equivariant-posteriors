@@ -9,6 +9,7 @@ from lib.ddp import ddp_setup
 from lib.train_dataclasses import TrainRun
 from lib.train import load_or_create_state
 from lib.train import do_training
+from lib.train import log_run_start, log_run_done
 from lib.stable_hash import stable_hash_small
 from lib.paths import get_checkpoint_path, get_lock_path
 
@@ -95,7 +96,8 @@ def distributed_train(requested_configs: Union[List[TrainRun], List[Callable]] =
                 ):
                     do_train_run(distributed_train_run, device_id)
                 else:
-                    print("[Distributed train] Already done, moving on...")
+                    train_run = distributed_train_run.train_run
+                    log_run_done(train_run, serialized_epoch, serialized_epoch)
                 report_done(distributed_train_run)
             except filelock.Timeout:
                 print(

@@ -93,7 +93,7 @@ def fetch_requested_hash(hash):
         print(f"Aquired lock {get_lock_from_hash(hash)}")
         if get_request_path_from_hash(hash).is_file():
             train_run = get_train_run_from_hash(hash)
-            return DistributedTrainRun(train_run=train_run, lock=lock)
+            return DistributedTrainRun(train_run=train_run, lock=lock, hash=hash)
         else:
             print(
                 f"No requested train run file present at {get_request_path_from_hash(hash)}. Releasing lock."
@@ -146,6 +146,6 @@ def fetch_requested_train_run(train_only_from_configs: List[TrainRun] = None):
 
 
 def report_done(distributed_train_run: DistributedTrainRun):
-    get_distributed_training_request_path(distributed_train_run.train_run).unlink()
+    get_request_path_from_hash(distributed_train_run.hash).unlink()
     distributed_train_run.lock.release()
-    print(f"Worker reported {stable_hash(distributed_train_run.train_run)} done")
+    print(f"Worker reported {distributed_train_run.hash} done")

@@ -540,6 +540,7 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
         if state is not None:
             if ddp.get_rank() == 0:
                 duck.insert_model_with_model_id(train_run, state.model_id)
+            print(f"Resuming from epoch {state.epoch}/{train_run.epochs} (batch {state.batch})")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
 
@@ -549,11 +550,39 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
             code_path=code_path,
             device_id=config.device_id,
         )
+        print(f"Starting fresh training for {train_run.epochs} epochs")
 
     return state
 
 
+def log_run_start(train_run: TrainRun, state: TrainEpochState):
+    """Log config and state at the start of a training run."""
+    import json
+    print("=" * 60)
+    print("Train config:")
+    print(json.dumps(train_run.train_config.serialize_human(), indent=2, default=str))
+    print(f"Project: {train_run.project}")
+    print(f"Epochs: {train_run.epochs}")
+    print(f"Run ID: {train_run.run_id}, model ID: {state.model_id}")
+    print("=" * 60)
+
+
+def log_run_done(train_run: TrainRun, start_epoch: int, end_epoch: int):
+    """Log completion of a training run."""
+    trained = end_epoch - start_epoch
+    print("=" * 60)
+    if trained > 0:
+        print(f"Done. Trained epochs {start_epoch + 1}-{end_epoch} ({trained} epochs)")
+    else:
+        print(f"Done. Already at epoch {end_epoch}/{train_run.epochs}, no training needed")
+    print("=" * 60)
+
+
 def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id):
+    if ddp.get_rank() == 0:
+        log_run_start(train_run, state)
+
+    start_epoch = state.epoch
     train_epoch_spec = TrainEpochSpec(
         loss=train_run.train_config.loss,
         device_id=device_id,
@@ -614,6 +643,8 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
         export_all(train_run)
     except Exception as e:
         logging.error(f"Final export failed: {e}")
+
+    log_run_done(train_run, start_epoch, state.epoch)
 
 
 def do_training(train_run: TrainRun, state: TrainEpochState, device_id):
