@@ -40,7 +40,7 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
         s3 = config.staging.s3
         ensure_s3_credentials(cursor)
 
-        return flush_all_to_s3(
+        paths = flush_all_to_s3(
             train_run=train_run,
             s3_bucket=config.staging.bucket,
             cursor=cursor,
@@ -50,7 +50,7 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
     elif config.is_filesystem_staging():
         from lib.staging_filesystem import flush_all_to_filesystem
 
-        return flush_all_to_filesystem(
+        paths = flush_all_to_filesystem(
             train_run=train_run,
             staging_dir=config.staging.staging_dir,
             cursor=cursor,
@@ -58,6 +58,17 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
 
     else:
         raise ValueError(f"Unknown staging type: {config.staging.type}")
+
+    # Also flush to checkpoint directory for local persistence
+    from lib.staging_filesystem import flush_all_to_checkpoint
+    from lib.paths import get_or_create_checkpoint_path
+
+    checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
+    ckpt_paths = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+    if ckpt_paths:
+        log("export", f"Also saved {len(ckpt_paths)} parquet files to {checkpoint_path / 'analytics'}")
+
+    return paths
 
 
 def start_periodic_export(

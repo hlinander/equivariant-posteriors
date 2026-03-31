@@ -17,6 +17,7 @@ def flush_table_to_filesystem(
     staging_dir: Path,
     cursor,
     run_id: Optional[int] = None,
+    sync_key_prefix: str = "",
 ) -> Optional[Path]:
     """
     Flush a single table's new data to filesystem as Parquet
@@ -43,6 +44,8 @@ def flush_table_to_filesystem(
         """
     )
 
+    sync_key = f"{sync_key_prefix}{table_name}"
+
     # Get last synced timestamp
     result = cursor.execute(
         """
@@ -50,7 +53,7 @@ def flush_table_to_filesystem(
         FROM sync_state
         WHERE table_name = ?
         """,
-        (table_name,),
+        (sync_key,),
     ).fetchall()
 
     last_synced = float(result[0][0]) if result and result[0][0] is not None else 0.0
@@ -115,7 +118,7 @@ def flush_table_to_filesystem(
         ON CONFLICT (table_name)
         DO UPDATE SET last_synced_timestamp = EXCLUDED.last_synced_timestamp
         """,
-        (table_name, current_time),
+        (sync_key, current_time),
     )
 
     log("export", f"Successfully exported {row_count} rows to {file_path}")
@@ -191,6 +194,68 @@ def flush_all_to_filesystem(
     return exported_paths
 
 
+def flush_all_to_checkpoint(
+    train_run: TrainRun,
+    checkpoint_path: Path,
+    cursor,
+) -> list[Path]:
+    """
+    Flush all metric tables to the checkpoint directory as parquet files.
+
+    Uses a separate sync key prefix so checkpoint export tracks progress
+    independently from the primary staging export.
+    """
+    from lib.render_duck import (
+        MODEL_PARAMETER,
+        TRAIN_STEP_METRIC,
+        TRAIN_EPOCH_METRIC,
+        CHECKPOINT_SAMPLE_METRIC,
+        MODELS_TABLE_NAME,
+        RUNS_TABLE_NAME,
+        TRAIN_STEPS_TABLE_NAME,
+        CHECKPOINTS_TABLE_NAME,
+        ARTIFACTS_TABLE_NAME,
+        ARTIFACT_CHUNKS_TABLE_NAME,
+    )
+
+    RUN_ID_TABLES = [MODEL_PARAMETER, TRAIN_STEP_METRIC, TRAIN_EPOCH_METRIC, TRAIN_STEPS_TABLE_NAME]
+    TIMESTAMP_ONLY_TABLES = [
+        CHECKPOINT_SAMPLE_METRIC,
+        MODELS_TABLE_NAME,
+        RUNS_TABLE_NAME,
+        CHECKPOINTS_TABLE_NAME,
+        ARTIFACTS_TABLE_NAME,
+        ARTIFACT_CHUNKS_TABLE_NAME,
+    ]
+
+    analytics_dir = checkpoint_path / "analytics"
+    exported_paths = []
+
+    for table_name in RUN_ID_TABLES:
+        file_path = flush_table_to_filesystem(
+            table_name=table_name,
+            staging_dir=analytics_dir,
+            cursor=cursor,
+            run_id=train_run.run_id,
+            sync_key_prefix="ckpt_",
+        )
+        if file_path:
+            exported_paths.append(file_path)
+
+    for table_name in TIMESTAMP_ONLY_TABLES:
+        file_path = flush_table_to_filesystem(
+            table_name=table_name,
+            staging_dir=analytics_dir,
+            cursor=cursor,
+            run_id=None,
+            sync_key_prefix="ckpt_",
+        )
+        if file_path:
+            exported_paths.append(file_path)
+
+    return exported_paths
+
+
 def export_periodic_filesystem(
     train_run: TrainRun,
     staging_dir: Path,
@@ -229,6 +294,14 @@ def export_periodic_filesystem(
             except Exception as e:
                 import traceback
                 log("export", f"Error during export: {e}\n{traceback.format_exc()}")
+
+            try:
+                from lib.paths import get_or_create_checkpoint_path
+                checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
+                flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+            except Exception as e:
+                import traceback
+                log("export", f"Error during checkpoint export: {e}\n{traceback.format_exc()}")
 
             time.sleep(interval_seconds)
 

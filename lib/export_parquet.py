@@ -299,6 +299,15 @@ def export_periodic(
                 import traceback
                 log("export", f"Error during export: {e}\n{traceback.format_exc()}")
 
+            try:
+                from lib.staging_filesystem import flush_all_to_checkpoint
+                from lib.paths import get_or_create_checkpoint_path
+                checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
+                flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+            except Exception as e:
+                import traceback
+                log("export", f"Error during checkpoint export: {e}\n{traceback.format_exc()}")
+
             time.sleep(interval_seconds)
 
     thread = threading.Thread(target=export_loop, daemon=True)

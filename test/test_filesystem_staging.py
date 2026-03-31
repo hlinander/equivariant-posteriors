@@ -529,6 +529,85 @@ def test_incremental_ingestion_filesystem(filesystem_env):
     print("\n[test] ✅ Incremental filesystem ingestion test passed!")
 
 
+def test_checkpoint_export(filesystem_env):
+    """Test that parquet files are also saved to a checkpoint directory"""
+    duck.ensure_duck(None, True)
+
+    train_run = create_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+    model_id = duck.insert_model(train_run)
+
+    # Insert test metrics
+    for i in range(5):
+        duck.insert_train_step_metric(model_id, train_run.run_id, "loss", i, 0.5 - i * 0.01)
+    duck.insert_model_parameter(model_id, train_run.run_id, "lr", 0.001)
+
+    # Flush directly to a checkpoint path
+    from lib.staging_filesystem import flush_all_to_checkpoint
+
+    checkpoint_path = filesystem_env / "checkpoint_test"
+    checkpoint_path.mkdir()
+
+    cursor = duck.CONN.cursor()
+    paths = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+
+    assert len(paths) > 0
+    analytics_dir = checkpoint_path / "analytics"
+    assert analytics_dir.exists()
+
+    # Verify parquet files exist under analytics/<table_name>/
+    parquet_files = list(analytics_dir.rglob("*.parquet"))
+    assert len(parquet_files) == len(paths)
+    for f in parquet_files:
+        assert f.stat().st_size > 0
+
+    # Verify subdirectories match table names
+    subdirs = {d.name for d in analytics_dir.iterdir() if d.is_dir()}
+    assert "train_step_metric" in subdirs
+    assert "model_parameter" in subdirs
+
+
+def test_checkpoint_export_incremental(filesystem_env):
+    """Test that checkpoint export tracks sync state independently"""
+    duck.ensure_duck(None, True)
+
+    train_run = create_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+    model_id = duck.insert_model(train_run)
+
+    duck.insert_model_parameter(model_id, train_run.run_id, "lr", 0.001)
+
+    cursor = duck.CONN.cursor()
+
+    # Export to both staging and checkpoint
+    staging_dir = filesystem_env / "staging"
+    checkpoint_path = filesystem_env / "checkpoint_test"
+    checkpoint_path.mkdir()
+
+    from lib.staging_filesystem import flush_all_to_filesystem, flush_all_to_checkpoint
+
+    staging_paths = flush_all_to_filesystem(train_run, staging_dir, cursor)
+    ckpt_paths = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+
+    # Both should have exported data (independent sync keys)
+    assert len(staging_paths) > 0
+    assert len(ckpt_paths) > 0
+
+    # Second call with no new data should export nothing
+    staging_paths2 = flush_all_to_filesystem(train_run, staging_dir, cursor)
+    ckpt_paths2 = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+    assert len(staging_paths2) == 0
+    assert len(ckpt_paths2) == 0
+
+    # Insert new data — both should pick it up
+    duck.insert_model_parameter(model_id, train_run.run_id, "batch_size", 32)
+
+    staging_paths3 = flush_all_to_filesystem(train_run, staging_dir, cursor)
+    ckpt_paths3 = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
+    assert len(staging_paths3) > 0
+    assert len(ckpt_paths3) > 0
+
+
 if __name__ == "__main__":
     # For manual testing
     import tempfile
