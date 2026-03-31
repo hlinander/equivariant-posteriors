@@ -99,6 +99,10 @@ def test_env(moto_server, tmp_path):
         duck.CONN = None
         duck.SCHEMA_ENSURED = False
 
+    # Reset ingestion schema state so each test gets a fresh schema
+    import ingestion.ingest as _ingest_mod
+    _ingest_mod._SCHEMA_ENSURED = False
+
     yield {
         "s3_client": s3_client,
         "central_db_path": central_db_path,
