@@ -1,8 +1,12 @@
 import xarray as xr
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Dict
 import numpy as np
 import tqdm
+from healpy.rotator import Rotator
+import healpy as hp
+import matplotlib.pyplot as plt
+from experiments.weather.models.hp_pear_conv import HEALPixPearConv, HEALPixPearConvConfig
 
 import torch
 from experiments.weather.data import (
@@ -135,6 +139,213 @@ class RMSE:
     upper: np.ndarray
     mean_surface: np.ndarray
     mean_upper: np.ndarray
+
+@dataclass
+class EquivarianceError:
+    surface: Dict[float, List[float]]
+    upper: Dict[float, List[float]] 
+    n_measurements: int
+
+
+import copy
+import numpy as np
+import healpy as hp
+import torch
+import tqdm
+
+
+def rotate_longitude_map_np(m, angle_deg, nested=True):
+    """
+    Rotate a scalar HEALPix map around the polar axis by angle_deg.
+    Input:
+        m: numpy array of shape [npix]
+    Output:
+        rotated numpy array of shape [npix]
+    """
+    npix = m.shape[-1]
+    nside = hp.npix2nside(npix)
+
+    pix = np.arange(npix)
+    theta, phi = hp.pix2ang(nside, pix, nest=nested)
+
+    angle_rad = np.deg2rad(angle_deg)
+
+    # backward sampling:
+    # output(theta, phi) = input(theta, phi - angle)
+    phi_src = (phi - angle_rad) % (2 * np.pi)
+
+    return hp.get_interp_val(m, theta, phi_src, nest=nested)
+
+
+def rotate_tensor_last_dim_healpix(x, angle_deg, nested=True):
+    """
+    Rotate a tensor along its last dimension, assuming the last dimension is a HEALPix map.
+
+    Supports shapes like:
+      [npix]
+      [C, npix]
+      [C, L, npix]
+      [B, C, npix]
+      [B, C, L, npix]
+      etc.
+
+    Returns a tensor on the same device/dtype as x.
+    """
+    if not torch.is_tensor(x):
+        raise TypeError(f"Expected torch.Tensor, got {type(x)}")
+
+    original_device = x.device
+    original_dtype = x.dtype
+    shape = x.shape
+    npix = shape[-1]
+
+    # Flatten all leading dimensions so we rotate one map at a time
+    x_flat = x.reshape(-1, npix)
+
+    # healpy works with numpy on CPU
+    x_np = x_flat.detach().cpu().numpy()
+
+    rotated_np = np.empty_like(x_np)
+    for i in range(x_np.shape[0]):
+        rotated_np[i] = rotate_longitude_map_np(x_np[i], angle_deg, nested=nested)
+
+    rotated = torch.from_numpy(rotated_np).to(device=original_device, dtype=original_dtype)
+    return rotated.reshape(shape)
+
+
+def shift_sample(sample, angle_deg, nested=True):
+    """
+    Rotate either an input batch or an output batch by angle_deg.
+
+    Supported dictionaries:
+      input:
+        'input_surface', 'input_upper'
+      output:
+        'logits_surface', 'logits_upper'
+
+    Expected shapes:
+      input_surface / logits_surface: [B, C, Npix] or [C, Npix]
+      input_upper   / logits_upper:   [B, C, L, Npix] or [C, L, Npix]
+
+    Returns:
+      shallow-copied dict with rotated relevant fields.
+    """
+    if "input_surface" in sample and "input_upper" in sample:
+        surface_key = "input_surface"
+        upper_key = "input_upper"
+    elif "logits_surface" in sample and "logits_upper" in sample:
+        surface_key = "logits_surface"
+        upper_key = "logits_upper"
+    else:
+        raise ValueError(
+            "Sample must contain either "
+            "'input_surface'/'input_upper' or "
+            "'logits_surface'/'logits_upper'"
+        )
+
+    rotated_sample = dict(sample)
+
+    rotated_sample[surface_key] = rotate_tensor_last_dim_healpix(
+        sample[surface_key], angle_deg, nested=nested
+    )
+    rotated_sample[upper_key] = rotate_tensor_last_dim_healpix(
+        sample[upper_key], angle_deg, nested=nested
+    )
+
+    return rotated_sample
+
+
+def equivariance_error(model, dataloader, device, sensitivity=4, nested=True, max_batches=None):
+    """
+    Measure approximate rotational equivariance of a model under longitude rotations.
+
+    For each batch:
+      1. compute y = f(x)
+      2. rotate input: x_r = R_a x
+      3. compute y_r = f(x_r)
+      4. unrotate prediction: R_-a y_r
+      5. compare y with R_-a y_r
+
+    Returned structure:
+      - surface[angle] -> tensor/array of shape [C]
+      - upper[angle]   -> tensor/array of shape [C, L]
+
+    Note:
+      This follows the reduction style of your rmse_hp reference:
+          sqrt((a-b)^2) -> mean over batch and pixels
+      so numerically this is mean absolute error per channel, not strict RMSE.
+    """
+    model = model.to(device)
+    model.eval()
+
+    angles = [i * (360.0 / sensitivity) for i in range(1, sensitivity)]
+
+    surface_sums = {angle: None for angle in angles}
+    upper_sums = {angle: None for angle in angles}
+    counts = {angle: 0 for angle in angles}
+
+    for batch_idx, batch in enumerate(tqdm.tqdm(dataloader)):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+
+        batch = {
+            k: v.to(device) if hasattr(v, "to") else v
+            for k, v in batch.items()
+        }
+
+        with torch.no_grad():
+            output = model(batch)
+
+        ref_surface = output["logits_surface"]   # expected shape [B, C, Npix]
+        ref_upper = output["logits_upper"]       # expected shape [B, C, L, Npix]
+
+        for angle_deg in angles:
+            rotated_input = shift_sample(batch, angle_deg, nested=nested)
+
+            with torch.no_grad():
+                rotated_output = model(rotated_input)
+
+            rotated_output_unrotated = shift_sample(rotated_output, -angle_deg, nested=nested)
+
+            pred_surface = rotated_output_unrotated["logits_surface"]
+            pred_upper = rotated_output_unrotated["logits_upper"]
+
+
+            err_surface = torch.sqrt((ref_surface - pred_surface) ** 2)   # [B, C, Npix]
+            err_upper = torch.sqrt((ref_upper - pred_upper) ** 2)         # [B, C, L, Npix]
+
+            # mean over batch and pixels, keep channels
+            batch_surface_mean = err_surface.mean(dim=(0, 2))             # [C]
+
+            # mean over batch and pixels, keep channels and levels
+            batch_upper_mean = err_upper.mean(dim=(0, 3))                 # [C, L]
+
+            if surface_sums[angle_deg] is None:
+                surface_sums[angle_deg] = batch_surface_mean.detach().clone()
+                upper_sums[angle_deg] = batch_upper_mean.detach().clone()
+            else:
+                surface_sums[angle_deg] += batch_surface_mean.detach()
+                upper_sums[angle_deg] += batch_upper_mean.detach()
+
+            counts[angle_deg] += 1
+
+    mean_surface = {
+        angle: (surface_sums[angle] / counts[angle]).detach().cpu()
+        for angle in angles
+    }
+    mean_upper = {
+        angle: (upper_sums[angle] / counts[angle]).detach().cpu()
+        for angle in angles
+    }
+
+
+    return EquivarianceError(
+        surface=mean_surface,   # dict: angle -> [C]
+        upper=mean_upper,       # dict: angle -> [C, L]
+        n_measurements=counts,
+    )
+            
+    
 
 
 def anomaly_correlation_coefficient_hp(model, dataloader, device_id):
@@ -531,6 +742,8 @@ def rmse_hp(model, dataloader, device_id):
     rmse_surface = None
     rmse_upper = None
 
+    print("Lead time days:", dataloader.dataset.config.lead_time_days)
+
     # dims = [0, -1]
     model.eval()
     n_batches = 0
@@ -544,8 +757,11 @@ def rmse_hp(model, dataloader, device_id):
         for _ in range(dataloader.dataset.config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
+            print(output["logits_surface"], output["logits_upper"])
             batch["input_surface"] = output["logits_surface"]
             batch["input_upper"] = output["logits_upper"]
+        
+        print(batch["input_surface"], batch["input_upper"])
         # with torch.no_grad():
         #     output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
@@ -585,6 +801,7 @@ def rmse_hp(model, dataloader, device_id):
     rmse_upper /= n_batches
     mean_rmse_surface = rmse_surface.sum(dim=-1) / n_pixels
     mean_rmse_upper = rmse_upper.sum(dim=-1) / n_pixels
+
     return RMSE(
         surface=rmse_surface,
         upper=rmse_upper,
@@ -787,3 +1004,61 @@ def rmse_dh_on_dh(model, dataloader_dh, device_id, weighted=True):
         mean_upper=mean_rmse_upper,
     )
     # return dict(surface=rmse_surface, upper=rmse_upper)
+
+
+if __name__ == "__main__":
+    from experiments.weather.data import DataHPConfig, DataHP
+
+    config = DataHPConfig(
+        nside=64,
+        start_year=2019,
+        end_year=2019,
+        delta_t=2
+    )
+    ds = DataHP(config)
+
+    model = HEALPixPearConv(HEALPixPearConvConfig())
+
+    print(equivariance_error(model, torch.utils.data.DataLoader(ds, batch_size=4), "cuda", sensitivity=4, max_batches=10))
+
+    # sample = ds[23]
+    # shifted_sample = shift_sample(sample, 180)
+
+    # # Plotting the samples to verify the shift
+    # channel_idx = 3  # choose the surface channel to inspect
+
+    # original_map = sample["input_surface"][channel_idx]
+    # shifted_map = shifted_sample["input_surface"][channel_idx]
+
+    # diff = shifted_map - original_map
+
+    # print("max abs diff:", np.max(np.abs(diff)))
+    # print("mean abs diff:", np.mean(np.abs(diff)))
+    # print("relative L2 diff:", np.linalg.norm(diff) / np.linalg.norm(original_map))
+
+    # plt.figure(figsize=(10, 12))
+
+    # hp.cartview(
+    #     original_map,
+    #     fig=1,
+    #     sub=(2, 1, 1),
+    #     flip="geo",
+    #     lonra=[-180, 180],
+    #     latra=[-90, 90],
+    #     title=f"Original surface channel {channel_idx}",
+    #     nest=True
+    # )
+
+    # hp.cartview(
+    #     shifted_map,
+    #     fig=1,
+    #     sub=(2, 1, 2),
+    #     flip="geo",
+    #     lonra=[-180, 180],
+    #     latra=[-90, 90],
+    #     title=f"Shifted surface channel {channel_idx} (+90°)",
+    #     nest=True
+    # )   
+
+
+    # plt.savefig("shifted_samples.png")

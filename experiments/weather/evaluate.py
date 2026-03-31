@@ -49,11 +49,12 @@ from lib.export import export_all
 
 from lib.distributed_trainer import distributed_train
 
-from experiments.weather.data import DataHPConfig, Climatology, DataHP
+from experiments.weather.data import DataHPConfig, Climatology, DataHP, DataHPSubset
 from experiments.weather.metrics import (
     anomaly_correlation_coefficient_hp,
     anomaly_correlation_coefficient_dh,
     anomaly_correlation_coefficient_dh_on_dh,
+    equivariance_error,
     rmse_hp,
     rmse_dh,
     rmse_dh_on_dh,
@@ -61,10 +62,24 @@ from experiments.weather.metrics import (
 )
 
 
-def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
+def evaluate_weather(
+        create_config,
+        epoch,
+        lead_time_days,
+        ensemble_id=0, 
+        eval_metrics=["rmse", "acc", "equivariance"],
+        reduction_factor=1,
+        consecutive_samples=1,
+        ):
     device_id = ddp_setup()
     print(f"Lead time {lead_time_days}d")
     train_run = create_config(0, 10)
+
+    if train_run.train_config.train_data_config.delta_t < 24 and lead_time_days > 1:
+        # TODO implement this
+        print(f"WARNING: lead_time_days={lead_time_days}d may not be compatible with delta_t={train_run.train_config.train_data_config.delta_t}h yet")
+        exit(1)
+
 
     ds_train = DataHP(train_run.train_config.train_data_config)
     ds_rmse_config = (
@@ -72,13 +87,15 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
             lead_time_days
         )
     )
-    ds_rmse = DataHP(ds_rmse_config)
+    ds_rmse = DataHPSubset(ds_rmse_config, reduction_factor=reduction_factor, consecutive_samples=consecutive_samples)
     dl_rmse = torch.utils.data.DataLoader(
         ds_rmse,
         batch_size=1,
         shuffle=False,
         drop_last=False,
     )
+
+    # TODO need to do an adaptation for the ACC with delta_t and subset
     ds_acc = Climatology(
         train_run.train_config.train_data_config.validation().with_lead_time_days(
             lead_time_days
@@ -92,15 +109,22 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
     )
     era5_meta = MeteorologicalData()
 
+    config_path = os.environ.get("CONFIG", None)
+    train_run = create_config(ensemble_id, epoch)
+    if config_path is not None and Path(config_path).stem == 'pear':
+        del train_run.train_config.train_data_config.delta_t
+
     print(f"[eval] Epoch {epoch}")
     deser_config = DeserializeConfig(
-        train_run=create_config(ensemble_id, epoch),
+        train_run=train_run,
         device_id=device_id,
     )
     deser_model = deserialize_model(deser_config)
     if deser_model is None:
         print("Can't deserialize")
         exit(0)
+
+    print(deser_model.model_id)
 
     insert_model_with_model_id(train_run, deser_model.model_id)
 
@@ -124,27 +148,54 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
     model = deser_model.model
     model.eval()
 
-    print("ACC")
-    if ds_rmse_config.driscoll_healy:
-        acc_res_on_dh = anomaly_correlation_coefficient_dh_on_dh(
-            model, dl_acc, device_id
-        )
-        acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
 
-        # CHANGED: Removed db_prefix="pg." - metrics go to local DuckDB
-        for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
+    if "acc" in eval_metrics:
+        print("[eval] ACC")
+        if ds_rmse_config.driscoll_healy:
+            acc_res_on_dh = anomaly_correlation_coefficient_dh_on_dh(
+                model, dl_acc, device_id
+            )
+            acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
+
+            # CHANGED: Removed db_prefix="pg." - metrics go to local DuckDB
+            for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
+                insert_checkpoint_sample_metric(
+                    deser_model.model_id,
+                    epoch * len(ds_train),
+                    f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+                    ds_rmse_config.short_name(),
+                    [],
+                    var_data.item(),
+                    [],
+                )
+            for var_idx, var_data in enumerate(acc_res_on_dh.acc_upper):
+                for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
+                    var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
+                    insert_checkpoint_sample_metric(
+                        deser_model.model_id,
+                        epoch * len(ds_train),
+                        var_name,
+                        ds_rmse_config.short_name(),
+                        [],
+                        value.item(),
+                        [],
+                    )
+        else:
+            acc_res = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
+
+        for var_idx, var_data in enumerate(acc_res.acc_surface):
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
-                f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+                f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
                 [],
                 var_data.item(),
                 [],
             )
-        for var_idx, var_data in enumerate(acc_res_on_dh.acc_upper):
+        for var_idx, var_data in enumerate(acc_res.acc_upper):
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
+                var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
                     deser_model.model_id,
                     epoch * len(ds_train),
@@ -154,28 +205,55 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
                     value.item(),
                     [],
                 )
-    else:
-        acc_res = anomaly_correlation_coefficient_hp(model, dl_acc, device_id)
 
-    print("[eval] rmse")
-    if ds_rmse_config.driscoll_healy:
-        rmse_res = rmse_dh(model, dl_rmse, device_id)
-        rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
+    if "rmse" in eval_metrics:
+        print("[eval] rmse")
+        if ds_rmse_config.driscoll_healy:
+            rmse_res = rmse_dh(model, dl_rmse, device_id)
+            rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
+
+            # CHANGED: Removed db_prefix="pg."
+            for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
+                insert_checkpoint_sample_metric(
+                    deser_model.model_id,
+                    epoch * len(ds_train),
+                    f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+                    ds_rmse_config.short_name(),
+                    [],
+                    var_data.item(),
+                    [],
+                )
+            for var_idx, var_data in enumerate(rmse_res_on_dh.mean_upper):
+                for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
+                    var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
+                    insert_checkpoint_sample_metric(
+                        deser_model.model_id,
+                        epoch * len(ds_train),
+                        var_name,
+                        ds_rmse_config.short_name(),
+                        [],
+                        value.item(),
+                        [],
+                    )
+        else:
+            rmse_res = rmse_hp(model, dl_rmse, device_id)
 
         # CHANGED: Removed db_prefix="pg."
-        for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
+        for var_idx, var_data in enumerate(rmse_res.mean_surface):
+            print(f"rmse_surface_{era5_meta.surface.names[var_idx]}: {var_data.item()}")
             insert_checkpoint_sample_metric(
                 deser_model.model_id,
                 epoch * len(ds_train),
-                f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
+                f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
                 [],
                 var_data.item(),
                 [],
             )
-        for var_idx, var_data in enumerate(rmse_res_on_dh.mean_upper):
+        for var_idx, var_data in enumerate(rmse_res.mean_upper):
+            print(f"rmse_upper_{era5_meta.upper.names[var_idx]}: {var_data.cpu().numpy()}")
             for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-                var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
+                var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
                     deser_model.model_id,
                     epoch * len(ds_train),
@@ -185,54 +263,39 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
                     value.item(),
                     [],
                 )
-    else:
-        rmse_res = rmse_hp(model, dl_rmse, device_id)
+        
+    
+    if "equivariance" in eval_metrics:
+        print("[eval] Equivariance")
+        equivariance_errors = equivariance_error(model, dl_rmse, device_id, sensitivity=120, max_batches=5) # checking every 3 degrees 
+        print(f"Equivariance errors (surface): {equivariance_errors.surface}")
+        print(f"Equivariance errors (upper): {equivariance_errors.upper}")
+        for angle, surface_errors in equivariance_errors.surface.items():
+            for idx, error in enumerate(surface_errors):
+                var_name = f"equiv_error_surface_{era5_meta.surface.names[idx]}_{angle}deg.{ds_rmse_config.lead_time_days}d"
+                insert_checkpoint_sample_metric(
+                    deser_model.model_id,
+                    epoch * len(ds_train),
+                    var_name,
+                    ds_rmse_config.short_name(),
+                    [],
+                    error.item(),
+                    [],
+                )
 
-    # CHANGED: Removed db_prefix="pg."
-    for var_idx, var_data in enumerate(rmse_res.mean_surface):
-        insert_checkpoint_sample_metric(
-            deser_model.model_id,
-            epoch * len(ds_train),
-            f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-            ds_rmse_config.short_name(),
-            [],
-            var_data.item(),
-            [],
-        )
-    for var_idx, var_data in enumerate(rmse_res.mean_upper):
-        for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                var_name,
-                ds_rmse_config.short_name(),
-                [],
-                value.item(),
-                [],
-            )
-    for var_idx, var_data in enumerate(acc_res.acc_surface):
-        insert_checkpoint_sample_metric(
-            deser_model.model_id,
-            epoch * len(ds_train),
-            f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
-            ds_rmse_config.short_name(),
-            [],
-            var_data.item(),
-            [],
-        )
-    for var_idx, var_data in enumerate(acc_res.acc_upper):
-        for level, value in zip(era5_meta.upper.levels, var_data.cpu().numpy()):
-            var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
-            insert_checkpoint_sample_metric(
-                deser_model.model_id,
-                epoch * len(ds_train),
-                var_name,
-                ds_rmse_config.short_name(),
-                [],
-                value.item(),
-                [],
-            )
+        for angle, upper_errors in equivariance_errors.upper.items():
+            for idx, error in enumerate(upper_errors):
+                for level, value in zip(era5_meta.upper.levels, error.cpu().numpy()):
+                    var_name = f"equiv_error_upper_{era5_meta.upper.names[idx]}_{int(level)}_{angle}deg.{ds_rmse_config.lead_time_days}d"
+                    insert_checkpoint_sample_metric(
+                        deser_model.model_id,
+                        epoch * len(ds_train),
+                        var_name,
+                        ds_rmse_config.short_name(),
+                        [],
+                        value.item(),
+                        [],
+                    )
 
     # NEW: Export metrics to staging using AnalyticsConfig
     # This replaces the old sync(train_run) call
@@ -260,4 +323,4 @@ if __name__ == "__main__":
     create_config = load_create_config(sys.argv[1])
     epoch = int(sys.argv[2])
     lead_time_days = int(os.environ.get("LEADTIME", "1"))
-    evaluate_weather(create_config, epoch, lead_time_days)
+    evaluate_weather(create_config, epoch, lead_time_days, eval_metrics=["rmse"], reduction_factor=0.2, consecutive_samples=10)

@@ -1,3 +1,4 @@
+import os
 import time
 import copy
 import json
@@ -8,6 +9,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import shutil
 from multiprocessing import Pool
+from datetime import datetime, timedelta
+import tqdm
 
 
 # from lib.models.healpix.swin_hp_transformer import SwinHPTransformerConfig
@@ -37,6 +40,7 @@ ERA5_START_YEAR_TRAINING = 2007
 ERA5_END_YEAR_TRAINING = 2017
 ERA5_START_YEAR_TEST = 2019
 ERA5_END_YEAR_TEST = 2019
+EQUIVAIRIANT_CACHE_YEARS = [2012, 2019]
 
 
 @dataclass
@@ -49,6 +53,8 @@ class DataHPConfig:
     start_year: int = 2007
     end_year: int = 2017
     lead_time_days: int = 1
+
+    delta_t: int = 24 # hours, possilbe choices are 2, 4, 6, 12, 24
 
     def short_name(self):
         return f"era5_{self.start_year}_{self.end_year}"
@@ -70,6 +76,7 @@ class DataHPConfig:
         keys.remove("normalized")
         keys.remove("lead_time_days")
         keys.remove("end_year")
+        keys.remove("delta_t")
         return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
 
     def cache_name(self):
@@ -77,7 +84,20 @@ class DataHPConfig:
         keys.remove("cache")
         keys.remove("lead_time_days")
         keys.remove("end_year")
+        keys.remove("delta_t")
         return "_".join([f"{key}_{self.__dict__[key]}" for key in keys])
+    
+    def cache_name_equivariant(self):
+        if not self.delta_t in [2, 4, 6, 8, 12, 24]:
+            raise ValueError("delta_t must be one of [2, 4, 6, 8, 12, 24]")
+        
+        if not self.start_year in EQUIVAIRIANT_CACHE_YEARS or not self.end_year in EQUIVAIRIANT_CACHE_YEARS:
+            raise ValueError(f"Equivariant cache is only implemented for the years {EQUIVAIRIANT_CACHE_YEARS}")
+        
+        if self.start_year != self.end_year:
+            raise ValueError("Equivariant cache is only implemented for single year datasets")
+
+        return "era5_lite_equivariant"
 
     def validation(self):
         ret = copy.deepcopy(self)
@@ -112,7 +132,7 @@ def days_between_years(start_year: int, end_year: int) -> int:
 def days_from_start_year(start_year: int, year: int, month: int, day: int) -> int:
     start_date = datetime(start_year, 1, 1)  # Start of the start year
     specific_date = datetime(year, month, day)  # Specific date
-    return (specific_date - start_date).days
+    return (specific_date - start_date).days 
 
 
 def day_index_to_datetime(day_index: int, start_year: int, end_year: int):
@@ -122,14 +142,14 @@ def day_index_to_datetime(day_index: int, start_year: int, end_year: int):
 
 
 def day_index_to_era5_config(
-    day_index: int, start_year: int, end_year: int
+    day_index: int, start_year: int, end_year: int, time_str: str = "00:00:00"
 ) -> cdstest.ERA5SampleConfig:
     target_date = day_index_to_datetime(day_index, start_year, end_year)
     return cdstest.ERA5SampleConfig(
         year=target_date.strftime("%Y"),
         month=target_date.strftime("%m"),
         day=target_date.strftime("%d"),
-        time="00:00:00",
+        time=time_str,
     )
 
 
@@ -443,7 +463,10 @@ class DataHP(torch.utils.data.Dataset):
         return dict(surface=surface_metas, upper=upper_metas)
 
     def get_cache_dir(self):
-        return env().paths.datasets / self.config.cache_name()
+        if self.config.delta_t == 24:
+            return env().paths.datasets / self.config.cache_name()
+        else:
+            return env().paths.datasets / self.config.cache_name_equivariant()
 
     def get_statistics_path(self):
         return env().paths.datasets / f"{self.config.statistics_name()}.npy"
@@ -461,15 +484,121 @@ class DataHP(torch.utils.data.Dataset):
             )
 
     def __getitem__(self, idx):
-        if self.config.lead_time_days == 1:
-            return self._get_24h(idx)
+        if self.config.delta_t == 24:
+            if self.config.lead_time_days == 1:
+                return self._get_24h(idx)
+            else:
+                sample = self._get_24h(idx)
+                target = self._get_24h(idx + self.config.lead_time_days - 1)
+                sample["target_surface"] = target["target_surface"]
+                sample["target_upper"] = target["target_upper"]
+                sample["prediction_timedelta_hours"] = 24 * self.config.lead_time_days
+                return sample
         else:
-            sample = self._get_24h(idx)
-            target = self._get_24h(idx + self.config.lead_time_days - 1)
-            sample["target_surface"] = target["target_surface"]
-            sample["target_upper"] = target["target_upper"]
-            sample["prediction_timedelta_hours"] = 24 * self.config.lead_time_days
-            return sample
+            return self._get_th(idx)
+
+    def ds_index_to_era5_config(self, ds_idx):
+        start = datetime(self.config.start_year, 1, 1, 0, 0, 0)
+        dt = start + timedelta(hours=ds_idx * 2)
+        year = str(dt.year)
+        month = str(dt.month).zfill(2)
+        day = str(dt.day).zfill(2)
+        time = dt.strftime("%H:%M:%S")
+
+        return cdstest.ERA5SampleConfig(year=year, month=month, day=day, time=time)
+
+    def load_sample(self, year:int , ds_idx: int, names: dict):
+        fs_cache_path = self.get_cache_dir() / f"year_{year}/{ds_idx}" 
+        fs_cache_path_tmp = self.get_cache_dir() / f"year_{year}/{ds_idx}_constructing"
+
+        if fs_cache_path.is_dir() and self.config.cache:
+            data_dict = dict()
+            for key, filename in names.items():
+                data_dict[key] = np.load(fs_cache_path / filename).astype(np.float32)
+            data_dict["time"] = json.loads(open(fs_cache_path / "era5_config.json").read())["time"]
+            data_dict["masks"] = masks.load_mask_hp(self.config.nside)
+            return data_dict
+
+        e5s_config = self.ds_index_to_era5_config(ds_idx)
+        # print("Get ERA5 sample")
+        
+        downloaded = False # Flag variable to eventually redownload corrupted samples
+
+        while not downloaded:
+            try:
+                e5s = cdstest.get_era5_sample(e5s_config)
+                downloaded = True
+            except Exception as e:
+                print(f"Error loading ERA5 sample for config: {e5s_config}")
+                print(e)
+                
+                # Deleting the .grib files associated with the sample to force redownloading, since the error is likely due to corrupted files
+                os.remove(e5s_config.surface_grib_path())
+                os.remove(e5s_config.upper_grib_path())
+
+                print("Retrying download...")
+
+
+        # print("Get ERA5 sample done")
+        hp_surface, hp_upper = self.e5_to_numpy(e5s)
+        # print("To numpy done")
+        data_dict = dict(
+            surface=hp_surface.astype(np.float32),
+            upper=hp_upper.astype(np.float32),
+        )
+        if self.config.cache:
+            fs_cache_path_tmp.mkdir(parents=True, exist_ok=True)
+            for key, filename in names.items():
+                np.save(fs_cache_path_tmp / filename, data_dict[key])
+
+            open(fs_cache_path_tmp / "era5_config.json", "w").write(
+                json.dumps(e5s_config.__dict__, indent=2)
+            )
+
+            if not fs_cache_path.is_dir():
+                shutil.move(fs_cache_path_tmp, fs_cache_path)
+
+        data_dict["time"] = e5s_config.time
+        data_dict["masks"] = masks.load_mask_hp(self.config.nside)
+    
+        return data_dict
+
+    def _get_th(self, idx):
+        idx = idx * self.config.delta_t // 2 # since the data is downloaded every 2 hours, we need to divide by 2 to get the correct index
+
+        year = self.config.start_year + idx // (12 * 365) # since there are (12 * 365) samples per year
+        year_target = year
+        ds_idx = idx % (12 * 365) # index within the year
+        ds_idx_target = ds_idx + self.config.delta_t // 2
+
+        if ds_idx == (12 * 365) - (self.config.delta_t // 2):
+            year_target += 1
+
+        names = dict(
+            surface="surface.npy",
+            upper="upper.npy",
+        )
+        item_dict = dict(
+            sample_id=ds_idx,
+            prediction_timedelta_hours=self.config.delta_t,
+        )
+
+        sample_dict = self.load_sample(year, ds_idx, names)
+        target_dict = self.load_sample(year_target, ds_idx_target, names)
+
+        item_dict["input_surface"] = sample_dict["surface"]
+        item_dict["input_upper"] = sample_dict["upper"]
+        item_dict["target_surface"] = target_dict["surface"]
+        item_dict["target_upper"] = target_dict["upper"]
+        item_dict["time"] = sample_dict["time"]
+        item_dict["masks"] = sample_dict["masks"]
+
+        return item_dict
+        
+        
+        
+
+
 
     def _get_24h(self, idx):
         # if idx >= len(self):
@@ -546,11 +675,95 @@ class DataHP(torch.utils.data.Dataset):
         return item_dict
 
     def __len__(self):
-        return days_between_years(self.config.start_year, self.config.end_year)
+        return (days_between_years(self.config.start_year, self.config.end_year) - 1) * 24 // self.config.delta_t 
+    
+
+class DataHPSubset(DataHP):
+    """
+    Since DataHP does not allow to use a subset of a year, this class allows to reduce the size of the dataset.
+    """
+
+    def __init__(self, data_config: DataHPConfig, reduction_factor: float, consecutive_samples: int = 1):
+        """
+        Args:
+            data_config: Configuration for the data
+            reduction_factor: Factor by which to reduce the dataset size (0,1] - e.g. 0.1 will use 10% of the data
+            consecutive_samples: Number of consecutive samples to include in the subset.
+
+        Example:
+            reduction_factor = 0.1, consecutive_samples = 5
+            -> keep 5 consecutive samples, then skip about 45, repeating through each year.
+        """
+        super().__init__(data_config)
+
+        if reduction_factor <= 0 or reduction_factor > 1:
+            raise ValueError("reduction_factor must be in the range (0, 1]")
+        self.reduction_factor = reduction_factor
+
+        if consecutive_samples < 1:
+            raise ValueError("consecutive_samples must be at least 1")
+        self.consecutive_samples = consecutive_samples
+
+        self._subset_indices = self._build_subset_indices()
+
+    def _build_subset_indices(self):
+        total_len = super().__len__()
+        n_years = self.config.end_year - self.config.start_year + 1
+
+        # Split the total dataset length across years.
+        # This is robust even if total_len is not perfectly divisible by n_years.
+        base_year_len = total_len // n_years
+        remainder = total_len % n_years
+
+        year_lengths = [
+            base_year_len + (1 if i < remainder else 0)
+            for i in range(n_years)
+        ]
+
+        subset_indices = []
+        offset = 0
+
+        for year_len in year_lengths:
+            target_kept = int(year_len * self.reduction_factor)
+
+            if target_kept == 0 and year_len > 0:
+                target_kept = 1
+
+            # If reduction_factor = kept / cycle_len  => cycle_len ~= kept_block / reduction_factor
+            cycle_len = max(
+                self.consecutive_samples,
+                round(self.consecutive_samples / self.reduction_factor)
+            )
+
+            kept = 0
+            cursor = 0
+
+            while kept < target_kept and cursor < year_len:
+                take = min(
+                    self.consecutive_samples,
+                    target_kept - kept,
+                    year_len - cursor
+                )
+
+                subset_indices.extend(range(offset + cursor, offset + cursor + take))
+
+                kept += take
+                cursor += cycle_len
+
+            offset += year_len
+
+        return subset_indices
+
+    def __getitem__(self, idx):
+        real_idx = self._subset_indices[idx]
+        return super().__getitem__(real_idx)
+
+    def __len__(self):
+        return len(self._subset_indices)
 
 class DataHPConvConfig(DataHPConfig):
     input_time_dim: int = 1 # Number of input time steps
-    output_time_dim: int = 1 # Number of output time steps (NOT SURE IF I NEED THIS HERE)
+    output_time_dim: int = 1 # Number of output time steps
 
     def short_name(self):
         return super().short_name() + "_conv"
@@ -565,7 +778,7 @@ class DataHPConv(DataHP):
     def __init__(self, data_config: DataHPConvConfig):
         super().__init__(data_config)
 
-    # TODO need to adapt the dataset to differnt hour of the day
+    
     def __getitem__(self, idx):
         input_time_dim = self.config.input_time_dim
         output_time_dim = self.config.output_time_dim
@@ -751,13 +964,34 @@ def serialize_dataset_statistics(nside, test_with_one_sample=False):
 
 if __name__ == "__main__":
 
-    cnf = DataHPConfig(nside=64, end_year=2012, normalized=False)
-    ds = DataHP(cnf)
-    print(ds[0].keys())
-    print(ds[0]['sample_id'])
+    for year in [2019]:
+        cnf2 = DataHPConfig(nside=64, start_year=year, end_year=year, normalized=False, delta_t=2)
+        ds_subset = DataHPSubset(cnf2, reduction_factor=1, consecutive_samples=1)
+        print(f"Length of subset dataset for year {year}: {len(ds_subset)}")
+
+        for i in range(10):
+            print(ds_subset[i]['input_upper'])
+        
 
 
-    config = DataHPConvConfig(nside=64, end_year=2012, normalized=False)
-    dataset = DataHPConv(config)
 
-    print(dataset[0].keys())
+        # ds2 = DataHP(cnf2)
+        
+        # print("Checking dataset integrity on year {}...".format(year))
+        # for i in tqdm.tqdm(range(len(ds2))):
+        #     try:
+        #         s = ds2[i]
+        #         for k, v in s.items():
+        #             if isinstance(v, np.ndarray):
+        #                 assert v.dtype == np.float32, (i, k, v.dtype)
+        #                 assert v.flags["C_CONTIGUOUS"], (i, k, "not contiguous")
+        #                 assert v.flags["WRITEABLE"], (i, k, "not writeable")
+                
+        #         assert s["input_surface"].shape == (4, 49152), ("input_surface", i, s["input_surface"].shape)
+        #         assert s["input_upper"].shape == (5, 13, 49152), ("input_upper", i, s["input_upper"].shape)
+        #         assert s["masks"].shape == (3, 49152), ("masks", i, s["masks"].shape)
+
+        #     except Exception as e:
+        #         print("BROKEN INDEX:", i)
+        #         print(e)
+                
