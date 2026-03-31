@@ -30,7 +30,8 @@ class HEALPixPearConvConfig:
     model_config_path: str = "experiments/weather/persisted_configs/dlwp_healpix/configs"
     input_channels: int = 69 # 4 surface + 65 upper (13 levels * 5 variables)
     n_channels: Sequence = (136, 68, 34)
-    n_layers: Sequence = (2, 2, 1)
+    n_layers: Sequence = (4, 2, 1)
+    enable_healpixpad: bool = True
 
     def serialize_human(self):
         dict = self.__dict__.copy()
@@ -55,6 +56,7 @@ class HEALPixPearConv(nn.Module):
             input_channels=config.input_channels,
             n_channels=config.n_channels,
             n_layers=config.n_layers,
+            enable_healpixpad=config.enable_healpixpad,
             _convert_="all"
         )
 
@@ -63,6 +65,7 @@ class HEALPixPearConv(nn.Module):
             output_channels=config.input_channels, # We want to predict 4 variables at the surface level
             n_channels=config.n_channels[::-1], # Reverse the number of channels for the decoder
             n_layers=config.n_layers[::-1], # Reverse the number of layers for the decoder
+            enable_healpixpad=config.enable_healpixpad,
             _convert_="all"
         )
 
