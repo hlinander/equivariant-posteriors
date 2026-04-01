@@ -484,17 +484,17 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
             """
         )
 
-    # Get per-file row counts and mark processed
+    # Get per-file row counts and bulk-insert into ingestion_state
     per_file_counts = dict(
         conn.execute(f"SELECT filename, COUNT(*) FROM {pq} GROUP BY filename").fetchall()
     )
-    total_rows = 0
-    for f in batch:
-        row_count = per_file_counts.get(f, 0)
-        mark_file_processed(conn, f, row_count)
-        total_rows += row_count
+    rows = [(f, per_file_counts.get(f, 0)) for f in batch]
+    values = ", ".join(f"('{f}', now(), {count})" for f, count in rows)
+    conn.execute(
+        f"INSERT INTO ingestion_state (file_path, ingested_at, row_count) VALUES {values}"
+    )
 
-    return total_rows
+    return sum(count for _, count in rows)
 
 
 def ingest_table(
@@ -722,6 +722,11 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
     else:
         raise ValueError(f"Unknown staging type: {config.staging.type}")
+
+    # Compact ingestion_state in DuckLake to merge small files
+    if not dry_run and total_files > 0 and config.is_ducklake_central():
+        print("[ingest] Compacting ingestion_state")
+        conn.execute("CALL ducklake_merge_adjacent_files('central', 'ingestion_state')")
 
     print(f"[ingest] Ingestion complete. Processed {total_files} files.")
     conn.close()
