@@ -684,15 +684,15 @@ def ingest_all_from_config(config, dry_run: bool = False):
             )
             total_files += files_processed
 
-            # Archive processed files
-            if not dry_run and files_processed > 0:
-                newly_processed = set(s3_files) - processed_files
+            # Archive all staging files that have been ingested
+            # (newly processed + any stragglers from prior runs)
+            if not dry_run:
                 archive_processed_files(
                     s3_client,
                     config.staging.bucket,
                     config.staging.prefix,
                     config.staging.archive_prefix,
-                    newly_processed,
+                    set(s3_files),
                 )
 
     elif config.is_filesystem_staging():
@@ -713,10 +713,9 @@ def ingest_all_from_config(config, dry_run: bool = False):
             )
             total_files += files_processed
 
-            # Archive processed files
-            if not dry_run and files_processed > 0:
-                newly_processed = set(fs_files) - processed_files
-                for file_path_str in newly_processed:
+            # Archive all staging files that have been ingested
+            if not dry_run:
+                for file_path_str in fs_files:
                     file_path = Path(file_path_str)
                     move_filesystem_file(file_path, archive_dir, table_name)
 
