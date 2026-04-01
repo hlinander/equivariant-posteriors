@@ -544,21 +544,53 @@ def archive_processed_files(
     archive_prefix: str,
     processed_files: set[str],
 ):
-    """Move processed files from staging to archive"""
+    """Move processed files from staging to archive.
+
+    Copies are parallelized with threads, then originals are batch-deleted.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Build list of (source_key, dest_key) pairs
+    moves = []
     for s3_path in processed_files:
         if not s3_path.startswith(f"s3://{bucket}/{staging_prefix}"):
             continue
 
-        # Extract the key
         key = s3_path.replace(f"s3://{bucket}/", "")
         filename = Path(key).name
-
-        # Determine archive path
-        table_name = key.split("/")[1]  # Extract table name from path
+        table_name = key.split("/")[1]
         archive_key = f"{archive_prefix}/{table_name}/{filename}"
+        moves.append((key, archive_key))
 
-        print(f"[archive] Moving {key} -> {archive_key}")
-        move_s3_file(s3_client, bucket, key, archive_key)
+    if not moves:
+        return
+
+    print(f"[archive] Archiving {len(moves)} files")
+
+    # Parallel copy
+    def copy_one(src_dest):
+        src, dest = src_dest
+        s3_client.copy_object(
+            Bucket=bucket,
+            CopySource={"Bucket": bucket, "Key": src},
+            Key=dest,
+        )
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(copy_one, m): m for m in moves}
+        for future in as_completed(futures):
+            future.result()  # raise on error
+
+    # Batch delete originals
+    source_keys = [src for src, _ in moves]
+    for i in range(0, len(source_keys), 100):
+        batch = source_keys[i : i + 100]
+        s3_client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": [{"Key": k} for k in batch]},
+        )
+
+    print(f"[archive] Archived {len(moves)} files")
 
 
 def ingest_all_from_config(config, dry_run: bool = False):

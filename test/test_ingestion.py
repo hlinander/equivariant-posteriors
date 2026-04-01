@@ -437,6 +437,29 @@ def test_batched_ingestion(test_env):
 
     central_conn.close()
 
+    # Test archive: move processed files from staging to archive
+    from ingestion.ingest import archive_processed_files
+
+    archive_processed_files(
+        s3_client,
+        config.staging.bucket,
+        config.staging.prefix,
+        config.staging.archive_prefix,
+        set(param_files + step_files),
+    )
+
+    # Verify staging is empty for these tables
+    remaining_params = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.prefix}/{MODEL_PARAMETER}")
+    remaining_steps = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.prefix}/{TRAIN_STEP_METRIC}")
+    assert len(remaining_params) == 0, f"Expected empty staging for params, got {len(remaining_params)}"
+    assert len(remaining_steps) == 0, f"Expected empty staging for steps, got {len(remaining_steps)}"
+
+    # Verify files landed in archive
+    archived_params = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.archive_prefix}/{MODEL_PARAMETER}")
+    archived_steps = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.archive_prefix}/{TRAIN_STEP_METRIC}")
+    assert len(archived_params) == len(param_files), f"Expected {len(param_files)} archived param files, got {len(archived_params)}"
+    assert len(archived_steps) == len(step_files), f"Expected {len(step_files)} archived step files, got {len(archived_steps)}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
