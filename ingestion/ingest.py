@@ -578,8 +578,12 @@ def archive_processed_files(
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         futures = {pool.submit(copy_one, m): m for m in moves}
+        done = 0
         for future in as_completed(futures):
             future.result()  # raise on error
+            done += 1
+            if done % 100 == 0 or done == len(moves):
+                print(f"[archive]   Copied {done}/{len(moves)} files")
 
     # Batch delete originals
     source_keys = [src for src, _ in moves]
@@ -589,6 +593,7 @@ def archive_processed_files(
             Bucket=bucket,
             Delete={"Objects": [{"Key": k} for k in batch]},
         )
+        print(f"[archive]   Deleted batch {i // 100 + 1}: {len(batch)} files")
 
     print(f"[archive] Archived {len(moves)} files")
 
