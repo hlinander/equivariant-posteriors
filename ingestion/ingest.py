@@ -20,6 +20,7 @@ The ingestion process uses AnalyticsConfig from env.py and automatically handles
 - Central database configuration (DuckDB or DuckLake)
 - S3 credentials and connection settings
 """
+
 import argparse
 import time
 from pathlib import Path
@@ -70,7 +71,9 @@ def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str):
     )
 
 
-def ensure_s3_credentials(conn, s3_key: str, s3_secret: str, s3_region: str, s3_endpoint: str):
+def ensure_s3_credentials(
+    conn, s3_key: str, s3_secret: str, s3_region: str, s3_endpoint: str
+):
     """Ensure S3 credentials are configured in DuckDB"""
     conn.execute("INSTALL aws")
     conn.execute("LOAD aws")
@@ -110,7 +113,8 @@ def ensure_central_schema(conn):
     checkpoint_sample_metric) is split into separate tables by value type (int, float, text).
     """
     # Model parameter tables (split by type)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS model_parameter_int (
             model_id BIGINT,
             run_id BIGINT,
@@ -118,8 +122,10 @@ def ensure_central_schema(conn):
             name TEXT,
             value BIGINT
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS model_parameter_float (
             model_id BIGINT,
             run_id BIGINT,
@@ -127,8 +133,10 @@ def ensure_central_schema(conn):
             name TEXT,
             value FLOAT
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS model_parameter_text (
             model_id BIGINT,
             run_id BIGINT,
@@ -136,10 +144,12 @@ def ensure_central_schema(conn):
             name TEXT,
             value TEXT
         )
-    """)
+    """
+    )
 
     # Train step metric tables (split by type)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS train_step_metric_int (
             model_id BIGINT,
             run_id BIGINT,
@@ -148,8 +158,10 @@ def ensure_central_schema(conn):
             step INTEGER,
             value BIGINT
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS train_step_metric_float (
             model_id BIGINT,
             run_id BIGINT,
@@ -158,8 +170,10 @@ def ensure_central_schema(conn):
             step INTEGER,
             value FLOAT
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS train_step_metric_text (
             model_id BIGINT,
             run_id BIGINT,
@@ -168,10 +182,12 @@ def ensure_central_schema(conn):
             step INTEGER,
             value TEXT
         )
-    """)
+    """
+    )
 
     # Checkpoint sample metric tables (split by type)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_int (
             model_id BIGINT,
             timestamp TIMESTAMPTZ,
@@ -182,8 +198,10 @@ def ensure_central_schema(conn):
             mean BIGINT,
             value_per_sample BIGINT[]
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_float (
             model_id BIGINT,
             timestamp TIMESTAMPTZ,
@@ -194,8 +212,10 @@ def ensure_central_schema(conn):
             mean FLOAT,
             value_per_sample FLOAT[]
         )
-    """)
-    conn.execute("""
+    """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS checkpoint_sample_metric_text (
             model_id BIGINT,
             timestamp TIMESTAMPTZ,
@@ -206,10 +226,12 @@ def ensure_central_schema(conn):
             mean TEXT,
             value_per_sample TEXT[]
         )
-    """)
+    """
+    )
 
     # Train epoch metric table (no type splitting - explicit columns)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS train_epoch_metric (
             model_id BIGINT,
             run_id BIGINT,
@@ -224,28 +246,34 @@ def ensure_central_schema(conn):
             max FLOAT,
             count INTEGER
         )
-    """)
+    """
+    )
 
     # Models table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS models (
             id BIGINT,
             train_id TEXT,
             timestamp TIMESTAMPTZ
         )
-    """)
+    """
+    )
 
     # Runs table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS runs (
             id BIGINT,
             model_id BIGINT,
             timestamp TIMESTAMPTZ
         )
-    """)
+    """
+    )
 
     # Train steps table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS train_steps (
             model_id BIGINT,
             run_id BIGINT,
@@ -254,20 +282,24 @@ def ensure_central_schema(conn):
             sample_ids INTEGER[],
             timestamp TIMESTAMPTZ
         )
-    """)
+    """
+    )
 
     # Checkpoints table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS checkpoints (
             model_id BIGINT,
             step INTEGER,
             path TEXT,
             timestamp TIMESTAMPTZ
         )
-    """)
+    """
+    )
 
     # Artifacts table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS artifacts (
             id BIGINT,
             timestamp TIMESTAMPTZ,
@@ -277,10 +309,12 @@ def ensure_central_schema(conn):
             type TEXT,
             size INTEGER
         )
-    """)
+    """
+    )
 
     # Artifact chunks table
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS artifact_chunks (
             artifact_id BIGINT,
             seq_num INTEGER,
@@ -288,7 +322,8 @@ def ensure_central_schema(conn):
             size INTEGER,
             timestamp TIMESTAMPTZ
         )
-    """)
+    """
+    )
 
 
 def ensure_ingestion_state_table(conn):
@@ -308,9 +343,7 @@ def ensure_ingestion_state_table(conn):
 
 def get_processed_files(conn) -> set[str]:
     """Get set of already processed file paths"""
-    result = conn.execute(
-        "SELECT DISTINCT file_path FROM ingestion_state"
-    ).fetchall()
+    result = conn.execute("SELECT DISTINCT file_path FROM ingestion_state").fetchall()
     return {row[0] for row in result}
 
 
@@ -323,8 +356,7 @@ def mark_file_processed(conn, file_path: str, row_count: int):
     """
     # Check if already processed
     exists = conn.execute(
-        "SELECT 1 FROM ingestion_state WHERE file_path = ? LIMIT 1",
-        (file_path,)
+        "SELECT 1 FROM ingestion_state WHERE file_path = ? LIMIT 1", (file_path,)
     ).fetchone()
 
     if not exists:
@@ -509,7 +541,9 @@ def ingest_table(
         mark_file_processed(conn, file_path, file_row_count)
         total_rows += file_row_count
 
-    print(f"[ingest] Ingested {total_rows} total rows from {len(files_to_process)} files")
+    print(
+        f"[ingest] Ingested {total_rows} total rows from {len(files_to_process)} files"
+    )
     return len(files_to_process)
 
 
@@ -557,7 +591,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
     # Connect to central database based on config
     if config.is_ducklake_central():
-        print(f"[ingest] Using DuckLake central database")
+        print("[ingest] Using DuckLake central database")
         conn = duckdb.connect()  # In-memory connection
 
         # Attach DuckLake
@@ -570,12 +604,14 @@ def ingest_all_from_config(config, dry_run: bool = False):
         # Configure S3 for DuckLake data path
         ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint)
 
+        print("[ingest] Attaching...")
         conn.execute(
             f"ATTACH IF NOT EXISTS 'ducklake:postgres:user={postgres.user} password={postgres.password} "
             f"host={postgres.host} port={postgres.port} dbname={postgres.dbname}' as central "
             f"(data_path '{config.central.data_path}')"
         )
         conn.execute("USE central")
+        print("[ingest] Attached")
 
     elif config.is_duckdb_central():
         print(f"[ingest] Using local DuckDB database: {config.central.db_path}")
@@ -586,12 +622,13 @@ def ingest_all_from_config(config, dry_run: bool = False):
     # Ensure schema exists (once per process, not every ingestion cycle)
     global _SCHEMA_ENSURED
     if not _SCHEMA_ENSURED:
-        print(f"[ingest] Ensuring central database schema exists")
+        print("[ingest] Ensuring central database schema exists")
         ensure_central_schema(conn)
         ensure_ingestion_state_table(conn)
         _SCHEMA_ENSURED = True
 
     # Get already processed files
+    print("[ingest] Getting processed files...")
     processed_files = get_processed_files(conn)
     print(f"[ingest] Already processed {len(processed_files)} files")
 
@@ -599,7 +636,9 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
     # Dispatch based on staging type
     if config.is_s3_staging():
-        print(f"[ingest] Using S3 staging: s3://{config.staging.bucket}/{config.staging.prefix}")
+        print(
+            f"[ingest] Using S3 staging: s3://{config.staging.bucket}/{config.staging.prefix}"
+        )
 
         s3 = config.staging.s3
 
@@ -631,7 +670,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
                     config.staging.bucket,
                     config.staging.prefix,
                     config.staging.archive_prefix,
-                    newly_processed
+                    newly_processed,
                 )
 
     elif config.is_filesystem_staging():
@@ -671,6 +710,7 @@ def _ping_healthcheck(url: str, error: Exception | None = None):
     if not url:
         return
     import urllib.request
+
     try:
         if error is not None:
             ping_url = url.rstrip("/") + "/fail"
@@ -688,9 +728,7 @@ def main():
         description="Ingest unified Parquet files from staging into central database using AnalyticsConfig from env.py"
     )
 
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Don't modify database"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Don't modify database")
     parser.add_argument(
         "--continuous",
         action="store_true",
@@ -704,13 +742,15 @@ def main():
 
     config = analytics_config()
 
-    print(f"[ingest] Using AnalyticsConfig from env.py")
+    print("[ingest] Using AnalyticsConfig from env.py")
     print(f"[ingest]   Staging: {config.staging.type}")
     print(f"[ingest]   Central: {config.central.type}")
 
     if args.continuous:
         interval = config.ingest_interval_seconds
-        print(f"[ingest] Running in continuous mode (interval: {interval}s from config)")
+        print(
+            f"[ingest] Running in continuous mode (interval: {interval}s from config)"
+        )
         if config.healthcheck_url:
             print(f"[ingest] Health check enabled: {config.healthcheck_url}")
         while True:
@@ -720,6 +760,7 @@ def main():
             except Exception as e:
                 print(f"[ingest] Error during ingestion: {e}")
                 import traceback
+
                 traceback.print_exc()
                 _ping_healthcheck(config.healthcheck_url, error=e)
 
