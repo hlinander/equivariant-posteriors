@@ -51,6 +51,7 @@ SYNC_TABLES = [
     ARTIFACT_CHUNKS_TABLE_NAME,
 ]
 TYPES = ["int", "float", "text"]
+INGEST_BATCH_SIZE = 50
 _SCHEMA_ENSURED = False
 
 
@@ -426,24 +427,90 @@ def move_filesystem_file(source_path: Path, archive_dir: Path, table_name: str):
     print(f"[archive] Moved {source_path} -> {dest_path}")
 
 
+def _pq_src(files: list[str]) -> str:
+    """Build a read_parquet expression for a batch of files with filename tracking."""
+    file_list = ", ".join(f"'{f}'" for f in files)
+    return f"read_parquet([{file_list}], filename=true)"
+
+
+def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
+    """Ingest a batch of parquet files for a single table. Returns total rows."""
+    pq = _pq_src(batch)
+
+    if table_name in [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC]:
+        for type_name in TYPES:
+            value_col = f"value_{type_name}"
+            target_table = f"{table_name}_{type_name}"
+
+            if table_name == MODEL_PARAMETER:
+                conn.execute(
+                    f"""
+                    INSERT INTO {target_table} BY NAME
+                    SELECT model_id, run_id, timestamp, name,
+                           {value_col} as value
+                    FROM {pq}
+                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                    """
+                )
+            elif table_name == TRAIN_STEP_METRIC:
+                conn.execute(
+                    f"""
+                    INSERT INTO {target_table} BY NAME
+                    SELECT model_id, run_id, timestamp, name, step,
+                           {value_col} as value
+                    FROM {pq}
+                    WHERE type = '{type_name}' AND {value_col} IS NOT NULL
+                    """
+                )
+            elif table_name == CHECKPOINT_SAMPLE_METRIC:
+                mean_col = f"mean_{type_name}"
+                vps_col = f"value_per_sample_{type_name}"
+                conn.execute(
+                    f"""
+                    INSERT INTO {target_table} BY NAME
+                    SELECT model_id, timestamp, step, name, dataset,
+                           sample_ids,
+                           {mean_col} as mean,
+                           {vps_col} as value_per_sample
+                    FROM {pq}
+                    WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
+                    """
+                )
+    else:
+        conn.execute(
+            f"""
+            INSERT INTO {table_name} BY NAME
+            SELECT * EXCLUDE (filename) FROM {pq}
+            """
+        )
+
+    # Get per-file row counts and mark processed
+    per_file_counts = dict(
+        conn.execute(f"SELECT filename, COUNT(*) FROM {pq} GROUP BY filename").fetchall()
+    )
+    total_rows = 0
+    for f in batch:
+        row_count = per_file_counts.get(f, 0)
+        mark_file_processed(conn, f, row_count)
+        total_rows += row_count
+
+    return total_rows
+
+
 def ingest_table(
     conn,
     table_name: str,
     parquet_files: list[str],
     processed_files: set[str],
     dry_run: bool = False,
+    batch_size: int = INGEST_BATCH_SIZE,
 ) -> int:
     """
-    Ingest a single unified table, splitting by type
+    Ingest a single unified table, splitting by type.
 
-    Args:
-        conn: DuckDB connection
-        table_name: Name of the table to ingest
-        parquet_files: List of parquet file paths (S3 or filesystem)
-        processed_files: Set of already processed file paths
-        dry_run: If True, don't actually modify the database
+    Files are processed in batches to balance S3 round-trips against memory.
 
-    Returns the number of files processed
+    Returns the number of files processed.
     """
     files_to_process = [f for f in parquet_files if f not in processed_files]
 
@@ -453,93 +520,16 @@ def ingest_table(
 
     print(f"[ingest] Processing {len(files_to_process)} files for {table_name}")
 
+    if dry_run:
+        for f in files_to_process:
+            print(f"[ingest]   DRY RUN - would process {f}")
+        return 0
+
     total_rows = 0
-
-    for file_path in files_to_process:
-        print(f"[ingest]   Processing {file_path}")
-
-        if dry_run:
-            print(f"[ingest]   DRY RUN - would process {file_path}")
-            continue
-
-        # Get row count
-        row_count_result = conn.execute(
-            f"SELECT COUNT(*) FROM read_parquet('{file_path}')"
-        ).fetchone()
-        file_row_count = row_count_result[0] if row_count_result else 0
-
-        # Handle tables that need type splitting (metrics)
-        if table_name in [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC]:
-            # Split by type and insert into type-specific tables
-            for type_name in TYPES:
-                value_col = f"value_{type_name}"
-                target_table = f"{table_name}_{type_name}"
-
-                if table_name == MODEL_PARAMETER:
-                    # Use INSERT BY NAME to match columns by name, not position
-                    conn.execute(
-                        f"""
-                        INSERT INTO {target_table} BY NAME
-                        SELECT
-                            model_id,
-                            run_id,
-                            timestamp,
-                            name,
-                            {value_col} as value
-                        FROM read_parquet('{file_path}')
-                        WHERE type = '{type_name}' AND {value_col} IS NOT NULL
-                        """
-                    )
-                elif table_name == TRAIN_STEP_METRIC:
-                    # Use INSERT BY NAME to match columns by name, not position
-                    conn.execute(
-                        f"""
-                        INSERT INTO {target_table} BY NAME
-                        SELECT
-                            model_id,
-                            run_id,
-                            timestamp,
-                            name,
-                            step,
-                            {value_col} as value
-                        FROM read_parquet('{file_path}')
-                        WHERE type = '{type_name}' AND {value_col} IS NOT NULL
-                        """
-                    )
-                elif table_name == CHECKPOINT_SAMPLE_METRIC:
-                    # Use INSERT BY NAME to match columns by name, not position
-                    mean_col = f"mean_{type_name}"
-                    value_per_sample_col = f"value_per_sample_{type_name}"
-
-                    conn.execute(
-                        f"""
-                        INSERT INTO {target_table} BY NAME
-                        SELECT
-                            model_id,
-                            timestamp,
-                            step,
-                            name,
-                            dataset,
-                            sample_ids,
-                            {mean_col} as mean,
-                            {value_per_sample_col} as value_per_sample
-                        FROM read_parquet('{file_path}')
-                        WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
-                        """
-                    )
-        else:
-            # Direct copy for tables that don't need type splitting
-            # (models, runs, train_steps, checkpoints, artifacts, artifact_chunks)
-            conn.execute(
-                f"""
-                INSERT INTO {table_name} BY NAME
-                SELECT * FROM read_parquet('{file_path}')
-                """
-            )
-
-        # Mark file as processed
-        mark_file_processed(conn, file_path, file_row_count)
-        total_rows += file_row_count
+    for i in range(0, len(files_to_process), batch_size):
+        batch = files_to_process[i : i + batch_size]
+        print(f"[ingest]   Batch {i // batch_size + 1}: {len(batch)} files")
+        total_rows += _ingest_batch(conn, table_name, batch)
 
     print(
         f"[ingest] Ingested {total_rows} total rows from {len(files_to_process)} files"

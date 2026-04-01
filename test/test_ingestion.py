@@ -375,5 +375,68 @@ def test_incremental_ingestion(test_env):
     print("\n[test] ✅ Incremental ingestion test passed!")
 
 
+def test_batched_ingestion(test_env):
+    """Test that multi-file batching works correctly with batch_size < file count"""
+    s3_client = test_env["s3_client"]
+    central_db_path = test_env["central_db_path"]
+    config = test_env["config"]
+
+    from ingestion.ingest import (
+        ensure_central_schema,
+        ensure_ingestion_state_table,
+        ensure_s3_credentials,
+        get_processed_files,
+        ingest_table,
+        list_s3_files,
+        MODEL_PARAMETER,
+        TRAIN_STEP_METRIC,
+    )
+
+    duck.ensure_duck(None, True)
+
+    # Export 5 separate times to create multiple parquet files per table
+    train_run = create_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+    model_id = state.model_id
+
+    for i in range(5):
+        duck.insert_model_parameter(model_id, train_run.run_id, f"param_{i}", i * 10)
+        duck.insert_train_step_metric(model_id, train_run.run_id, "loss", i, 1.0 / (i + 1))
+        export_all(train_run)
+
+    # Verify we have multiple files in S3
+    s3_cfg = config.staging.s3
+    param_files = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.prefix}/{MODEL_PARAMETER}")
+    step_files = list_s3_files(s3_client, config.staging.bucket, f"{config.staging.prefix}/{TRAIN_STEP_METRIC}")
+    assert len(param_files) >= 3, f"Expected multiple param files, got {len(param_files)}"
+    assert len(step_files) >= 3, f"Expected multiple step files, got {len(step_files)}"
+
+    # Connect to central DB and set up schema
+    central_conn = duckdb.connect(str(central_db_path))
+    ensure_s3_credentials(central_conn, s3_cfg.key, s3_cfg.secret, s3_cfg.region, s3_cfg.endpoint)
+    ensure_central_schema(central_conn)
+    ensure_ingestion_state_table(central_conn)
+
+    processed = get_processed_files(central_conn)
+
+    # Ingest with batch_size=2 so we get multiple batches
+    ingest_table(central_conn, MODEL_PARAMETER, param_files, processed, batch_size=2)
+    ingest_table(central_conn, TRAIN_STEP_METRIC, step_files, processed, batch_size=2)
+
+    # Verify all data arrived
+    int_params = central_conn.execute("SELECT COUNT(*) FROM model_parameter_int").fetchone()[0]
+    assert int_params >= 5, f"Expected >= 5 int params, got {int_params}"
+
+    float_metrics = central_conn.execute("SELECT COUNT(*) FROM train_step_metric_float WHERE name = 'loss'").fetchone()[0]
+    assert float_metrics >= 5, f"Expected >= 5 loss metrics, got {float_metrics}"
+
+    # Verify all files were marked as processed
+    new_processed = get_processed_files(central_conn)
+    for f in param_files + step_files:
+        assert f in new_processed, f"File not marked as processed: {f}"
+
+    central_conn.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
