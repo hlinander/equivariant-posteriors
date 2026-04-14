@@ -22,6 +22,34 @@ import os
 
 DATA_DIR = "/proj/heal_pangu/users/x_tagty/climateset"
 
+# Maps climate model → (historical fire_type, SSP fire_type).
+# Models not listed fall through to "other".
+OPENBURNING_MODEL_MAPPING = {
+    "other": ("anthro-fires", "anthro-fires"),
+    "CESM2-WACCM": ("no-fires", "no-fires"),
+    "CNRM-ESM2-1": ("anthro-fires", "anthro-fires"),
+    "CMCC-ESM2": ("no-fires", "no-fires"),
+    "EC-Earth3-Veg": ("anthro-fires", "anthro-fires"),
+    "EC-Earth3-Veg-LR": ("anthro-fires", "anthro-fires"),
+    "MPI-ESM1-2-LR": ("anthro-fires", "anthro-fires"),
+    "NorESM2-LM": ("no-fires", "no-fires"),
+    "NorESM2-MM": ("no-fires", "no-fires"),
+    "GFDL-ESM4": ("no-fires", "no-fires"),
+    "TaiESM1": ("anthro-fires", "all-fires"),
+    "CESM2": ("anthro-fires", "all-fires"),
+    "MRI-ESM-2.0": ("anthro-fires", "all-fires"),
+}
+
+
+def get_fire_type(climate_model: str) -> str:
+    """Look up the SSP fire-type string used for this model's input files."""
+    if climate_model in OPENBURNING_MODEL_MAPPING:
+        _, ssp = OPENBURNING_MODEL_MAPPING[climate_model]
+        return ssp
+    _, ssp = OPENBURNING_MODEL_MAPPING["other"]
+    return ssp
+
+
 @dataclass
 class ClimatesetConfig:
     """Configuration for Climate Dataset (grid-based, HEALPix projection removed)"""
@@ -57,7 +85,7 @@ class ClimatesetConfig:
         return Path(self.data_dir) / "cache"
 
     def input_cache_name(self):
-        input_vars_str = "_".join(sorted(self.input_vars))
+        input_vars_str = "_".join(self.input_vars)
         scenarios_str = "_".join(sorted(self.scenarios))
         years_str = self._format_years_for_name(self.years)
         hist_str = self._format_years_for_name(self.historical_years) if "historical" in self.scenarios else "nohistoric"
@@ -65,7 +93,7 @@ class ClimatesetConfig:
         return f"inputs_grid_{input_vars_str}_{scenarios_str}_{years_str}_{hist_str}_{self.fire_type}"
 
     def output_cache_name(self):
-        output_vars_str = "_".join(sorted(self.output_vars))
+        output_vars_str = "_".join(self.output_vars)
         scenarios_str = "_".join(sorted(self.scenarios))
         years_str = self._format_years_for_name(self.years)
         hist_str = self._format_years_for_name(self.historical_years) if "historical" in self.scenarios else "nohistoric"
@@ -339,11 +367,19 @@ class ClimatesetData(torch.utils.data.Dataset):
 
         if self.config.split in ("all", "test"):
             if seq_len > 1:
-                self.indices = np.arange(total_timesteps - seq_len + 1)
+                if self.config.split == "test":
+                    # Non-overlapping chunks — matches ClimateSet evaluation methodology.
+                    # Overlapping sequences (stride=1) would predict each target timestep
+                    # up to seq_len times at different LSTM context levels, inflating the
+                    # sample count and penalising recurrent models via cold-start effects.
+                    self.indices = np.arange(0, total_timesteps - seq_len + 1, seq_len)
+                else:
+                    # "all": dense overlapping sequences for full-pass inference
+                    self.indices = np.arange(total_timesteps - seq_len + 1)
             else:
                 self.indices = np.arange(total_timesteps)
             self._stats_indices = self.indices
-            print(f"Using all {len(self.indices)} valid start indices (seq_len={seq_len})")
+            print(f"Using {len(self.indices)} start indices for split='{self.config.split}' (seq_len={seq_len})")
             return
 
         num_sequences   = (total_timesteps - seq_len + 1) if seq_len > 1 else total_timesteps
@@ -565,7 +601,7 @@ class ClimatesetData(torch.utils.data.Dataset):
         if config_file.exists():
             with open(config_file, "r") as f:
                 cached_config = json.load(f)
-            if sorted(cached_config.get("input_vars", [])) != sorted(self.config.input_vars):
+            if cached_config.get("input_vars", []) != list(self.config.input_vars):
                 raise ValueError("INPUT cache config mismatch: input_vars")
             if sorted(cached_config.get("scenarios", [])) != sorted(self.config.scenarios):
                 raise ValueError("INPUT cache config mismatch: scenarios")
@@ -583,7 +619,7 @@ class ClimatesetData(torch.utils.data.Dataset):
         if config_file.exists():
             with open(config_file, "r") as f:
                 cached_config = json.load(f)
-            if sorted(cached_config.get("output_vars", [])) != sorted(self.config.output_vars):
+            if cached_config.get("output_vars", []) != list(self.config.output_vars):
                 raise ValueError("OUTPUT cache config mismatch: output_vars")
             if sorted(cached_config.get("scenarios", [])) != sorted(self.config.scenarios):
                 raise ValueError("OUTPUT cache config mismatch: scenarios")
@@ -726,7 +762,7 @@ class ClimatesetData(torch.utils.data.Dataset):
             if not var_files:
                 raise FileNotFoundError(f"No files found for variable '{var}'")
             print(f"  Loading {var}: {len(var_files)} files", flush=True)
-            datasets = [xr.open_dataset(f) for f in sorted(var_files)]
+            datasets = [xr.open_dataset(f, decode_times=False) for f in sorted(var_files)]
             ds = xr.concat(datasets, dim="time").sortby("time")
             arr = ds.to_array().squeeze("variable")   # (time, lat, lon)
             grid_data_dict[var] = arr.to_numpy().astype(np.float32)

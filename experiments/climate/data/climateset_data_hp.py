@@ -22,6 +22,34 @@ import os
 
 DATA_DIR = "/proj/heal_pangu/users/x_tagty/climateset"
 
+# Maps climate model → (historical fire_type, SSP fire_type).
+# Models not listed fall through to "other".
+OPENBURNING_MODEL_MAPPING = {
+    "other": ("anthro-fires", "anthro-fires"),
+    "CESM2-WACCM": ("no-fires", "no-fires"),
+    "CNRM-ESM2-1": ("anthro-fires", "anthro-fires"),
+    "CMCC-ESM2": ("no-fires", "no-fires"),
+    "EC-Earth3-Veg": ("anthro-fires", "anthro-fires"),
+    "EC-Earth3-Veg-LR": ("anthro-fires", "anthro-fires"),
+    "MPI-ESM1-2-LR": ("anthro-fires", "anthro-fires"),
+    "NorESM2-LM": ("no-fires", "no-fires"),
+    "NorESM2-MM": ("no-fires", "no-fires"),
+    "GFDL-ESM4": ("no-fires", "no-fires"),
+    "TaiESM1": ("anthro-fires", "all-fires"),
+    "CESM2": ("anthro-fires", "all-fires"),
+    "MRI-ESM-2.0": ("anthro-fires", "all-fires"),
+}
+
+
+def get_fire_type(climate_model: str) -> str:
+    """Look up the SSP fire-type string used for this model's input files."""
+    if climate_model in OPENBURNING_MODEL_MAPPING:
+        _, ssp = OPENBURNING_MODEL_MAPPING[climate_model]
+        return ssp
+    _, ssp = OPENBURNING_MODEL_MAPPING["other"]
+    return ssp
+
+
 @dataclass
 class ClimatesetHPConfig:
     """Configuration for Climate Dataset with HEALPix projection"""
@@ -39,7 +67,7 @@ class ClimatesetHPConfig:
     scenarios: List[str] = field(default_factory=lambda: ["ssp585", "ssp126", "ssp370"])
     years: Union[str, List[int]] = "2015-2100"
     historical_years: Union[str, List[int], None] = "1850-2014"
-    fire_type: str = "all-fires"
+    fire_type: str = "anthro-fires"
     
     seq_len: int = 12
     seq_to_seq: bool = True
@@ -60,14 +88,14 @@ class ClimatesetHPConfig:
         return Path(self.data_dir) / "cache"
     
     def input_cache_name(self):
-        input_vars_str = "_".join(sorted(self.input_vars))
+        input_vars_str = "_".join(self.input_vars)
         scenarios_str = "_".join(sorted(self.scenarios))
         years_str = self._format_years_for_name(self.years)
         hist_str = self._format_years_for_name(self.historical_years) if "historical" in self.scenarios else "nohistoric"
         return f"inputs_nside{self.nside}_{input_vars_str}_{scenarios_str}_{years_str}_{hist_str}_{self.fire_type}"
     
     def output_cache_name(self):
-        output_vars_str = "_".join(sorted(self.output_vars))
+        output_vars_str = "_".join(self.output_vars)
         scenarios_str = "_".join(sorted(self.scenarios))
         years_str = self._format_years_for_name(self.years)
         hist_str = self._format_years_for_name(self.historical_years) if "historical" in self.scenarios else "nohistoric"
@@ -312,13 +340,23 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
 
         data shape: (total_timesteps, n_channels, n_pixels)
         """
-        subset = data[indices]  # (n_train, n_channels, n_pixels)
-        mean = subset.mean(axis=(0, 2), keepdims=True, dtype=np.float64)  # (1, C, 1)
-        std  = subset.std( axis=(0, 2), keepdims=True, dtype=np.float64)
+        print(f"  Computing {label} stats over {len(indices)} train timesteps...", flush=True)
+        n_channels = data.shape[1]
+        mean = np.empty((1, n_channels, 1), dtype=np.float64)
+        std  = np.empty((1, n_channels, 1), dtype=np.float64)
+        # Process one channel at a time to avoid allocating a full float64
+        # intermediate for the entire (n_train, C, n_pixels) array (~1 GB).
+        # This is important for variables with very small values (e.g. 1e-19)
+        # where float32 std would suffer catastrophic cancellation.
+        for c in range(n_channels):
+            channel = data[np.ix_(indices, [c])].reshape(len(indices), -1).astype(np.float64)
+            mean[0, c, 0] = channel.mean()
+            std[0, c, 0]  = channel.std()
+            print(f"    channel {c+1}/{n_channels} done", flush=True)
 
-        print(f"  {label} normalization stats (from {len(indices)} train timesteps):")
+        print(f"  {label} normalization stats (from {len(indices)} train timesteps):", flush=True)
         for var, m, s in zip(var_names, mean[0, :, 0], std[0, :, 0]):
-            print(f"    {var}: mean={m:.6e}, std={s:.6e}")
+            print(f"    {var}: mean={m:.6e}, std={s:.6e}", flush=True)
 
         return {"mean": mean, "std": std}
 
@@ -354,11 +392,19 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
         if self.config.split in ("all", "test"):
             # For seq_len > 1, only include starts where a full sequence fits
             if seq_len > 1:
-                self.indices = np.arange(total_timesteps - seq_len + 1)
+                if self.config.split == "test":
+                    # Non-overlapping chunks — matches ClimateSet evaluation methodology.
+                    # Overlapping sequences (stride=1) would predict each target timestep
+                    # up to seq_len times at different LSTM context levels, inflating the
+                    # sample count and penalising recurrent models via cold-start effects.
+                    self.indices = np.arange(0, total_timesteps - seq_len + 1, seq_len)
+                else:
+                    # "all": dense overlapping sequences for full-pass inference
+                    self.indices = np.arange(total_timesteps - seq_len + 1)
             else:
                 self.indices = np.arange(total_timesteps)
             self._stats_indices = self.indices
-            print(f"Using all {len(self.indices)} valid start indices (seq_len={seq_len})")
+            print(f"Using {len(self.indices)} start indices for split='{self.config.split}' (seq_len={seq_len})")
             return
 
         num_sequences   = (total_timesteps - seq_len + 1) if seq_len > 1 else total_timesteps
@@ -450,8 +496,8 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
                     "normalized=True but stats are not set. "
                     "Either load a train dataset first or call set_normalization_stats()."
                 )
-            input_sample  = np.squeeze((input_sample  - self.input_stats["mean"])  / self.input_stats["std"])
-            target_sample = np.squeeze((target_sample - self.output_stats["mean"]) / self.output_stats["std"])
+            input_sample  = np.squeeze((input_sample  - self.input_stats["mean"])  / self.input_stats["std"], axis=0)
+            target_sample = np.squeeze((target_sample - self.output_stats["mean"]) / self.output_stats["std"], axis=0)
 
         if self.config.channels_last:
             input_sample  = np.moveaxis(input_sample,  0, -1)
@@ -602,7 +648,7 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
         if config_file.exists():
             with open(config_file, "r") as f:
                 cached_config = json.load(f)
-            if sorted(cached_config.get("input_vars", [])) != sorted(self.config.input_vars):
+            if cached_config.get("input_vars", []) != list(self.config.input_vars):
                 raise ValueError("INPUT cache config mismatch: input_vars")
             if sorted(cached_config.get("scenarios", [])) != sorted(self.config.scenarios):
                 raise ValueError("INPUT cache config mismatch: scenarios")
@@ -621,7 +667,7 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
         if config_file.exists():
             with open(config_file, "r") as f:
                 cached_config = json.load(f)
-            if sorted(cached_config.get("output_vars", [])) != sorted(self.config.output_vars):
+            if cached_config.get("output_vars", []) != list(self.config.output_vars):
                 raise ValueError("OUTPUT cache config mismatch: output_vars")
             if sorted(cached_config.get("scenarios", [])) != sorted(self.config.scenarios):
                 raise ValueError("OUTPUT cache config mismatch: scenarios")
@@ -753,7 +799,7 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
         for var, var_files in file_dict.items():
             print(f"  Loading {var}: {len(var_files)} files", flush=True)
             t0 = time.time()
-            datasets = [xr.open_dataset(f) for f in var_files]
+            datasets = [xr.open_dataset(f, decode_times=False) for f in var_files]
             print(f"    Open files: {time.time()-t0:.2f}s", flush=True)
             t0 = time.time()
             ds = xr.concat(datasets, dim="time").sortby("time")
