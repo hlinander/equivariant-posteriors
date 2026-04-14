@@ -20,7 +20,7 @@ print(f"[eval_runner] Will evaluate epochs: {epochs}")
 
 # Paths
 CONFIG_SCRIPT = "experiments/climate/persisted_configs/train_climate_baseline.py"
-EVAL_SCRIPT = "experiments/climate/evaluation/eval_climate_fixed.py"
+EVAL_SCRIPT = "experiments/climate/evaluation/eval_climate.py"
 
 if __name__ == "__main__":
     for epoch in epochs:
