@@ -64,7 +64,7 @@ def create_config(ensemble_id, epoch, dataset_years=10):
 def create_configs():
     return get_config_grid(
         create_config,
-        dict(ensemble_id=[0, 1, 2, 3, 4], dataset_years=[10]),
+        dict(ensemble_id=[0, 1, 2, 3, 4], epoch=[300], dataset_years=[10]),
     )
 
 
