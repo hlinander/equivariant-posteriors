@@ -45,7 +45,7 @@ def create_config(ensemble_id, epoch, dataset_years=10):
             optimizer=torch.optim.AdamW,
             kwargs=dict(weight_decay=3e-6, lr=5e-4),
         ),
-        batch_size=8,
+        batch_size=1,
         ensemble_id=ensemble_id,
         _version=1,
     )
