@@ -1,3 +1,4 @@
+import time
 import xarray as xr
 from dataclasses import dataclass, field
 from typing import List
@@ -14,6 +15,14 @@ from experiments.weather.data import (
     DataHPConfig,
 )
 from experiments.weather.cdsmontly import ERA5Sample
+
+
+def _log_progress(label, idx, total, last_log_time, interval=10):
+    now = time.time()
+    if idx == 0 or now - last_log_time >= interval:
+        print(f"[{label}] {idx}/{total}", flush=True)
+        return now
+    return last_log_time
 
 
 def dh_numpy_to_xr_surface_hp(data_surface, data_upper, meta) -> ERA5Sample:
@@ -155,22 +164,13 @@ def anomaly_correlation_coefficient_hp(model, dataloader, device_id):
     # traced_model = None
     model = model.eval()
 
-    # def model_forward(surface, upper):
-    # return model._forward((surface, upper))
-    # template = dataloader.dataset.ds.get_template_e5s()
-    # meta = dataloader.dataset.ds.get_meta()
-    # breakpoint()
-
+    n_total = len(dataloader)
+    _t = time.time()
     for idx, batch in enumerate(dataloader):
+        _t = _log_progress("acc_hp", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
         }
-        # if traced_model is None:
-        # traced_model = torch.jit.trace(
-        # model_forward, (batch["input_surface"], batch["input_upper"])
-        # )
-        # traced_model = torch.jit.freeze(traced_model)
-        # print("Model forward...")
         for _ in range(dataloader.dataset.config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
@@ -274,21 +274,16 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
     # meta = dataloader.dataset.ds.get_meta()
     # breakpoint()
 
-    for idx, (batch_dh, batch_hp) in tqdm.tqdm(enumerate(zip(dataloader_dh, dl_hp))):
+    n_total = len(dataloader_dh)
+    _t = time.time()
+    for idx, (batch_dh, batch_hp) in enumerate(zip(dataloader_dh, dl_hp)):
+        _t = _log_progress("acc_dh", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
         }
         batch_hp = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
         }
-        # if traced_model is None:
-        # traced_model = torch.jit.trace(
-        # model_forward, (batch["input_surface"], batch["input_upper"])
-        # )
-        # traced_model = torch.jit.freeze(traced_model)
-        # print("Model forward...")
-        # with torch.no_grad():
-        # output = model(batch)
         for _ in range(ds_config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
@@ -426,19 +421,14 @@ def anomaly_correlation_coefficient_dh_on_dh(model, dataloader_dh, device_id):
     # meta = dataloader.dataset.ds.get_meta()
     # breakpoint()
     weights = None
+    n_total = len(dataloader_dh)
+    _t = time.time()
 
-    for idx, batch_dh in tqdm.tqdm(enumerate(dataloader_dh)):
+    for idx, batch_dh in enumerate(dataloader_dh):
+        _t = _log_progress("acc_dh_on_dh", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
         }
-        # if traced_model is None:
-        # traced_model = torch.jit.trace(
-        # model_forward, (batch["input_surface"], batch["input_upper"])
-        # )
-        # traced_model = torch.jit.freeze(traced_model)
-        # print("Model forward...")
-        # with torch.no_grad():
-        # output = model(batch)
         for _ in range(ds_config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
@@ -536,8 +526,10 @@ def rmse_hp(model, dataloader, device_id):
     n_batches = 0
     stats = deserialize_dataset_statistics(dataloader.dataset.config.nside).item()
     stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
-    for idx, batch in tqdm.tqdm(enumerate(dataloader)):
-        # batch = {k: v.to(device_id) for k, v in batch.items()}
+    n_total = len(dataloader)
+    _t = time.time()
+    for idx, batch in enumerate(dataloader):
+        _t = _log_progress("rmse_hp", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch.items()
         }
@@ -617,9 +609,10 @@ def rmse_dh(model, dataloader_dh, device_id):
     )
     stats = deserialize_dataset_statistics(dl_hp.dataset.config.nside).item()
     stats = {k: torch.tensor(v).to(device_id) for k, v in stats.items()}
-    # stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
-    for idx, (batch_dh, batch_hp) in tqdm.tqdm(enumerate(zip(dataloader_dh, dl_hp))):
-        # batch = {k: v.to(device_id) for k, v in batch_dh.items()}
+    n_total = len(dataloader_dh)
+    _t = time.time()
+    for idx, (batch_dh, batch_hp) in enumerate(zip(dataloader_dh, dl_hp)):
+        _t = _log_progress("rmse_dh", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
         }
@@ -719,9 +712,10 @@ def rmse_dh_on_dh(model, dataloader_dh, device_id, weighted=True):
     stats = {k: torch.tensor(v).to(device_id) for k, v in stats.items()}
 
     weights = None
-    # stats = {key: torch.tensor(value).to(device_id) for key, value in stats.items()}
-    for idx, batch_dh in tqdm.tqdm(enumerate(dataloader_dh)):
-        # batch = {k: v.to(device_id) for k, v in batch_dh.items()}
+    n_total = len(dataloader_dh)
+    _t = time.time()
+    for idx, batch_dh in enumerate(dataloader_dh):
+        _t = _log_progress("rmse_dh_on_dh", idx, n_total, _t)
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
         }

@@ -177,7 +177,6 @@ class Climatology(torch.utils.data.Dataset):
             sample_id=index,
         )
         if fs_cache_path.is_dir() and self.config.cache:
-            print("Climate cache")
             item_dict.update(self.ds[index])
             for key, filename in names.items():
                 item_dict[key] = np.load(fs_cache_path / filename).astype(np.float32)
