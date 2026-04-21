@@ -36,8 +36,8 @@ def start_gpu_keepalive():
         return
     import os
     device_id = int(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0])
-    stop_event = multiprocessing.Event()
     ctx = multiprocessing.get_context("spawn")
+    stop_event = ctx.Event()
     _gpu_keepalive_proc = (
         ctx.Process(target=_gpu_keepalive_worker, args=(stop_event, device_id), daemon=True),
         stop_event,
