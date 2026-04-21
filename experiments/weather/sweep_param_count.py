@@ -9,7 +9,7 @@ from experiments.weather.data import DataSpecHP
 
 TARGET = 11.4e6  # Pangu param count
 
-data_spec = DataSpecHP(nside=64, n_surface=4, n_upper=5, n_pressure_levels=13)
+data_spec = DataSpecHP(nside=64, n_surface=4, n_upper=5)
 
 print(f"Target: {TARGET/1e6:.1f}M (Pangu)\n")
 
