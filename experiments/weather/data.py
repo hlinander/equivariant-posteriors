@@ -220,10 +220,88 @@ def interpolate_dh_to_hp(nside, variable: xr.DataArray):
     return hp_image
 
 
-def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
+_bilinear_cache = {}
 
-    hp_surface = interpolate_dh_to_hp(nside, e5xr.surface)
-    hp_upper = interpolate_dh_to_hp(nside, e5xr.upper)
+
+def _get_bilinear_weights(nside, lat, lon):
+    """Precompute and cache bilinear interpolation weights for DH->HP regridding."""
+    key = (nside, len(lat), len(lon))
+    if key in _bilinear_cache:
+        return _bilinear_cache[key]
+
+    npix = healpix.nside2npix(nside)
+    hlong, hlat = healpix.pix2ang(nside, np.arange(npix), lonlat=True, nest=True)
+    hlong = np.mod(hlong, 360)
+
+    lat_asc = lat[::-1] if lat[0] > lat[-1] else lat
+    flip = lat[0] > lat[-1]
+
+    idx_lat = np.searchsorted(lat_asc, hlat, side="right") - 1
+    idx_lat = np.clip(idx_lat, 0, len(lat_asc) - 2)
+    idx_lon = np.searchsorted(lon, hlong, side="right") - 1
+    idx_lon = np.clip(idx_lon, 0, len(lon) - 2)
+
+    dlat = ((hlat - lat_asc[idx_lat]) / (lat_asc[idx_lat + 1] - lat_asc[idx_lat])).astype(np.float32)
+    dlon = ((hlong - lon[idx_lon]) / (lon[idx_lon + 1] - lon[idx_lon])).astype(np.float32)
+    dlat = np.clip(dlat, 0, 1)
+    dlon = np.clip(dlon, 0, 1)
+
+    w00 = (1 - dlat) * (1 - dlon)
+    w01 = (1 - dlat) * dlon
+    w10 = dlat * (1 - dlon)
+    w11 = dlat * dlon
+
+    result = (idx_lat, idx_lon, w00, w01, w10, w11, flip)
+    _bilinear_cache[key] = result
+    return result
+
+
+def interpolate_dh_to_hp_fast(nside, variable: xr.DataArray):
+    """Fast bilinear interpolation using precomputed weights."""
+    lat = variable.coords["latitude"].values
+    lon = variable.coords["longitude"].values
+    idx_lat, idx_lon, w00, w01, w10, w11, flip = _get_bilinear_weights(nside, lat, lon)
+
+    data = variable.to_array().values  # (..., lat, lon)
+    if flip:
+        data = data[..., ::-1, :]
+
+    shape = data.shape
+    batch_shape = shape[:-2]
+    data_flat = data.reshape(-1, shape[-2], shape[-1])
+
+    v00 = data_flat[:, idx_lat, idx_lon]
+    v01 = data_flat[:, idx_lat, idx_lon + 1]
+    v10 = data_flat[:, idx_lat + 1, idx_lon]
+    v11 = data_flat[:, idx_lat + 1, idx_lon + 1]
+    result = (w00 * v00 + w01 * v01 + w10 * v10 + w11 * v11).astype(np.float32)
+
+    return result.reshape(*batch_shape, -1)
+
+
+# Number of samples to run both implementations side by side for verification
+_REGRID_VERIFY_REMAINING = int(os.environ.get("REGRID_VERIFY", "0"))
+
+
+def e5_to_numpy_hp(e5xr, nside: int, normalized: bool):
+    global _REGRID_VERIFY_REMAINING
+
+    if _REGRID_VERIFY_REMAINING > 0:
+        old_surface = interpolate_dh_to_hp(nside, e5xr.surface)
+        old_upper = interpolate_dh_to_hp(nside, e5xr.upper)
+        new_surface = interpolate_dh_to_hp_fast(nside, e5xr.surface)
+        new_upper = interpolate_dh_to_hp_fast(nside, e5xr.upper)
+        diff_s = np.abs(old_surface - new_surface)
+        diff_u = np.abs(old_upper - new_upper)
+        print(f"[regrid verify] surface: max_diff={diff_s.max():.2e}, mean_diff={diff_s.mean():.2e}")
+        print(f"[regrid verify] upper:   max_diff={diff_u.max():.2e}, mean_diff={diff_u.mean():.2e}")
+        _REGRID_VERIFY_REMAINING -= 1
+        if _REGRID_VERIFY_REMAINING == 0:
+            print("[regrid verify] Verification complete, switching to fast path")
+        hp_surface, hp_upper = new_surface, new_upper
+    else:
+        hp_surface = interpolate_dh_to_hp_fast(nside, e5xr.surface)
+        hp_upper = interpolate_dh_to_hp_fast(nside, e5xr.upper)
 
     if normalized:
         stats = deserialize_dataset_statistics(nside)
