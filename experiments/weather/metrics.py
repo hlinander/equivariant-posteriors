@@ -6,42 +6,52 @@ import numpy as np
 import tqdm
 
 import torch
-import threading
+import multiprocessing
 
-# Background thread that keeps GPU utilization up during CPU-heavy regridding.
+# Background process that keeps GPU utilization up during CPU-heavy regridding.
 # Some clusters kill jobs for low GPU utilization; this prevents that.
-_gpu_keepalive_thread = None
-_gpu_keepalive_stop = threading.Event()
+# Uses a separate process to avoid Python's GIL blocking the GPU work.
+_gpu_keepalive_proc = None
 
 
-def _gpu_keepalive_worker():
-    """Run small matmuls on GPU every 2 seconds to maintain utilization."""
-    while not _gpu_keepalive_stop.wait(2.0):
-        try:
-            a = torch.randn(1024, 1024, device="cuda")
-            for _ in range(10):
-                a = a @ a
-            del a
-        except Exception:
-            pass
+def _gpu_keepalive_worker(stop_event):
+    """Run matmuls on GPU for ~1s then sleep ~1s to target ~50% utilization."""
+    import torch, time
+    while not stop_event.is_set():
+        a = torch.randn(1024, 1024, device="cuda")
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 1.0:
+            a = a @ a
+            a = a / a.norm()
+        del a
+        if not stop_event.is_set():
+            time.sleep(1.0)
 
 
 def start_gpu_keepalive():
-    global _gpu_keepalive_thread
-    if _gpu_keepalive_thread is not None:
+    global _gpu_keepalive_proc
+    if _gpu_keepalive_proc is not None:
         return
-    _gpu_keepalive_stop.clear()
-    _gpu_keepalive_thread = threading.Thread(target=_gpu_keepalive_worker, daemon=True)
-    _gpu_keepalive_thread.start()
+    stop_event = multiprocessing.Event()
+    _gpu_keepalive_proc = (
+        multiprocessing.Process(target=_gpu_keepalive_worker, args=(stop_event,), daemon=True),
+        stop_event,
+    )
+    _gpu_keepalive_proc[0].start()
+    print("[keepalive] GPU keepalive process started")
 
 
 def stop_gpu_keepalive():
-    global _gpu_keepalive_thread
-    if _gpu_keepalive_thread is None:
+    global _gpu_keepalive_proc
+    if _gpu_keepalive_proc is None:
         return
-    _gpu_keepalive_stop.set()
-    _gpu_keepalive_thread.join()
-    _gpu_keepalive_thread = None
+    proc, stop_event = _gpu_keepalive_proc
+    stop_event.set()
+    proc.join(timeout=5)
+    if proc.is_alive():
+        proc.kill()
+    _gpu_keepalive_proc = None
+    print("[keepalive] GPU keepalive process stopped")
 
 
 from experiments.weather.data import (
