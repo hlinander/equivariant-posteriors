@@ -327,6 +327,9 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
     # meta = dataloader.dataset.ds.get_meta()
     # breakpoint()
 
+    meta = dl_hp.dataset.get_meta()
+    hp_nside = dl_hp.dataset.config.nside
+
     n_total = len(dataloader_dh)
     _t = time.time()
     _timings = {}
@@ -363,12 +366,12 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),
             output["logits_upper"][0].detach().cpu().numpy(),
-            dl_hp.dataset.get_meta(),
+            meta,
         )
         _toc("to_xarray")
 
         _tic("regrid")
-        surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
+        surface, upper = e5_to_numpy_hp(e5s, hp_nside, False)
         _toc("regrid")
 
         _tic("denorm")
@@ -681,6 +684,8 @@ def rmse_dh(model, dataloader_dh, device_id):
     )
     stats = deserialize_dataset_statistics(dl_hp.dataset.config.nside).item()
     stats = {k: torch.tensor(v).to(device_id) for k, v in stats.items()}
+    meta = dl_hp.dataset.get_meta()
+    hp_nside = dl_hp.dataset.config.nside
     n_total = len(dataloader_dh)
     _t = time.time()
     for idx, (batch_dh, batch_hp) in enumerate(zip(dataloader_dh, dl_hp)):
@@ -701,14 +706,9 @@ def rmse_dh(model, dataloader_dh, device_id):
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),
             output["logits_upper"][0].detach().cpu().numpy(),
-            dl_hp.dataset.get_meta(),
+            meta,
         )
-        # np.save(
-        #     "/tmp/surface_test.npy",
-        #     e5s.surface.to_array().to_numpy().astype(np.float32),
-        # )
-        # breakpoint()
-        surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
+        surface, upper = e5_to_numpy_hp(e5s, hp_nside, False)
         # np.save(
         #     "/tmp/surface_test_hp.npy",
         #     surface.astype(np.float32),
