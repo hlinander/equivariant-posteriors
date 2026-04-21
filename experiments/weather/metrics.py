@@ -6,6 +6,44 @@ import numpy as np
 import tqdm
 
 import torch
+import threading
+
+# Background thread that keeps GPU utilization up during CPU-heavy regridding.
+# Some clusters kill jobs for low GPU utilization; this prevents that.
+_gpu_keepalive_thread = None
+_gpu_keepalive_stop = threading.Event()
+
+
+def _gpu_keepalive_worker():
+    """Run small matmuls on GPU every 2 seconds to maintain utilization."""
+    while not _gpu_keepalive_stop.wait(2.0):
+        try:
+            a = torch.randn(1024, 1024, device="cuda")
+            for _ in range(10):
+                a = a @ a
+            del a
+        except Exception:
+            pass
+
+
+def start_gpu_keepalive():
+    global _gpu_keepalive_thread
+    if _gpu_keepalive_thread is not None:
+        return
+    _gpu_keepalive_stop.clear()
+    _gpu_keepalive_thread = threading.Thread(target=_gpu_keepalive_worker, daemon=True)
+    _gpu_keepalive_thread.start()
+
+
+def stop_gpu_keepalive():
+    global _gpu_keepalive_thread
+    if _gpu_keepalive_thread is None:
+        return
+    _gpu_keepalive_stop.set()
+    _gpu_keepalive_thread.join()
+    _gpu_keepalive_thread = None
+
+
 from experiments.weather.data import (
     denormalize_sample,
     deserialize_dataset_statistics,

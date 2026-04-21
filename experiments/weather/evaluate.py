@@ -63,6 +63,8 @@ from experiments.weather.metrics import (
     rmse_hp,
     rmse_dh,
     rmse_dh_on_dh,
+    start_gpu_keepalive,
+    stop_gpu_keepalive,
     MeteorologicalData,
 )
 
@@ -92,7 +94,9 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
         acc_res_on_dh = anomaly_correlation_coefficient_dh_on_dh(
             model, dl_acc, device_id
         )
+        start_gpu_keepalive()
         acc_res = anomaly_correlation_coefficient_dh(model, dl_acc, device_id)
+        stop_gpu_keepalive()
 
         for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
             insert_checkpoint_sample_metric(
@@ -121,7 +125,9 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
 
     print("[eval] rmse")
     if ds_rmse_config.driscoll_healy:
+        start_gpu_keepalive()
         rmse_res = rmse_dh(model, dl_rmse, device_id)
+        stop_gpu_keepalive()
         rmse_res_on_dh = rmse_dh_on_dh(model, dl_rmse, device_id)
 
         for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
