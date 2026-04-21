@@ -21,6 +21,8 @@ SCRIPT_DIR = Path(__file__).parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 LOCAL_DB = SCRIPT_DIR / "weather_models.db"
 SECRET_FILE = REPO_ROOT / "secret.txt"
+OVERLEAF_DIR = SCRIPT_DIR / "paper" / "overleaf"
+OVERLEAF_FIG_DIR = OVERLEAF_DIR / "figures"
 
 # Models to select from the remote database
 MODEL_NAMES = [
@@ -247,111 +249,137 @@ def make_plots(df_acc: pd.DataFrame, df_rmse: pd.DataFrame, outdir: Path, suffix
     sns.set_context("paper", font_scale=1.4)
     sns.set_style("whitegrid")
 
+    _lineplot_kw = dict(estimator="mean", errorbar=("pi", 100))
+
     if not df_acc.empty:
         palette = _get_palette(df_acc)
         g = sns.FacetGrid(df_acc, col="metric", sharey=True, col_wrap=3)
-        g.map_dataframe(sns.lineplot, x="days", y="acc", style="model", hue="model", palette=palette)
+        g.map_dataframe(sns.lineplot, x="days", y="acc", style="model", hue="model", palette=palette, **_lineplot_kw)
         g.add_legend()
-        path = outdir / f"acc_iterated{suffix}.pdf"
-        g.savefig(path)
-        print(f"Saved {path}")
+        for path in [outdir / f"acc_iterated{suffix}.pdf", OVERLEAF_FIG_DIR / f"acc_iterated{suffix}.pdf"]:
+            g.savefig(path)
+            print(f"Saved {path}")
         plt.close()
 
     if not df_rmse.empty:
         palette = _get_palette(df_rmse)
         g = sns.FacetGrid(df_rmse, col="metric", sharey=False, col_wrap=3)
-        g.map_dataframe(sns.lineplot, x="days", y="rmse", style="model", hue="model", palette=palette)
+        g.map_dataframe(sns.lineplot, x="days", y="rmse", style="model", hue="model", palette=palette, **_lineplot_kw)
         g.add_legend()
-        path = outdir / f"rmse_iterated{suffix}.pdf"
-        g.savefig(path)
-        print(f"Saved {path}")
+        for path in [outdir / f"rmse_iterated{suffix}.pdf", OVERLEAF_FIG_DIR / f"rmse_iterated{suffix}.pdf"]:
+            g.savefig(path)
+            print(f"Saved {path}")
         plt.close()
 
+    # Single-panel ACC plot for surface v10 (used on first page of paper)
+    if not df_acc.empty:
+        v10 = df_acc[df_acc["metric"] == "[acc, surface, v10]"]
+        if not v10.empty:
+            palette = _get_palette(v10)
+            fig, ax = plt.subplots(figsize=(4.3, 4.3 * 0.818))
+            sns.lineplot(v10, x="days", y="acc", style="model", hue="model", palette=palette, ax=ax, **_lineplot_kw)
+            ax.set_title("surface v10")
+            fig.tight_layout()
+            for path in [outdir / f"surface_v10{suffix}.pdf", OVERLEAF_FIG_DIR / f"surface_v10{suffix}.pdf"]:
+                fig.savefig(path)
+                print(f"Saved {path}")
+            plt.close()
 
-def fmt_val(mean: float, std: float, bold: bool, is_acc: bool) -> str:
+
+def fmt_val(mean: float, std: float, bold: bool, is_acc: bool, scale: float = 1.0) -> str:
+    """Format a value with optional ± std. scale divides the value (e.g. 1e-4)."""
     if pd.isna(mean):
         return ""
+    mean = mean / scale
+    std = std / scale if not pd.isna(std) else std
     if is_acc:
         txt = f"{mean:.3f}"
         stxt = f"{std:.3f}" if not pd.isna(std) and std > 0 else None
     else:
-        e = int(np.floor(np.log10(abs(mean)))) if mean else 0
-        if e < -2:
-            txt = f"{mean / 10**e:.3g}\\times 10^{{{e}}}"
-            stxt = (
-                f"{std / 10**e:.2g}\\times 10^{{{e}}}"
-                if not pd.isna(std) and std > 0
-                else None
-            )
-        else:
-            txt = f"{mean:.3g}"
-            stxt = f"{std:.3g}" if not pd.isna(std) and std > 0 else None
+        txt = f"{mean:.3g}"
+        stxt = f"{std:.3g}" if not pd.isna(std) and std > 0 else None
     inner = f"{txt} \\pm {stxt}" if stxt else txt
     return rf"$\mathbf{{{inner}}}$" if bold else rf"${inner}$"
 
 
-def make_table(df_acc: pd.DataFrame, df_rmse: pd.DataFrame) -> str:
-    """Generate LaTeX table with mean ± std across seeds."""
-    # Filter to days 1, 3, 5
-    dfacc = df_acc[df_acc["days"].isin([1, 3, 5])].copy()
-    dfrmse = df_rmse[df_rmse["days"].isin([1, 3, 5])].copy()
+def _detect_scale(values: pd.Series) -> tuple[float, str]:
+    """If all non-NaN values share a common exponent < -2, return (scale, latex suffix).
+    Otherwise return (1.0, "")."""
+    vals = values.dropna()
+    if vals.empty:
+        return 1.0, ""
+    median_exp = int(np.floor(np.log10(vals.abs().median())))
+    if median_exp < -2:
+        return 10.0 ** median_exp, rf" $\times 10^{{{median_exp}}}$"
+    return 1.0, ""
 
-    for df in (dfacc, dfrmse):
-        parts = df["metric"].map(split_metric).apply(pd.Series)
-        df[["kind", "var", "lev"]] = parts
 
-    models = sorted(dfacc["model"].unique().tolist())
-    main = models
+def _make_single_table(
+    df: pd.DataFrame, value_col: str, is_acc: bool, models: list[str]
+) -> str:
+    """Generate a single LaTeX table (ACC or RMSE) with mean ± std across seeds."""
+    dfx = df[df["days"].isin([1, 3, 5])].copy()
+    parts = dfx["metric"].map(split_metric).apply(pd.Series)
+    dfx[["kind", "var", "lev"]] = parts
 
     idx_cols = ["var", "lev", "days"]
-    acc_mean = dfacc.pivot_table(index=idx_cols, columns="model", values="acc", aggfunc="mean").reindex(columns=models)
-    acc_std = dfacc.pivot_table(index=idx_cols, columns="model", values="acc", aggfunc="std").reindex(columns=models)
-    rmse_mean = dfrmse.pivot_table(index=idx_cols, columns="model", values="rmse", aggfunc="mean").reindex(columns=models)
-    rmse_std = dfrmse.pivot_table(index=idx_cols, columns="model", values="rmse", aggfunc="std").reindex(columns=models)
+    vmean = dfx.pivot_table(index=idx_cols, columns="model", values=value_col, aggfunc="mean").reindex(columns=models)
+    vstd = dfx.pivot_table(index=idx_cols, columns="model", values=value_col, aggfunc="std").reindex(columns=models)
+
+    # Bold: highest ACC or lowest RMSE
+    bold_fn = (lambda s: s.eq(s.max())) if is_acc else (lambda s: s.eq(s.min()))
 
     rows = []
-    union_idx = acc_mean.index.union(rmse_mean.index)
-    for (var, lev), grp in union_idx.to_frame(index=False).groupby(["var", "lev"]):
-        try:
-            days = sorted(set(acc_mean.loc[var, lev].index))
-        except KeyError:
-            days = sorted(set(rmse_mean.loc[var, lev].index))
-        unit_cell = rf"\multirow{{{len(days)}}}{{*}}{{{UNITS.get(lev, '')}}}"
+    for (var, lev), _ in vmean.index.to_frame(index=False).groupby(["var", "lev"]):
+        days = sorted(set(vmean.loc[var, lev].index))
+
+        # Detect common scale for this variable block (RMSE only)
+        if not is_acc:
+            block_vals = vmean.loc[var, lev].values.flatten()
+            scale, scale_suffix = _detect_scale(pd.Series(block_vals))
+        else:
+            scale, scale_suffix = 1.0, ""
+
+        unit_str = UNITS.get(lev, "") + scale_suffix
+        unit_cell = rf"\multirow{{{len(days)}}}{{*}}{{{unit_str}}}"
 
         for i, day in enumerate(days):
             idx = (var, lev, day)
-            am = acc_mean.loc[idx] if idx in acc_mean.index else pd.Series(np.nan, index=models)
-            astd = acc_std.loc[idx] if idx in acc_std.index else pd.Series(np.nan, index=models)
-            rm = rmse_mean.loc[idx] if idx in rmse_mean.index else pd.Series(np.nan, index=models)
-            rstd = rmse_std.loc[idx] if idx in rmse_std.index else pd.Series(np.nan, index=models)
-
-            bold_a = am.eq(am[main].max())
-            bold_r = rm.eq(rm[main].min())
+            vm = vmean.loc[idx] if idx in vmean.index else pd.Series(np.nan, index=models)
+            vs = vstd.loc[idx] if idx in vstd.index else pd.Series(np.nan, index=models)
+            bold = bold_fn(vm)
 
             label = rf"$_\mathrm{{{var}}}^\mathrm{{{lev}}}$" if i == 0 else ""
             unit_col = unit_cell if i == 0 else ""
 
-            cells = [fmt_val(am[m], astd[m], bold_a[m], True) for m in models] + [
-                fmt_val(rm[m], rstd[m], bold_r[m], False) for m in models
-            ]
+            cells = [fmt_val(vm[m], vs[m], bold[m], is_acc, scale=scale) for m in models]
             rows.append(f"{label} & {day} & " + " & ".join(cells) + f" & {unit_col} \\\\")
         rows.append(r"\midrule")
-    rows.pop()  # remove last midrule
+    rows.pop()
 
     n = len(models)
+    metric_name = "ACC" if is_acc else "RMSE"
     model_header = " & ".join(models)
     lines = [
-        rf"\begin{{tabular}}{{l r {'r ' * n}|{'r ' * n}l}}",
+        rf"\begin{{tabular}}{{l r {'r ' * n}l}}",
         r"\toprule",
-        rf"Variable & $\Delta t$ & \multicolumn{{{n}}}{{c}}{{ACC}} & \multicolumn{{{n}}}{{c}}{{RMSE}} & unit \\",
-        rf"\cmidrule(lr){{3-{2 + n}}}\cmidrule(lr){{{3 + n}-{2 + 2 * n}}}",
-        rf" & (days) & {model_header} & {model_header} & \\",
+        rf"Variable & $\Delta t$ & \multicolumn{{{n}}}{{c}}{{{metric_name}}} & unit \\",
+        rf"\cmidrule(lr){{3-{2 + n}}}",
+        rf" & (days) & {model_header} & \\",
         r"\midrule",
         "\n".join(rows),
         r"\bottomrule",
         r"\end{tabular}",
     ]
     return "\n".join(lines)
+
+
+def make_tables(df_acc: pd.DataFrame, df_rmse: pd.DataFrame) -> tuple[str, str]:
+    """Generate separate ACC and RMSE LaTeX tables."""
+    models = sorted(set(df_acc["model"].unique()) | set(df_rmse["model"].unique()))
+    acc_table = _make_single_table(df_acc, "acc", is_acc=True, models=models)
+    rmse_table = _make_single_table(df_rmse, "rmse", is_acc=False, models=models)
+    return acc_table, rmse_table
 
 
 def main():
@@ -382,12 +410,15 @@ def main():
 
         make_plots(df_acc, df_rmse, SCRIPT_DIR, suffix=f"_{variant}")
 
-        table = make_table(df_acc, df_rmse)
-        print("\n" + table)
+        acc_table, rmse_table = make_tables(df_acc, df_rmse)
 
-        outfile = SCRIPT_DIR / f"acc_rmse_table_{variant}.tex"
-        outfile.write_text(table)
-        print(f"Saved to {outfile}")
+        for name, table in [("acc", acc_table), ("rmse", rmse_table)]:
+            print(f"\n{name.upper()} table:")
+            print(table)
+            for outdir in [SCRIPT_DIR, OVERLEAF_DIR]:
+                outfile = outdir / f"{name}_table_{variant}.tex"
+                outfile.write_text(table)
+                print(f"Saved to {outfile}")
 
 
 if __name__ == "__main__":

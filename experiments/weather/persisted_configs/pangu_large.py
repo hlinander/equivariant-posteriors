@@ -10,9 +10,7 @@ from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import create_metric
 from lib.ddp import ddp_setup
-from lib.ensemble import create_ensemble_config
-from lib.ensemble import request_ensemble
-from lib.ensemble import is_ensemble_serialized
+from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
 
 from experiments.weather.models.pangu import PanguConfig
@@ -21,7 +19,7 @@ from experiments.weather.data import DataHPConfig
 NSIDE = 64
 
 
-def create_config(ensemble_id, epoch):
+def create_config(ensemble_id, epoch=250):
     loss = torch.nn.L1Loss()
 
     def reg_loss(output, batch):
@@ -63,16 +61,12 @@ def create_config(ensemble_id, epoch):
     return train_run
 
 
+def create_configs():
+    return get_config_grid(
+        create_config,
+        dict(ensemble_id=[0, 1, 2, 3, 4], epoch=[250]),
+    )
+
+
 if __name__ == "__main__":
-    device_id = ddp_setup()
-
-    def oom_observer(device, alloc, device_alloc, device_free):
-        print("saving allocated state during OOM")
-        torch.cuda.memory._dump_snapshot("oom_snapshot_new.pickle")
-
-    torch._C._cuda_attach_out_of_memory_observer(oom_observer)
-
-    ensemble_config = create_ensemble_config(lambda eid: create_config(eid, 250), 1)
-    if not is_ensemble_serialized(ensemble_config):
-        request_ensemble(ensemble_config)
-        distributed_train(ensemble_config.members)
+    distributed_train(create_configs())
