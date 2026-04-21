@@ -14,9 +14,11 @@ import multiprocessing
 _gpu_keepalive_proc = None
 
 
-def _gpu_keepalive_worker(stop_event):
+def _gpu_keepalive_worker(stop_event, device_id):
     """Run matmuls on GPU for ~1s then sleep ~1s to target ~50% utilization."""
-    import torch, time
+    import torch, time, os
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    torch.cuda.init()
     while not stop_event.is_set():
         a = torch.randn(1024, 1024, device="cuda")
         t0 = time.monotonic()
@@ -32,9 +34,12 @@ def start_gpu_keepalive():
     global _gpu_keepalive_proc
     if _gpu_keepalive_proc is not None:
         return
+    import os
+    device_id = int(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0])
     stop_event = multiprocessing.Event()
+    ctx = multiprocessing.get_context("spawn")
     _gpu_keepalive_proc = (
-        multiprocessing.Process(target=_gpu_keepalive_worker, args=(stop_event,), daemon=True),
+        ctx.Process(target=_gpu_keepalive_worker, args=(stop_event, device_id), daemon=True),
         stop_event,
     )
     _gpu_keepalive_proc[0].start()
