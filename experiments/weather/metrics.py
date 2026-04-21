@@ -329,34 +329,51 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
 
     n_total = len(dataloader_dh)
     _t = time.time()
+    _timings = {}
+    def _tic(label):
+        _timings[label] = time.time()
+    def _toc(label):
+        _timings[label] = time.time() - _timings[label]
+
     for idx, (batch_dh, batch_hp) in enumerate(zip(dataloader_dh, dl_hp)):
         _t = _log_progress("acc_dh", idx, n_total, _t)
+        if idx < 3:
+            _timings.clear()
+
+        _tic("to_device")
         batch = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_dh.items()
         }
         batch_hp = {
             k: v.to(device_id) if hasattr(v, "to") else v for k, v in batch_hp.items()
         }
+        _toc("to_device")
+
+        _tic("model_forward")
         for _ in range(ds_config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
             batch["input_surface"] = output["logits_surface"]
             batch["input_upper"] = output["logits_upper"]
+        _toc("model_forward")
 
         output = {k: v.detach() if hasattr(v, "to") else v for k, v in output.items()}
+
+        _tic("to_xarray")
         e5s = dh_numpy_to_xr_surface_hp(
             output["logits_surface"][0].detach().cpu().numpy(),
             output["logits_upper"][0].detach().cpu().numpy(),
             dl_hp.dataset.get_meta(),
         )
+        _toc("to_xarray")
+
+        _tic("regrid")
         surface, upper = e5_to_numpy_hp(e5s, dl_hp.dataset.config.nside, False)
+        _toc("regrid")
+
+        _tic("denorm")
         surface = torch.from_numpy(surface).to(device_id)
         upper = torch.from_numpy(upper).to(device_id)
-        # print("Denorming...")
-        # out_surface, out_upper = denormalize_sample(
-        #     stats, output["logits_surface"].double(), output["logits_upper"].double()
-        # )
-        # breakpoint()
         out_surface, out_upper = denormalize_sample(
             stats, surface.double()[None, ...], upper.double()[None, ...]
         )
@@ -370,28 +387,30 @@ def anomaly_correlation_coefficient_dh(model, dataloader_dh, device_id):
             batch_hp["climate_target_surface"].double(),
             batch_hp["climate_target_upper"].double(),
         )
-        # print("ACC..")
+        _toc("denorm")
+
+        if idx < 3:
+            parts = " | ".join(f"{k}: {v:.3f}s" for k, v in _timings.items())
+            print(f"[acc_dh timing] sample {idx}: {parts}", flush=True)
+
         out_surface = out_surface - climate_surface
         out_upper = out_upper - climate_upper
         target_surface = target_surface - climate_surface
         target_upper = target_upper - climate_upper
         if not initialized:
             initialized = True
-            logit_surface_squared = out_surface**2  # .sum(dim=dims)
-            target_surface_squared = target_surface**2  # .sum(dim=dims)
-            logit_upper_squared = out_upper**2  # .sum(dim=dims)
-            target_upper_squared = target_upper**2  # .sum(dim=dims)
+            logit_surface_squared = out_surface**2
+            target_surface_squared = target_surface**2
+            logit_upper_squared = out_upper**2
+            target_upper_squared = target_upper**2
 
-            # breakpoint()
-            nominator_surface = out_surface * target_surface  # .sum(dim=dims)
-            nominator_upper = out_upper * target_upper  # .sum(dim=dims)
+            nominator_surface = out_surface * target_surface
+            nominator_upper = out_upper * target_upper
         else:
-            # print("surface")
-            logit_surface_squared += out_surface**2  # .sum(dim=dims)
-            target_surface_squared += target_surface**2  # .sum(dim=dims)
-            # print("upper")
-            logit_upper_squared += out_upper**2  # .sum(dim=dims)
-            target_upper_squared += target_upper**2  # .sum(dim=dims)
+            logit_surface_squared += out_surface**2
+            target_surface_squared += target_surface**2
+            logit_upper_squared += out_upper**2
+            target_upper_squared += target_upper**2
 
             # print("nominator")
             # breakpoint()
