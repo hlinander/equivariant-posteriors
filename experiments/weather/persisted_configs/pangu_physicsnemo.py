@@ -10,6 +10,7 @@ from lib.metric import create_metric
 from lib.ddp import ddp_setup
 from lib.train_distributed import request_train_run
 from lib.distributed_trainer import distributed_train
+from lib.generic_ablation import get_config_grid
 
 from experiments.weather.models.pangu_physicsnemo import PanguPhysicsNemoConfig
 from experiments.weather.data import DataHPConfig
@@ -59,6 +60,13 @@ def create_config(ensemble_id, epoch=300, dataset_years=10):
         visualize_terminal=False,
     )
     return train_run
+
+
+def create_configs():
+    return get_config_grid(
+        create_config,
+        dict(ensemble_id=[0, 1, 2, 3, 4], epoch=[300], dataset_years=[10]),
+    )
 
 
 if __name__ == "__main__":
