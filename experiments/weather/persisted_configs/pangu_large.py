@@ -68,5 +68,9 @@ def create_configs():
     )
 
 
+def run(config):
+    distributed_train([config])
+
+
 if __name__ == "__main__":
     distributed_train(create_configs())

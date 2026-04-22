@@ -69,6 +69,10 @@ def create_configs():
     )
 
 
+def run(config):
+    distributed_train([config])
+
+
 if __name__ == "__main__":
     device_id = ddp_setup()
 
