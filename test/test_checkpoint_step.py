@@ -124,6 +124,27 @@ def test_resolve_step_for_epoch(env_setup):
         assert step is None, f"Epoch {epoch} should not have a checkpoint"
 
 
+def test_fallback_matches_actual_step(env_setup):
+    """Verify the fallback computation matches the actual training step."""
+    import math
+    train_run = _make_train_run(keep_nth=2)
+    state = _train_epochs(train_run)
+    _export_analytics(train_run)
+
+    checkpoint_path = get_checkpoint_path(train_run.train_config)
+    ds_len = len(state.train_dataloader.dataset)
+    batch_size = train_run.train_config.batch_size
+    batches_per_epoch = math.ceil(ds_len / batch_size)
+
+    for epoch in [2, 4, 6]:
+        actual_step = resolve_step_for_epoch(checkpoint_path, epoch)
+        fallback_step = epoch * batches_per_epoch
+        assert actual_step == fallback_step, (
+            f"Epoch {epoch}: actual step {actual_step} != fallback {fallback_step} "
+            f"(ds_len={ds_len}, batch_size={batch_size})"
+        )
+
+
 def test_resolve_step_no_analytics(env_setup):
     """Returns None when no analytics parquets exist."""
     train_run = _make_train_run()
