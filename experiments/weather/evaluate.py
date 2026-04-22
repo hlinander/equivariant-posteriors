@@ -169,7 +169,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, train_config,
     for var_idx, var_data in enumerate(rmse_res.mean_surface):
         insert_checkpoint_sample_metric(
             model_id,
-            epoch * len(ds_train),
+            step,
             f"rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
             [],
@@ -191,7 +191,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, train_config,
     for var_idx, var_data in enumerate(acc_res.acc_surface):
         insert_checkpoint_sample_metric(
             model_id,
-            epoch * len(ds_train),
+            step,
             f"acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
             ds_rmse_config.short_name(),
             [],
