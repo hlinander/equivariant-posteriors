@@ -84,8 +84,13 @@ def _create_eval_data(data_config, lead_time_days):
     return val_config, dl_rmse, dl_acc
 
 
-def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
+def _run_evaluation(model, model_id, epoch, ds_train, train_config, ds_rmse_config,
                     dl_rmse, dl_acc, device_id):
+    # Compute step matching the training loop's batch counter.
+    # The training loop uses drop_last=False and increments by world_size per batch.
+    import math
+    batches_per_epoch = math.ceil(len(ds_train) / train_config.batch_size)
+    step = epoch * batches_per_epoch
     era5_meta = MeteorologicalData()
     model.eval()
 
@@ -101,7 +106,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
         for var_idx, var_data in enumerate(acc_res_on_dh.acc_surface):
             insert_checkpoint_sample_metric(
                 model_id,
-                epoch * len(ds_train),
+                step,
                 f"dh$acc_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
                 [],
@@ -113,7 +118,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
                 var_name = f"dh$acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
                     model_id,
-                    epoch * len(ds_train),
+                    step,
                     var_name,
                     ds_rmse_config.short_name(),
                     [],
@@ -133,7 +138,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
         for var_idx, var_data in enumerate(rmse_res_on_dh.mean_surface):
             insert_checkpoint_sample_metric(
                 model_id,
-                epoch * len(ds_train),
+                step,
                 f"dh$rmse_surface_{era5_meta.surface.names[var_idx]}.{ds_rmse_config.lead_time_days}d",
                 ds_rmse_config.short_name(),
                 [],
@@ -145,7 +150,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
                 var_name = f"dh$rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
                 insert_checkpoint_sample_metric(
                     model_id,
-                    epoch * len(ds_train),
+                    step,
                     var_name,
                     ds_rmse_config.short_name(),
                     [],
@@ -170,7 +175,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
             var_name = f"rmse_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
             insert_checkpoint_sample_metric(
                 model_id,
-                epoch * len(ds_train),
+                step,
                 var_name,
                 ds_rmse_config.short_name(),
                 [],
@@ -192,7 +197,7 @@ def _run_evaluation(model, model_id, epoch, ds_train, ds_rmse_config,
             var_name = f"acc_upper_{era5_meta.upper.names[var_idx]}_{int(level)}.{ds_rmse_config.lead_time_days}d"
             insert_checkpoint_sample_metric(
                 model_id,
-                epoch * len(ds_train),
+                step,
                 var_name,
                 ds_rmse_config.short_name(),
                 [],
@@ -238,6 +243,7 @@ def evaluate_weather(create_config, epoch, lead_time_days, ensemble_id=0):
 
     _run_evaluation(
         deser_model.model, deser_model.model_id, epoch, ds_train,
+        train_run.train_config,
         ds_rmse_config, dl_rmse, dl_acc, device_id,
     )
     _export(train_run)
@@ -273,8 +279,12 @@ def evaluate_weather_from_checkpoint(checkpoint_hash, epoch, lead_time_days):
         checkpoint_hash, deser_model.model_id, saved_json
     )
 
+    # Create a minimal object with batch_size for step calculation
+    from types import SimpleNamespace
+    tc = SimpleNamespace(batch_size=saved_json.get("train_config", {}).get("batch_size", 1))
     _run_evaluation(
         deser_model.model, deser_model.model_id, epoch, ds_train,
+        tc,
         ds_rmse_config, dl_rmse, dl_acc, device_id,
     )
 
