@@ -24,7 +24,7 @@ from lib.train_dataclasses import TrainEval
 from lib.train_dataclasses import OptimizerConfig
 from lib.train_dataclasses import ComputeConfig
 from lib.metric import create_metric
-from lib.paths import get_lock_path
+from lib.paths import get_lock_path, get_checkpoint_path
 
 from experiments.weather.models.swin_hp_pangu import SwinHPPanguConfig
 
@@ -84,13 +84,19 @@ def _create_eval_data(data_config, lead_time_days):
     return val_config, dl_rmse, dl_acc
 
 
-def _run_evaluation(model, model_id, epoch, ds_train, train_config, ds_rmse_config,
-                    dl_rmse, dl_acc, device_id):
-    # Compute step matching the training loop's batch counter.
-    # The training loop uses drop_last=False and increments by world_size per batch.
-    import math
-    batches_per_epoch = math.ceil(len(ds_train) / train_config.batch_size)
-    step = epoch * batches_per_epoch
+def _run_evaluation(model, model_id, epoch, ds_train, train_config,
+                    ds_rmse_config, dl_rmse, dl_acc, device_id,
+                    checkpoint_path_override=None):
+    from lib.checkpoint_step import resolve_step_for_epoch
+    checkpoint_path = checkpoint_path_override or get_checkpoint_path(train_config)
+    step = resolve_step_for_epoch(checkpoint_path, epoch)
+    if step is None:
+        import math
+        step = epoch * math.ceil(len(ds_train) / train_config.batch_size)
+        print(f"[eval] WARNING: Could not resolve step from checkpoint analytics, "
+              f"using computed step={step} for epoch {epoch}")
+    else:
+        print(f"[eval] Resolved epoch {epoch} -> step {step}")
     era5_meta = MeteorologicalData()
     model.eval()
 
@@ -279,13 +285,17 @@ def evaluate_weather_from_checkpoint(checkpoint_hash, epoch, lead_time_days):
         checkpoint_hash, deser_model.model_id, saved_json
     )
 
-    # Create a minimal object with batch_size for step calculation
+    from lib.compute_env import env as compute_env
     from types import SimpleNamespace
-    tc = SimpleNamespace(batch_size=saved_json.get("train_config", {}).get("batch_size", 1))
+    batch_size = saved_json.get("train_config", {}).get("batch_size", 1)
+    # Build a minimal train_config with batch_size for fallback step computation.
+    # _run_evaluation will use the checkpoint_hash to find the checkpoint path.
+    tc = SimpleNamespace(batch_size=batch_size, _checkpoint_hash=checkpoint_hash)
     _run_evaluation(
         deser_model.model, deser_model.model_id, epoch, ds_train,
         tc,
         ds_rmse_config, dl_rmse, dl_acc, device_id,
+        checkpoint_path_override=compute_env().paths.checkpoints / f"checkpoint_{checkpoint_hash}",
     )
 
 
