@@ -119,8 +119,13 @@ class DataHPConfig:
 @dataclass
 class DataSpecHP:
     nside: int
-    n_surface: int
+    n_surface: int    # output (target) surface channels — always 4
     n_upper: int
+    n_surface_in: int = 0  # input surface channels; may exceed n_surface when extra forcing features (e.g. cos SZA) are added
+
+    def __post_init__(self):
+        if self.n_surface_in == 0:
+            self.n_surface_in = self.n_surface
 
 
 def days_between_years(start_year: int, end_year: int) -> int:
@@ -165,17 +170,70 @@ def day_index_to_climatology_indices(day_index, start_year, end_year):
     return indices
 
 
+def index_to_datetime(index: int, config: "DataHPConfig") -> datetime:
+    """Convert a DataHP dataset index to its corresponding input datetime."""
+    if config.delta_t == 24:
+        return day_index_to_datetime(index, config.start_year, config.end_year)
+    raw_2h = index * config.delta_t // 2
+    year_offset = raw_2h // (12 * 365)
+    slot_in_year = raw_2h % (12 * 365)
+    return datetime(config.start_year + year_offset, 1, 1) + timedelta(hours=slot_in_year * 2)
+
+
+def datetime_to_dataset_index(dt: datetime, config: "DataHPConfig") -> int:
+    """Convert a datetime to a DataHP dataset index for the given config."""
+    if config.delta_t == 24:
+        return days_from_start_year(config.start_year, dt.year, dt.month, dt.day)
+    year_offset = dt.year - config.start_year
+    hour_of_year = int((dt - datetime(dt.year, 1, 1)).total_seconds() // 3600)
+    slot_in_year = hour_of_year // 2  # data stored every 2 hours
+    total_2h = year_offset * (12 * 365) + slot_in_year
+    return total_2h * 2 // config.delta_t
+
+
+def index_to_climatology_indices(index: int, data_config: "DataHPConfig", climate_config: "DataHPConfig") -> list:
+    """Return climate dataset indices matching the same time-of-year as `index` in data_config.
+
+    For sub-daily delta_t the hour is also matched; for daily (delta_t=24) only month/day.
+    Feb 29 entries in non-leap training years are silently skipped.
+    """
+    dt = index_to_datetime(index, data_config)
+    match_hour = climate_config.delta_t != 24
+
+    indices = []
+    for year in range(climate_config.start_year, climate_config.end_year + 1):
+        try:
+            if match_hour:
+                target_dt = datetime(year, dt.month, dt.day, dt.hour, 0, 0)
+            else:
+                target_dt = datetime(year, dt.month, dt.day, 0, 0, 0)
+        except ValueError:
+            continue
+        indices.append(datetime_to_dataset_index(target_dt, climate_config))
+    return indices
+
+
 
 
 class Climatology(torch.utils.data.Dataset):
-    def __init__(self, data_config: DataHPConfig):
+    def __init__(self, data_config: DataHPConfig, use_wb2_clim: bool = False):
         self.ds = DataHP(data_config)
-        climate_config = copy.deepcopy(data_config)
-        climate_config.start_year = ERA5_START_YEAR_TRAINING
-        climate_config.end_year = ERA5_END_YEAR_TRAINING
-        self.ds_climate = DataHP(climate_config)
-        self.climate_config = climate_config
         self.config = data_config
+        self.use_wb2_clim = use_wb2_clim
+
+        if use_wb2_clim:
+            from experiments.weather.climatology_wb2 import WeatherBenchClimatology
+            self._wb2_clim = WeatherBenchClimatology(
+                nside=data_config.nside, normalize=True
+            )
+        else:
+            climate_config = copy.deepcopy(data_config)
+            # Force daily resolution: _get_24h treats indices as day-counts, not 2h-slots.
+            # Multi-year datasets can't use the equivariant cache and fall through to _get_24h,
+            # so a sub-daily delta_t here would misinterpret 2h-slot indices as day offsets,
+            # producing dates far in the future and causing CDS API failures.
+            self.ds_climate = DataHP(climate_config)
+            self.climate_config = climate_config
 
     def get_meta(self):
         return self.ds.get_meta()
@@ -184,9 +242,39 @@ class Climatology(torch.utils.data.Dataset):
         return len(self.ds)
 
     def __getitem__(self, index):
+        item_dict = dict(sample_id=index)
+        item_dict.update(self.ds[index])
+
+        if self.use_wb2_clim:
+            dt = index_to_datetime(index, self.config)
+            doy = dt.timetuple().tm_yday
+            hour = (dt.hour // 6) * 6
+
+            cache_root = self.ds.get_cache_dir() / "climate_wb2"
+            cache_dir = cache_root / f"doy{doy:03d}_h{hour:02d}"
+            cache_tmp = cache_root / f"doy{doy:03d}_h{hour:02d}_constructing"
+            surf_path = cache_dir / "climate_target_surface.npy"
+            upper_path = cache_dir / "climate_target_upper.npy"
+
+            if cache_dir.is_dir() and self.config.cache:
+                clim_surface = np.load(surf_path)
+                clim_upper = np.load(upper_path)
+            else:
+                clim_surface, clim_upper = self._wb2_clim.get(doy, hour)
+                if self.config.cache:
+                    cache_tmp.mkdir(parents=True, exist_ok=True)
+                    np.save(cache_tmp / "climate_target_surface.npy", clim_surface)
+                    np.save(cache_tmp / "climate_target_upper.npy", clim_upper)
+                    if not cache_dir.is_dir():
+                        shutil.move(cache_tmp, cache_dir)
+
+            item_dict["climate_target_surface"] = clim_surface.astype(np.float32)
+            item_dict["climate_target_upper"] = clim_upper.astype(np.float32)
+            return item_dict
+
         cache_path = self.ds_climate.get_cache_dir() / "climate"
-        climate_indices = day_index_to_climatology_indices(
-            index, self.climate_config.start_year, self.climate_config.end_year
+        climate_indices = index_to_climatology_indices(
+            index, self.config, self.climate_config
         )
         indices_str = "_".join(map(str, climate_indices))
         fs_cache_path = cache_path / f"{indices_str}"
@@ -195,12 +283,8 @@ class Climatology(torch.utils.data.Dataset):
             climate_target_surface="climate_target_surface.npy",
             climate_target_upper="climate_target_upper.npy",
         )
-        item_dict = dict(
-            sample_id=index,
-        )
         if fs_cache_path.is_dir() and self.config.cache:
             print("Climate cache")
-            item_dict.update(self.ds[index])
             for key, filename in names.items():
                 item_dict[key] = np.load(fs_cache_path / filename).astype(np.float32)
         else:
@@ -217,7 +301,6 @@ class Climatology(torch.utils.data.Dataset):
             for key in accum_dict.keys():
                 accum_dict[key] /= len(climate_indices)
 
-            item_dict.update(self.ds[index])
             item_dict["climate_target_surface"] = accum_dict["target_surface"]
             item_dict["climate_target_upper"] = accum_dict["target_upper"]
             if self.config.cache:
@@ -371,11 +454,24 @@ def numpy_hp_to_e5(
 class DataHP(torch.utils.data.Dataset):
     def __init__(self, data_config: DataHPConfig):
         self.config = data_config
+        self.use_equivariant_cache = self.config.start_year in EQUIVAIRIANT_CACHE_YEARS and \
+                                     self.config.end_year in EQUIVAIRIANT_CACHE_YEARS and \
+                                     self.config.start_year == self.config.end_year and \
+                                     self.config.delta_t in [2, 4, 6, 8, 12, 24] 
         # self.masks = masks.load_mask_hp(data_config.nside)
 
     @staticmethod
     def data_spec(config: DataHPConfig):
         return DataSpecHP(nside=config.nside, n_surface=4, n_upper=5)
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collate that keeps 'time' as a list of datetimes (not a tensor)."""
+        from torch.utils.data.dataloader import default_collate
+        non_datetime = [{k: v for k, v in item.items() if k != "time"} for item in batch]
+        collated = default_collate(non_datetime)
+        collated["time"] = [item["time"] for item in batch]
+        return collated
 
     def e5_to_numpy(self, e5xr):
         if self.config.driscoll_healy:
@@ -463,7 +559,7 @@ class DataHP(torch.utils.data.Dataset):
         return dict(surface=surface_metas, upper=upper_metas)
 
     def get_cache_dir(self):
-        if self.config.delta_t == 24:
+        if not self.use_equivariant_cache:
             return env().paths.datasets / self.config.cache_name()
         else:
             return env().paths.datasets / self.config.cache_name_equivariant()
@@ -484,7 +580,11 @@ class DataHP(torch.utils.data.Dataset):
             )
 
     def __getitem__(self, idx):
-        if self.config.delta_t == 24:
+        
+        if self.use_equivariant_cache:
+            return self._get_th(idx)
+
+        else:
             if self.config.lead_time_days == 1:
                 return self._get_24h(idx)
             else:
@@ -494,8 +594,6 @@ class DataHP(torch.utils.data.Dataset):
                 sample["target_upper"] = target["target_upper"]
                 sample["prediction_timedelta_hours"] = 24 * self.config.lead_time_days
                 return sample
-        else:
-            return self._get_th(idx)
 
     def ds_index_to_era5_config(self, ds_idx):
         start = datetime(self.config.start_year, 1, 1, 0, 0, 0)
@@ -518,6 +616,7 @@ class DataHP(torch.utils.data.Dataset):
             data_dict["time"] = json.loads(open(fs_cache_path / "era5_config.json").read())["time"]
             data_dict["masks"] = masks.load_mask_hp(self.config.nside)
             return data_dict
+
 
         e5s_config = self.ds_index_to_era5_config(ds_idx)
         # print("Get ERA5 sample")
@@ -586,11 +685,25 @@ class DataHP(torch.utils.data.Dataset):
         sample_dict = self.load_sample(year, ds_idx, names)
         target_dict = self.load_sample(year_target, ds_idx_target, names)
 
+        if self.config.normalized:
+            stats = deserialize_dataset_statistics(self.config.nside).item()
+            for d in [sample_dict, target_dict]:
+                # Normalize on the fly if the cached data is in physical units.
+                # Cached entries built with normalized=False have surface values in
+                # the tens-of-thousands range (e.g. MSL pressure ~101325 Pa), whereas
+                # normalized values are always within a few sigma of zero.
+                if np.abs(d["surface"]).max() > 50:
+                    surf, upper = normalize_sample(stats, d["surface"], d["upper"])
+                    d["surface"] = surf.astype(np.float32)
+                    d["upper"] = upper.astype(np.float32)
+
+        input_dt = datetime(year, 1, 1, 0, 0, 0) + timedelta(hours=ds_idx * 2)
+
         item_dict["input_surface"] = sample_dict["surface"]
         item_dict["input_upper"] = sample_dict["upper"]
         item_dict["target_surface"] = target_dict["surface"]
         item_dict["target_upper"] = target_dict["upper"]
-        item_dict["time"] = sample_dict["time"]
+        item_dict["time"] = input_dt
         item_dict["masks"] = sample_dict["masks"]
 
         return item_dict
@@ -613,13 +726,7 @@ class DataHP(torch.utils.data.Dataset):
         )
         item_dict = dict(
             sample_id=idx,
-            time=np.datetime_as_string(
-                np.datetime64(
-                    day_index_to_datetime(
-                        idx, self.config.start_year, self.config.end_year
-                    )
-                )
-            ),
+            time=day_index_to_datetime(idx, self.config.start_year, self.config.end_year),
             prediction_timedelta_hours=24,
         )
         done = False
@@ -677,13 +784,18 @@ class DataHP(torch.utils.data.Dataset):
     def __len__(self):
         return (days_between_years(self.config.start_year, self.config.end_year) - 1) * 24 // self.config.delta_t 
     
+@dataclass
+class DataHPSubsetConfig:
+    data_config: DataHPConfig
+    reduction_factor: float = 0.1
+    consecutive_samples: int = 1
 
-class DataHPSubset(DataHP):
+class DataHPSubset(torch.utils.data.Dataset):
     """
     Since DataHP does not allow to use a subset of a year, this class allows to reduce the size of the dataset.
     """
 
-    def __init__(self, data_config: DataHPConfig, reduction_factor: float, consecutive_samples: int = 1):
+    def __init__(self, config: DataHPSubsetConfig):
         """
         Args:
             data_config: Configuration for the data
@@ -694,21 +806,23 @@ class DataHPSubset(DataHP):
             reduction_factor = 0.1, consecutive_samples = 5
             -> keep 5 consecutive samples, then skip about 45, repeating through each year.
         """
-        super().__init__(data_config)
+        self.original_dataset = DataHP(config.data_config)
 
-        if reduction_factor <= 0 or reduction_factor > 1:
+        if config.reduction_factor <= 0 or config.reduction_factor > 1:
             raise ValueError("reduction_factor must be in the range (0, 1]")
-        self.reduction_factor = reduction_factor
+        self.reduction_factor = config.reduction_factor
 
-        if consecutive_samples < 1:
+        if config.consecutive_samples < 1:
             raise ValueError("consecutive_samples must be at least 1")
-        self.consecutive_samples = consecutive_samples
+        self.consecutive_samples = config.consecutive_samples
 
         self._subset_indices = self._build_subset_indices()
 
+        self.config = config.data_config
+
     def _build_subset_indices(self):
-        total_len = super().__len__()
-        n_years = self.config.end_year - self.config.start_year + 1
+        total_len = len(self.original_dataset)
+        n_years = self.original_dataset.config.end_year - self.original_dataset.config.start_year + 1
 
         # Split the total dataset length across years.
         # This is robust even if total_len is not perfectly divisible by n_years.
@@ -756,10 +870,14 @@ class DataHPSubset(DataHP):
 
     def __getitem__(self, idx):
         real_idx = self._subset_indices[idx]
-        return super().__getitem__(real_idx)
+        return self.original_dataset[real_idx]
 
     def __len__(self):
         return len(self._subset_indices)
+
+    @staticmethod
+    def collate_fn(batch):
+        return DataHP.collate_fn(batch)
 
 class DataHPConvConfig(DataHPConfig):
     input_time_dim: int = 1 # Number of input time steps
@@ -964,34 +1082,36 @@ def serialize_dataset_statistics(nside, test_with_one_sample=False):
 
 if __name__ == "__main__":
 
-    for year in [2019]:
-        cnf2 = DataHPConfig(nside=64, start_year=year, end_year=year, normalized=False, delta_t=2)
-        ds_subset = DataHPSubset(cnf2, reduction_factor=1, consecutive_samples=1)
-        print(f"Length of subset dataset for year {year}: {len(ds_subset)}")
+    # for year in [2019]:
+    #     print(f"Checking year {year} for NaN values")
 
-        for i in range(10):
-            print(ds_subset[i]['input_upper'])
-        
+    #     cnf2 = DataHPConfig(nside=64, start_year=year, end_year=year, normalized=False, delta_t=2)
+    #     ds = DataHP(cnf2)
 
 
+    #     for i in [48, 85, 564, 1128, 1476, 2184]:
+    #         corrupted_sample = ds[i]
 
-        # ds2 = DataHP(cnf2)
-        
-        # print("Checking dataset integrity on year {}...".format(year))
-        # for i in tqdm.tqdm(range(len(ds2))):
-        #     try:
-        #         s = ds2[i]
-        #         for k, v in s.items():
-        #             if isinstance(v, np.ndarray):
-        #                 assert v.dtype == np.float32, (i, k, v.dtype)
-        #                 assert v.flags["C_CONTIGUOUS"], (i, k, "not contiguous")
-        #                 assert v.flags["WRITEABLE"], (i, k, "not writeable")
-                
-        #         assert s["input_surface"].shape == (4, 49152), ("input_surface", i, s["input_surface"].shape)
-        #         assert s["input_upper"].shape == (5, 13, 49152), ("input_upper", i, s["input_upper"].shape)
-        #         assert s["masks"].shape == (3, 49152), ("masks", i, s["masks"].shape)
+    #         # Localize where is the nan value in the corrupted sample
+    #         input_surface = corrupted_sample["input_surface"]
+    #         input_upper = corrupted_sample["input_upper"]
 
-        #     except Exception as e:
-        #         print("BROKEN INDEX:", i)
-        #         print(e)
-                
+    #         if np.isnan(input_surface).any():
+    #             print("NaN values found in input_surface")
+    #             nan_indices = np.argwhere(np.isnan(input_surface))
+    #             print(f"NaN indices in input_surface: {nan_indices}")
+    #         if np.isnan(input_upper).any():
+    #             print("NaN values found in input_upper")
+    #             nan_indices = np.argwhere(np.isnan(input_upper))
+    #             print(f"NaN indices in input_upper: {nan_indices}")
+    #             print(f"Number of NaN values in input_upper: {input_upper[nan_indices[:, 0], nan_indices[:, 1], nan_indices[:, 2]].size}")
+
+    print("Testing subset")
+    cnf = DataHPConfig(nside=64, start_year=2012, end_year=2012, delta_t=2)
+    climate_ds = Climatology(cnf, use_wb2_clim=True)
+
+    for i in range(len(climate_ds)):
+        sample = climate_ds[i]
+        print(sample["climate_target_surface"].shape, sample["climate_target_upper"].shape)
+
+    
