@@ -727,11 +727,6 @@ def ingest_all_from_config(config, dry_run: bool = False):
     else:
         raise ValueError(f"Unknown staging type: {config.staging.type}")
 
-    # Compact ingestion_state in DuckLake to merge small files
-    if not dry_run and total_files > 0 and config.is_ducklake_central():
-        print("[ingest] Compacting ingestion_state")
-        conn.execute("CALL ducklake_merge_adjacent_files('central', 'ingestion_state')")
-
     print(f"[ingest] Ingestion complete. Processed {total_files} files.")
     conn.close()
 
