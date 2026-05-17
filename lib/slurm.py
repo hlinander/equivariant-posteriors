@@ -5,7 +5,7 @@ from typing import Optional
 
 @dataclass
 class SlurmConfig:
-    time: str = "2-00:00:00"
+    time: str = "0-06:00:00"
     mem: Optional[str] = None
     cpus_per_task: Optional[int] = None
     gpus: int = 1

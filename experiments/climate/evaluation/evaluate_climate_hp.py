@@ -42,6 +42,7 @@ from lib.distributed_trainer import distributed_train
 from experiments.climate.data.climateset_data_hp import ClimatesetHPConfig, ClimatesetDataHP
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig, SwinHPClimateset
 from experiments.climate.models.GRU_wrapper import GRUTemporalWrapperConfig, GRUTemporalWrapper
+from experiments.climate.models.climate_pear_temporal_atn import SwinHPClimatesetTemporalAtnConfig, SwinHPClimatesetTemporalAtn
 from experiments.climate.evaluation.metrics import rmse_climate_hp
 from experiments.climate.data.climateset_data_hp import load_training_stats_from_config
 
@@ -57,7 +58,7 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
     mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
     mf.register(SwinHPClimatesetSeqConfig, SwinHPClimatesetSeq)
     mf.register(GRUTemporalWrapperConfig, GRUTemporalWrapper)
-
+    mf.register(SwinHPClimatesetTemporalAtnConfig, SwinHPClimatesetTemporalAtn)
     print(f"[eval] Evaluating variant {variant_idx}, epoch {epoch}")
     train_run = create_config(ensemble_id=variant_idx)
     train_run.epochs = epoch
@@ -90,6 +91,16 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
     ensure_duck(train_run)
     insert_or_update_train_run(train_run, deser_model.model_id)
     insert_model_with_model_id(train_run, deser_model.model_id)
+
+    result_path = prepare_results(
+        f'{train_run.serialize_human()["run_id"]}',
+        train_run,
+    )
+
+    def save_and_register(name, array):
+        path = result_path / f"{name}.npy"
+        np.save(path, array.detach().cpu().float().numpy())
+        insert_artifact(deser_model.model_id, name, path, ".npy")
 
     model = deser_model.model
     model.eval()
@@ -131,6 +142,41 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
         overall_rmse,
         [],
     )
+
+    for var_idx, var_name in enumerate(output_var_names):
+        rmse_denorm_value = rmse_results['rmse_per_channel_denorm'][var_idx].item()
+        print(f"[eval]   RMSE denorm {var_name}: {rmse_denorm_value:.6f}")
+        insert_checkpoint_sample_metric(
+            deser_model.model_id,
+            epoch * len(train_ds),
+            f"rmse_denorm_{var_name}",
+            dataset_name,
+            [],
+            rmse_denorm_value,
+            [],
+        )
+
+    # Save per-pixel spatial RMSE as HEALPix artifacts for visualization.
+    # predictions/targets shape: (N, C, P) — mean over batch → (C, P)
+    preds = rmse_results['predictions']   # normalized, (N, C, P)
+    tgts  = rmse_results['targets']       # normalized, (N, C, P)
+    spatial_rmse_norm = torch.sqrt(((preds - tgts) ** 2).mean(dim=0))  # (C, P)
+
+    mean_t = torch.tensor(output_stats['mean'], dtype=torch.float32)  # (1, C, 1) - broadcasts with (N, C, P)
+    std_t  = torch.tensor(output_stats['std'],  dtype=torch.float32)  # (1, C, 1) - broadcasts with (N, C, P)
+    preds_denorm = preds.float() * std_t + mean_t
+    tgts_denorm  = tgts.float()  * std_t + mean_t
+    spatial_rmse_denorm = torch.sqrt(((preds_denorm - tgts_denorm) ** 2).mean(dim=0))  # (C, P)
+
+    for var_idx, var_name in enumerate(output_var_names):
+        save_and_register(
+            f"spatial_rmse_{var_name}_e{epoch}",
+            spatial_rmse_norm[var_idx],   # (P,)
+        )
+        save_and_register(
+            f"spatial_rmse_denorm_{var_name}_e{epoch}",
+            spatial_rmse_denorm[var_idx],  # (P,)
+        )
 
     print("[eval] Exporting metrics to staging...")
     export_all(train_run)

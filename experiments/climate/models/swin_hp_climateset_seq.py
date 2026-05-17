@@ -32,7 +32,7 @@ from experiments.climate.models.swin_hp_climateset import (
     PatchExpand,
     FinalPatchExpand_Transpose,
 )
-from experiments.climate.climateset_data_hp import ClimatesetDataSpec
+from experiments.climate.data.climateset_data_hp import ClimatesetDataSpec
 
 
 # ---------------------------------------------------------------------------

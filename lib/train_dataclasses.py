@@ -32,6 +32,7 @@ class TrainEpochState:
     batch: int
     next_visualization: float
     next_visualizer: int
+    scheduler: object = None
     val_dataloader: torch.utils.data.DataLoader = None
     device_memory_stats: dict = None
     host_memory_stats: object = None
@@ -62,6 +63,12 @@ class OptimizerConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    scheduler: type  # e.g. torch.optim.lr_scheduler.ExponentialLR
+    kwargs: dict     # e.g. dict(gamma=0.98)
+
+
+@dataclass
 class TrainConfig:
     model_config: object
     train_data_config: object
@@ -69,6 +76,7 @@ class TrainConfig:
     optimizer: OptimizerConfig
     batch_size: int
     gradient_clipping: Union[None, float] = None
+    scheduler_config: Union[None, SchedulerConfig] = None
     ensemble_id: int = 0
     _version: int = 0
     val_data_config: object = None
@@ -119,6 +127,11 @@ class TrainConfig:
             ensemble_id=self.ensemble_id,
             extra=lib.serialize_human.serialize_human(self.extra),
             gradient_clipping=self.gradient_clipping,
+            scheduler_config=(
+                dict(name=self.scheduler_config.scheduler.__name__, kwargs=self.scheduler_config.kwargs)
+                if self.scheduler_config is not None
+                else None
+            ),
             _version=self._version,
         )
 

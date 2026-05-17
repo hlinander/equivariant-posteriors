@@ -30,7 +30,7 @@ from experiments.weather.models.hp_windowing import (
     get_nest_win_idcs,
 )
 
-from experiments.climate.climateset_data_hp import ClimatesetDataSpec
+from experiments.climate.data.climateset_data_hp import ClimatesetDataSpec
 
 from lib.serialize_human import serialize_human
 
@@ -482,18 +482,40 @@ class FinalPatchExpand_Transpose(nn.Module):
         # if output_data_spec_hp is None:
         #     output_data_spec_hp = data_spec_hp
             
-        self.conv_surface = nn.ConvTranspose1d(
+        # self.conv_surface = nn.ConvTranspose1d(
+        #     dim,
+        #     data_spec_hp.n_output_channels,
+        #     kernel_size=patch_size,
+        #     stride=patch_size,
+        # )
+        self.conv_upper = nn.ConvTranspose2d(
             dim,
             data_spec_hp.n_output_channels,
-            kernel_size=patch_size,
-            stride=patch_size,
+            kernel_size=[2, patch_size],
+            stride=[2, patch_size],
+            # padding=[0, patch_size + 2],
         )
+        # self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: torch.Tensor):
+        # B D N C -> B C D N
         x = x.permute(0, 3, 1, 2)
-        x_surface = self.conv_surface(x[:, :, 0, :])
-        x_surface = x_surface.permute(0, 2, 1)
-        return x_surface
+        # breakpoint()
+        #x_surface = self.conv_surface(x[:, :, 0, :])
+        #x_upper = self.conv_upper(x[:, :, 1:, :])
+        # #print("After conv transpose shape:", x_upper.shape)
+        x = self.conv_upper(x)
+        #print("After conv transpose shape test:", x.shape)
+        # x_surface = x_surface.permute(0, 2, 1)
+        x = x.permute(0, 2, 3, 1)
+        # x = self.norm(x)
+        return x
+
+    # def forward(self, x: torch.Tensor):
+    #     x = x.permute(0, 3, 1, 2)
+    #     x_surface = self.conv_surface(x[:, :, 0, :])
+    #     x_surface = x_surface.permute(0, 2, 1)
+    #     return x_surface
 
 
 class FinalPatchExpand_X4(nn.Module):
@@ -630,28 +652,28 @@ class PatchEmbed(nn.Module):
 
         self.num_hp_patches = hp.nside2npix(data_spec.nside) // config.patch_size
 
-        self.proj_surface = nn.Conv1d(
+        # self.proj_surface = nn.Conv1d(
+        #     data_spec.n_input_channels,
+        #     config.embed_dims[0],
+        #     kernel_size=config.patch_size,
+        #     stride=config.patch_size,
+        # )
+        self.proj_upper = nn.Conv2d(
             data_spec.n_input_channels,
             config.embed_dims[0],
-            kernel_size=config.patch_size,
-            stride=config.patch_size,
+            kernel_size=[2, config.patch_size],
+            stride=[2, config.patch_size],
         )
-        # self.proj_upper = nn.Conv2d(
-        #     data_spec.n_upper,
-        #     config.embed_dims[0],
-        #     kernel_size=[2, config.patch_size],
-        #     stride=[2, config.patch_size],
-        # )
 
     def forward(self, x):
-        #print("PatchEmbed input shape:", x.shape)
-        B, C, N = x.shape
+        ##print("PatchEmbed input shape:", x.shape)
+        B, T, C, N = x.shape
         assert N == hp.nside2npix(
             self.data_spec.nside
         ), f"Input image size ({N}) doesn't match model ({self.data_spec.input_shape[0]})."
-        x = self.proj_surface(x)[:, :, None, :]
-        # x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
-        # x_upper = self.proj_upper(x_upper)
+        #x = self.proj_surface(x)[:, :, None, :]
+        #x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
+        x = self.proj_upper(x)
         # # breakpoint()
         # # x_upper = torch.nn.functional.pad(x_upper, (0, 0, 1, 0))
         # x = torch.concatenate([x_surface, x_upper], dim=2)
@@ -661,7 +683,7 @@ class PatchEmbed(nn.Module):
 
 
 @dataclass
-class SwinHPClimatesetTimeLevelsConfig:
+class SwinHPClimatesetTemporalAtnConfig:
     base_pix: int = 12
     nside: int = 64
     patch_size: int = 16
@@ -693,8 +715,8 @@ class SwinHPClimatesetTimeLevelsConfig:
         return serialize_human(self.__dict__)  # dict(validation=self.validation)
 
 
-class SwinHPClimatesetTimeLevels(nn.Module):
-    def __init__(self, config: SwinHPClimatesetTimeLevelsConfig, data_spec: DataSpec, **kwargs):
+class SwinHPClimatesetTemporalAtn(nn.Module):
+    def __init__(self, config: SwinHPClimatesetTemporalAtnConfig, data_spec: DataSpec, **kwargs):
         super().__init__()
         self.config = config
         self.data_spec = data_spec
@@ -704,10 +726,10 @@ class SwinHPClimatesetTimeLevels(nn.Module):
         num_hp_patches = self.patch_embed.num_hp_patches
 
         self.input_resolutions = [
-            [1, num_hp_patches],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches // 4],
-            [1, num_hp_patches],
+            [6, num_hp_patches],
+            [6, num_hp_patches // 4],
+            [6, num_hp_patches // 4],
+            [6, num_hp_patches],
         ]
 
         self.pos_drop = nn.Dropout(p=config.drop_rate)
@@ -765,23 +787,33 @@ class SwinHPClimatesetTimeLevels(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def _forward(self, x_surface):
-        # x_surface: B, C_surface, N_pix
-        x = self.patch_embed(x_surface)   # B,1,N,C
+    def _forward(self, x):
+        #print("Input shape:", x.shape)
+        # input shape [12, 12, 4, 12288] for example
+        x = x.permute(0, 2, 1, 3) # B, C, N, D?
+        x = self.patch_embed(x) 
+        ##print("After patch embedding shape:", x.shape)
         x = self.layers[0](x)
+        ##print("After first layer shape:", x.shape)
         skip = x
         x = self.downsample(x)
+        ##print("After downsample shape:", x.shape)
         x = self.layers[1](x)
         x = self.layers[2](x)
         x = self.norm(x)
         x = self.upsample(x)
+        ##print("After upsample shape:", x.shape)
         x = self.layers[3](x)
+        ##print("After final layer shape:", x.shape)
         x = torch.concatenate([skip, x], dim=-1)
-        x_surface = self.final_up(x)
-        return x_surface
+        ##print("After concatenating skip connection shape:", x.shape)    
+        x = self.final_up(x)
+        ##print("After final upsample shape:", x.shape)
+        return x
 
     def forward(self, batch):
-        x_surface = self._forward(batch["input"])
-        x_surface = x_surface.permute(0, 2, 1) # B, N_pix, C_surface
-        return dict(logits_output=x_surface) #TODO: Change key name appropriately
+        x= self._forward(batch["input"])
+        x = x.permute(0, 1, 3, 2) # B, T, C_surface, N_pix
+        ##print("Output shape:", x.shape)
+        return dict(logits_output=x) #TODO: Change key name appropriately
 

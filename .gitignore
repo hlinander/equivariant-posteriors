@@ -24,7 +24,7 @@ distributed_training_requests/
 # Slurm
 slurm_log/
 slurm_tmp/
-
+slurm/logs/
 # Nix
 result
 

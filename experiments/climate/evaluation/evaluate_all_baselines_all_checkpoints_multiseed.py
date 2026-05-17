@@ -1,26 +1,3 @@
-"""
-Evaluation sweep for multi-seed climate experiments.
-
-Creates one SLURM job per (seed × climate_model_idx) pair.  Each job loops
-over all checkpoints sequentially, so epochs do NOT multiply the job count.
-
-Usage:
-    # All checkpoints for NorESM2-LM (idx 12) across 3 seeds → 3 jobs:
-    CONFIG=experiments/climate/persisted_configs/train_cnn_lstm_nohp_newlossfn_multiseed.py \
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 NUM_VARIANTS=1 \
-    python run_slurm_sweep.py experiments/climate/evaluation/evaluate_all_checkpoints_multiseed.py
-
-    # Evaluate only the final epoch (EPOCH=500):
-    CONFIG=experiments/climate/persisted_configs/train_cnn_lstm_nohp_newlossfn_multiseed.py \
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 NUM_VARIANTS=1 EPOCH=500 \
-    python run_slurm_sweep.py experiments/climate/evaluation/evaluate_all_checkpoints_multiseed.py
-
-    # HEALPix baseline (SwinHP) — evaluator is auto-detected from CONFIG:
-    CONFIG=experiments/climate/persisted_configs/train_climate_baseline_multiseed.py \
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 NUM_VARIANTS=1 \
-    python run_slurm_sweep.py experiments/climate/evaluation/evaluate_all_checkpoints_multiseed.py
-"""
-
 import os
 from lib.generic_ablation import get_config_grid
 def _detect_evaluator():
@@ -56,7 +33,7 @@ def _get_epochs():
 
 def create_configs():
     n_seeds = int(os.environ.get("N_SEEDS", "5"))
-    n_variants = int(os.environ.get("NUM_VARIANTS", "1"))
+    n_variants = int(os.environ.get("NUM_VARIANTS", "15"))
     epochs = _get_epochs()
     print(
         f"Sweep: {n_variants} climate model(s) × {n_seeds} seeds = "

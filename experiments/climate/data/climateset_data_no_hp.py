@@ -81,6 +81,8 @@ class ClimatesetConfig:
     spatial_res: str = "250_km"
     temporal_res: str = "mon"
 
+    spherical_normalization: bool = False  # compute normalization stats under the spherical measure
+
     def _get_cache_base_dir(self):
         return Path(self.data_dir) / "cache"
 
@@ -117,16 +119,25 @@ class ClimatesetConfig:
     def get_output_cache_dir(self):
         return self._get_cache_base_dir() / self.output_cache_name()
 
+    def get_sphere_stats_input_cache_dir(self):
+        return self._get_cache_base_dir() / (self.input_cache_name() + "_sphere_stats")
+
+    def get_sphere_stats_output_cache_dir(self):
+        return self._get_cache_base_dir() / (self.output_cache_name() + "_sphere_stats")
+
     def get_input_stats_path(self):
         """
         Stats are tied to (cache_dir, split_seed, val_fraction) so different
         train/val configurations don't clobber each other's stats.
         Stats are always computed from the TRAIN portion only.
+        When spherical_normalization=True, stats live in the sphere_stats cache dir.
         """
-        return self.get_input_cache_dir() / f"train_stats_seed{self.random_seed}_valfrac{self.val_fraction}.npy"
+        base = self.get_sphere_stats_input_cache_dir() if self.spherical_normalization else self.get_input_cache_dir()
+        return base / f"train_stats_seed{self.random_seed}_valfrac{self.val_fraction}.npy"
 
     def get_output_stats_path(self):
-        return self.get_output_cache_dir() / f"train_stats_seed{self.random_seed}_valfrac{self.val_fraction}.npy"
+        base = self.get_sphere_stats_output_cache_dir() if self.spherical_normalization else self.get_output_cache_dir()
+        return base / f"train_stats_seed{self.random_seed}_valfrac{self.val_fraction}.npy"
 
     def validation(self):
         ret = copy.deepcopy(self)
@@ -203,6 +214,8 @@ class ClimatesetData(torch.utils.data.Dataset):
 
         self.years            = config.get_years_list(config.years)
         self.historical_years = config.get_years_list(config.historical_years) if config.historical_years else []
+
+        self.lats = None  # (n_lat,) latitude values; populated during load/create
 
         # Always load/create RAW data (no normalization at this stage)
         self._load_or_create_inputs()
@@ -284,12 +297,23 @@ class ClimatesetData(torch.utils.data.Dataset):
         if self.config.split == "train":
             print("\nComputing normalization stats from TRAIN split only...")
             stats_indices = getattr(self, "_stats_indices", self.indices)
-            self.input_stats  = self._compute_stats(self.input_data,  stats_indices, self.config.input_vars,  "INPUT")
-            self.output_stats = self._compute_stats(self.output_data, stats_indices, self.config.output_vars, "OUTPUT")
+
+            lat_weights = None
+            if self.config.spherical_normalization:
+                if self.lats is None:
+                    print("  WARNING: self.lats is None at stats time — reading from source files.")
+                    self.lats = self._load_lats()
+                lat_weights = np.cos(np.deg2rad(self.lats)).astype(np.float64)
+
+            self.input_stats  = self._compute_stats(self.input_data,  stats_indices, self.config.input_vars,  "INPUT",  lat_weights)
+            self.output_stats = self._compute_stats(self.output_data, stats_indices, self.config.output_vars, "OUTPUT", lat_weights)
 
             # Persist so val / test datasets can reuse them
             self.input_cache_dir.mkdir(parents=True, exist_ok=True)
             self.output_cache_dir.mkdir(parents=True, exist_ok=True)
+            if self.config.spherical_normalization:
+                self.config.get_sphere_stats_input_cache_dir().mkdir(parents=True, exist_ok=True)
+                self.config.get_sphere_stats_output_cache_dir().mkdir(parents=True, exist_ok=True)
             np.save(input_stats_path,  self.input_stats)
             np.save(output_stats_path, self.output_stats)
             print(f"  Saved INPUT  stats → {input_stats_path}")
@@ -322,17 +346,31 @@ class ClimatesetData(torch.utils.data.Dataset):
 
     @staticmethod
     def _compute_stats(data: np.ndarray, indices: np.ndarray,
-                       var_names: List[str], label: str) -> Dict:
+                       var_names: List[str], label: str,
+                       lat_weights: Optional[np.ndarray] = None) -> Dict:
         """
-        Compute per-channel mean and std over (time, lon, lat) using only
+        Compute per-channel mean and std over (time, lat, lon) using only
         the provided indices (i.e. the training timesteps).
 
-        data shape: (total_timesteps, n_channels, lon, lat)
-        stats shape: (1, C, 1, 1)  – broadcasts over (T, C, lon, lat)
+        data shape: (total_timesteps, n_channels, n_lat, n_lon)
+        stats shape: (1, C, 1, 1)  – broadcasts over (T, C, lat, lon)
+
+        If lat_weights (shape (n_lat,)) is provided, statistics are computed
+        under the spherical measure: μ_w = Σ cos(φ)·f / Σ cos(φ), so that
+        grid cells are weighted by area rather than counted equally.
         """
-        subset = data[indices]  # (n_train, n_channels, lon, lat)
-        mean = subset.mean(axis=(0, 2, 3), keepdims=True, dtype=np.float64)  # (1, C, 1, 1)
-        std  = subset.std( axis=(0, 2, 3), keepdims=True, dtype=np.float64)
+        subset = data[indices]  # (N, C, n_lat, n_lon)
+
+        if lat_weights is None:
+            mean = subset.mean(axis=(0, 2, 3), keepdims=True, dtype=np.float64)  # (1, C, 1, 1)
+            std  = subset.std( axis=(0, 2, 3), keepdims=True, dtype=np.float64)
+        else:
+            w     = lat_weights[np.newaxis, np.newaxis, :, np.newaxis].astype(np.float64)
+            denom = float(subset.shape[0]) * float(subset.shape[3]) * float(lat_weights.sum())
+            sub64 = subset.astype(np.float64)
+            mean  = (sub64 * w).sum(axis=(0, 2, 3), keepdims=True) / denom
+            var   = (w * (sub64 - mean) ** 2).sum(axis=(0, 2, 3), keepdims=True) / denom
+            std   = np.sqrt(var)
 
         print(f"  {label} normalization stats (from {len(indices)} train timesteps):")
         for var, m, s in zip(var_names, mean[0, :, 0, 0], std[0, :, 0, 0]):
@@ -527,10 +565,12 @@ class ClimatesetData(torch.utils.data.Dataset):
             print(f"\nProcessing INPUT scenario: {scenario}")
             input_paths = self._get_input_paths(scenario)
             print("Loading input data...")
-            input_grid  = self._load_grid_data(input_paths, coord_names=("lat", "lon"))
+            input_grid, lats = self._load_grid_data(input_paths, coord_names=("lat", "lon"))
+            if lats is not None and self.lats is None:
+                self.lats = lats
             print("Stacking variables...")
             input_stack = np.stack([input_grid[var] for var in self.config.input_vars], axis=1)
-            # shape: (time, n_input_vars, lon, lat)
+            # shape: (time, n_input_vars, lat, lon)
             print(f"  Input shape for scenario {scenario}: {input_stack.shape}")
             all_inputs.append(input_stack)
 
@@ -544,10 +584,12 @@ class ClimatesetData(torch.utils.data.Dataset):
             print(f"\nProcessing OUTPUT scenario: {scenario}")
             output_paths = self._get_output_paths(scenario)
             print("Loading output data...")
-            output_grid  = self._load_grid_data(output_paths, coord_names=("lat", "lon"))
+            output_grid, lats = self._load_grid_data(output_paths, coord_names=("lat", "lon"))
+            if lats is not None and self.lats is None:
+                self.lats = lats
             print("Stacking variables...")
             output_stack = np.stack([output_grid[var] for var in self.config.output_vars], axis=1)
-            # shape: (time, n_output_vars, lon, lat)
+            # shape: (time, n_output_vars, lat, lon)
             print(f"  Output shape for scenario {scenario}: {output_stack.shape}")
             all_outputs.append(output_stack)
 
@@ -563,6 +605,8 @@ class ClimatesetData(torch.utils.data.Dataset):
         print(f"\nSaving INPUT to cache: {self.input_cache_dir}")
         self.input_cache_dir.mkdir(parents=True, exist_ok=True)
         np.save(self.input_cache_dir / "data.npy", self.input_data)
+        if self.lats is not None:
+            np.save(self.input_cache_dir / "lats.npy", self.lats)
         config_dict = {
             "input_vars":       list(self.config.input_vars),
             "scenarios":        list(self.config.scenarios),
@@ -578,6 +622,8 @@ class ClimatesetData(torch.utils.data.Dataset):
         print(f"\nSaving OUTPUT to cache: {self.output_cache_dir}")
         self.output_cache_dir.mkdir(parents=True, exist_ok=True)
         np.save(self.output_cache_dir / "data.npy", self.output_data)
+        if self.lats is not None:
+            np.save(self.output_cache_dir / "lats.npy", self.lats)
         config_dict = {
             "output_vars":      list(self.config.output_vars),
             "scenarios":        list(self.config.scenarios),
@@ -607,6 +653,9 @@ class ClimatesetData(torch.utils.data.Dataset):
                 raise ValueError("INPUT cache config mismatch: scenarios")
 
         self.input_data = np.load(data_file)
+        lats_file = self.input_cache_dir / "lats.npy"
+        if lats_file.exists() and self.lats is None:
+            self.lats = np.load(lats_file)
         print(f"  Loaded INPUT from cache: shape={self.input_data.shape}")
 
     def _load_outputs_from_cache(self):
@@ -631,7 +680,48 @@ class ClimatesetData(torch.utils.data.Dataset):
                 raise ValueError("OUTPUT cache config mismatch: spatial_res")
 
         self.output_data = np.load(data_file)
+        lats_file = self.output_cache_dir / "lats.npy"
+        if lats_file.exists() and self.lats is None:
+            self.lats = np.load(lats_file)
         print(f"  Loaded OUTPUT from cache: shape={self.output_data.shape}")
+
+    # ------------------------------------------------------------------
+    # Latitude weighting  (applied to raw data, before normalization)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_lat_weights(lats: np.ndarray) -> np.ndarray:
+        """cos(lat) weights, shape (1, 1, n_lat, 1) — broadcasts over (T, C, lat, lon)."""
+        weights = np.cos(np.deg2rad(lats)).astype(np.float32)  # (n_lat,)
+        return weights[np.newaxis, np.newaxis, :, np.newaxis]
+
+    def _load_lats(self) -> np.ndarray:
+        """Read latitude values from the first available netCDF file (fallback when cache lacks lats.npy)."""
+        for scenario in self.config.scenarios:
+            input_paths = self._get_input_paths(scenario)
+            for _, files in input_paths.items():
+                if files:
+                    ds = xr.open_dataset(sorted(files)[0], decode_times=False)
+                    if "lat" in ds.coords:
+                        lats = ds["lat"].values.astype(np.float32)
+                        ds.close()
+                        return lats
+                    ds.close()
+        raise RuntimeError("Could not find latitude values in any input netCDF file.")
+
+    def _apply_or_load_lat_weighted_inputs(self):
+        raise RuntimeError(
+            "_apply_or_load_lat_weighted_inputs() has been removed. "
+            "spherical_normalization=True now only affects normalization statistics, "
+            "not raw data values. Delete any stale _latweighted/ dirs and rerun."
+        )
+
+    def _apply_or_load_lat_weighted_outputs(self):
+        raise RuntimeError(
+            "_apply_or_load_lat_weighted_outputs() has been removed. "
+            "spherical_normalization=True now only affects normalization statistics, "
+            "not raw data values. Delete any stale _latweighted/ dirs and rerun."
+        )
 
     # ------------------------------------------------------------------
     # Misc helpers
@@ -750,30 +840,36 @@ class ClimatesetData(torch.utils.data.Dataset):
 
     def _load_grid_data(self, file_dict: Dict[str, List[str]],
                         coord_names: Tuple[str, str] = ("lat", "lon"),  # unused; kept for API compat
-                        ) -> Dict[str, np.ndarray]:
+                        ) -> Tuple[Dict[str, np.ndarray], Optional[np.ndarray]]:
         """
         Load each variable's netCDF files and return raw grid arrays.
 
-        Returns a dict: var -> np.ndarray of shape (time, lon, lat).
-        HEALPix interpolation has been removed; data is kept on the native grid.
+        Returns (grid_data_dict, lats):
+            grid_data_dict: var -> np.ndarray of shape (time, lat, lon)
+            lats: 1-D latitude array, or None if not found in the files
         """
         grid_data_dict = {}
+        lats = None
         for var, var_files in file_dict.items():
             if not var_files:
                 raise FileNotFoundError(f"No files found for variable '{var}'")
             print(f"  Loading {var}: {len(var_files)} files", flush=True)
             datasets = [xr.open_dataset(f, decode_times=False) for f in sorted(var_files)]
             ds = xr.concat(datasets, dim="time").sortby("time")
+            if lats is None and "lat" in ds.coords:
+                lats = ds["lat"].values.astype(np.float32)
             arr = ds.to_array().squeeze("variable")   # (time, lat, lon)
             grid_data_dict[var] = arr.to_numpy().astype(np.float32)
             # Close datasets to free memory
             for d in datasets:
                 d.close()
-        return grid_data_dict
+        return grid_data_dict, lats
 
     # Legacy method name alias (kept for backward compatibility with any external callers)
+    # Returns only the data dict; callers that need lats should use _load_grid_data directly.
     def _load_and_transform_data(self, file_dict, coord_names=("lat", "lon")):
-        return self._load_grid_data(file_dict, coord_names)
+        data, _ = self._load_grid_data(file_dict, coord_names)
+        return data
 
 
 # ---------------------------------------------------------------------------

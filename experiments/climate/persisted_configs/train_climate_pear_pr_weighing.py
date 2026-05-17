@@ -1,17 +1,3 @@
-#!/usr/bin/env python
-"""
-Multi-seed training config for SwinHP on the ClimateSet HEALPix dataset.
-
-Based on train_climate_baseline.py but separates the random seed (ensemble_id)
-from the climate model index (climate_model_idx) so the same architecture
-can be trained with multiple seeds for statistical comparisons.
-
-Usage:
-    # Single climate model, 3 seeds (SLURM array 0-2):
-    N_SEEDS=3 CLIMATE_MODEL_IDX=12 python run_slurm_sweep.py \
-        experiments/climate/persisted_configs/train_climate_baseline_multiseed_sweep.py
-"""
-
 import os
 import torch
 
@@ -27,58 +13,54 @@ from experiments.climate.data.climateset_data_hp import ClimatesetHPConfig
 from experiments.climate.data.climateset_data_hp import ClimatesetDataHP
 from experiments.climate.data.climateset_data_hp import get_fire_type
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig
-from experiments.climate.models.swin_hp_climateset import SwinHPClimateset
+from experiments.climate.models.swin_hp_climateset_fixed import SwinHPClimatesetFixed
 
 NSIDE = 32
 CLIMATE_MODELS = [
-    ("AWI-CM-1-1-MR", "r1i1p1f1"),
-    ("BCC-CSM2-MR",   "r1i1p1f1"),
-    ("CAS-ESM2-0",    "r3i1p1f1"),
-    ("CNRM-CM6-1-HR", "r1i1p1f2"),
-    ("EC-Earth3",     "r1i1p1f1"),
+    ("AWI-CM-1-1-MR",    "r1i1p1f1"),
+    ("BCC-CSM2-MR",      "r1i1p1f1"),
+    ("CAS-ESM2-0",       "r3i1p1f1"),
+    ("CNRM-CM6-1-HR",    "r1i1p1f2"),
+    ("EC-Earth3",        "r1i1p1f1"),
     ("EC-Earth3-Veg-LR", "r1i1p1f1"),
-    ("FGOALS-f3-L",   "r1i1p1f1"),
-    ("GFDL-ESM4",     "r1i1p1f1"),
-    ("INM-CM4-8",     "r1i1p1f1"),
-    ("INM-CM5-0",     "r1i1p1f1"),
-    ("MPI-ESM1-2-HR", "r1i1p1f1"),
-    ("MRI-ESM2-0",    "r1i1p1f1"),
-    ("NorESM2-LM",    "r1i1p1f1"),
-    ("NorESM2-MM",    "r1i1p1f1"),
-    ("TaiESM1",       "r1i1p1f1"),
+    ("FGOALS-f3-L",      "r1i1p1f1"),
+    ("GFDL-ESM4",        "r1i1p1f1"),
+    ("INM-CM4-8",        "r1i1p1f1"),
+    ("INM-CM5-0",        "r1i1p1f1"),
+    ("MPI-ESM1-2-HR",    "r1i1p1f1"),
+    ("MRI-ESM2-0",       "r1i1p1f1"),
+    ("NorESM2-LM",       "r1i1p1f1"),
+    ("NorESM2-MM",       "r1i1p1f1"),
+    ("TaiESM1",          "r1i1p1f1"),
 ]
 
 
 def create_config(
     ensemble_id,
-    epoch=200,
+    epoch=250,
     batch_size=12,
     climate_model_idx=0,
-    lr=2e-4 ,
-    embed_dims=[192, 384, 384, 192],
+    lr=2e-4,
+    embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
     drop_rate=0.0,
-    ):
-    """Create a training config for a specific climate model and seed.
-
-    Parameters
-    ----------
-    ensemble_id : int
-        Random seed index (0, 1, 2, ...).  Controls torch.manual_seed
-        (via TrainConfig.ensemble_id) and the train/val data split
-        (via random_seed = ensemble_id + 1).
-    climate_model_idx : int
-        Index into CLIMATE_MODELS selecting which GCM to train on.
-    """
+    depths=[2, 12, 12, 4],
+    pr_variable_weighing=0.5,
+):
     model_name, ensemble = CLIMATE_MODELS[climate_model_idx]
     print(f"climate_model={model_name}, ensemble={ensemble}, seed={ensemble_id}")
 
-    loss = torch.nn.MSELoss()
+    mse = torch.nn.MSELoss()
 
     def loss_fn(output, batch):
-        return loss(output["logits_output"], batch["target"])
+        pred   = output["logits_output"]
+        target = batch["target"]
+        if pr_variable_weighing == 0.5:
+            return mse(pred, target)
+        # dim 1: channel 0 = tas, channel 1 = pr
+        loss_tas = mse(pred[:, 0], target[:, 0])
+        loss_pr  = mse(pred[:, 1], target[:, 1])
+        return (1.0 - pr_variable_weighing) * loss_tas + pr_variable_weighing * loss_pr
 
-    # Each seed gets a different train/val split and model initialisation
-    random_seed  = ensemble_id + 1
     val_fraction = 0.1
     seq_len      = 1
     seq_to_seq   = True
@@ -90,7 +72,7 @@ def create_config(
         ensemble=ensemble,
         scenarios=["ssp126", "ssp370", "ssp585"],
         val_fraction=val_fraction,
-        random_seed=random_seed,
+        random_seed=1,
         seq_len=seq_len,
         seq_to_seq=seq_to_seq,
         normalized=normalized,
@@ -99,18 +81,18 @@ def create_config(
     )
 
     train_config = TrainConfig(
-        extra=dict(loss_variant="full"),
+        extra=dict(loss_variant="full", pr_variable_weighing=pr_variable_weighing),
         model_config=SwinHPClimatesetConfig(
             base_pix=12,
             nside=NSIDE,
             dev_mode=False,
-            depths=[2, 6, 6, 2],
+            depths=depths,
             num_heads=[6, 12, 12, 6],
             embed_dims=embed_dims,
             window_size=[1, 64],
             use_cos_attn=False,
             use_v2_norm_placement=True,
-            drop_rate=0, # potential increase
+            drop_rate=drop_rate,
             attn_drop_rate=0.0,
             drop_path_rate=0,
             rel_pos_bias="single",
@@ -137,7 +119,7 @@ def create_config(
         ),
         batch_size=batch_size,
         ensemble_id=ensemble_id,
-        _version=10,
+        _version=11,
     )
 
     train_eval = TrainEval(
@@ -146,7 +128,7 @@ def create_config(
         log_gradient_norm=True,
     )
 
-    train_run = TrainRun(
+    return TrainRun(
         project="climate",
         compute_config=ComputeConfig(),
         train_config=train_config,
@@ -158,35 +140,23 @@ def create_config(
         validate_nth_epoch=5,
         visualize_terminal=False,
     )
-    return train_run
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0").strip()
     variant_idx = int(task_id) if task_id else 0
 
     N_SEEDS = int(os.environ.get("N_SEEDS", "10"))
-    climate_model_idx = int(
-        os.environ.get("CLIMATE_MODEL_IDX", str(variant_idx // N_SEEDS))
-    )
+    climate_model_idx = int(os.environ.get("CLIMATE_MODEL_IDX", str(variant_idx // N_SEEDS)))
     seed_idx = variant_idx % N_SEEDS
 
-    print(f"SLURM_ARRAY_TASK_ID={variant_idx}, "
-          f"climate_model_idx={climate_model_idx}, seed_idx={seed_idx}")
+    print(f"SLURM_ARRAY_TASK_ID={variant_idx}, climate_model_idx={climate_model_idx}, seed_idx={seed_idx}")
 
     data_factory.get_factory()
     data_factory.register_dataset(ClimatesetHPConfig, ClimatesetDataHP)
-
     mf = model_factory.get_factory()
-    mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
+    mf.register(SwinHPClimatesetConfig, SwinHPClimatesetFixed)
 
-    print("Starting distributed training...")
-    config = create_config(
-        ensemble_id=seed_idx, epoch=200, climate_model_idx=climate_model_idx
-    )
+    config = create_config(ensemble_id=seed_idx, climate_model_idx=climate_model_idx)
     request_train_run(config)
     distributed_train([config])

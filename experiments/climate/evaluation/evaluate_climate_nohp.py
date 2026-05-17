@@ -88,7 +88,7 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
     output_stats = stats["output_stats"]
 
     print("[eval] Computing latitude-weighted RMSE...")
-    rmse_results = rmse_climate_nohp(model, test_dl, device_id, output_stats)
+    rmse_results = rmse_climate_nohp(model, test_dl, device_id, output_stats, lats=test_ds.lats)
     print(f"[eval] RMSE results: {rmse_results['rmse_per_channel']}")
 
     dataset_name = ClimatesetData.__name__
@@ -118,6 +118,21 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
         overall_rmse,
         [],
     )
+
+    
+    for var_idx, var_name in enumerate(output_var_names):
+        rmse_denorm_value = rmse_results['rmse_per_channel_denorm'][var_idx].item()
+        print("check float64 or not", type(rmse_denorm_value))
+        print(f"[eval]   RMSE latw denorm {var_name}: {rmse_denorm_value:.6f}")
+        insert_checkpoint_sample_metric(
+            deser_model.model_id,
+            epoch * len(train_ds),
+            f"rmse_latw_denorm_{var_name}",
+            dataset_name,
+            [],
+            rmse_denorm_value,
+            [],
+        )
 
     print("[eval] Exporting metrics to staging...")
     export_all(train_run)

@@ -288,20 +288,36 @@ class ClimatesetDataHP(torch.utils.data.Dataset):
         output_stats_path = self.config.get_output_stats_path()
 
         if self.config.split == "train":
-            print("\nComputing normalization stats from TRAIN split only...")
-            # Use _stats_indices which covers all timesteps in the selected sequences
-            # (same as self.indices for seq_len=1; expanded for seq_len>1)
-            stats_indices = getattr(self, "_stats_indices", self.indices)
-            self.input_stats  = self._compute_stats(self.input_data,  stats_indices, self.config.input_vars,  "INPUT")
-            self.output_stats = self._compute_stats(self.output_data, stats_indices, self.config.output_vars, "OUTPUT")
+            stats_valid = (
+                input_stats_path.exists() and input_stats_path.stat().st_size > 0 and
+                output_stats_path.exists() and output_stats_path.stat().st_size > 0
+            )
+            if stats_valid:
+                self.input_stats  = np.load(input_stats_path,  allow_pickle=True).item()
+                self.output_stats = np.load(output_stats_path, allow_pickle=True).item()
+                print(f"  Reused existing INPUT  stats from {input_stats_path}")
+                print(f"  Reused existing OUTPUT stats from {output_stats_path}")
+            else:
+                print("\nComputing normalization stats from TRAIN split only...")
+                # Use _stats_indices which covers all timesteps in the selected sequences
+                # (same as self.indices for seq_len=1; expanded for seq_len>1)
+                stats_indices = getattr(self, "_stats_indices", self.indices)
+                self.input_stats  = self._compute_stats(self.input_data,  stats_indices, self.config.input_vars,  "INPUT")
+                self.output_stats = self._compute_stats(self.output_data, stats_indices, self.config.output_vars, "OUTPUT")
 
-            # Persist so val / test datasets can reuse them
-            self.input_cache_dir.mkdir(parents=True, exist_ok=True)
-            self.output_cache_dir.mkdir(parents=True, exist_ok=True)
-            np.save(input_stats_path,  self.input_stats)
-            np.save(output_stats_path, self.output_stats)
-            print(f"  Saved INPUT  stats → {input_stats_path}")
-            print(f"  Saved OUTPUT stats → {output_stats_path}")
+                # Persist so val / test datasets can reuse them.
+                # Atomic write (tmp + os.replace) prevents concurrent readers from
+                # seeing a partially-written file.
+                self.input_cache_dir.mkdir(parents=True, exist_ok=True)
+                self.output_cache_dir.mkdir(parents=True, exist_ok=True)
+                tmp_in  = input_stats_path.with_name(input_stats_path.stem + ".tmp.npy")
+                tmp_out = output_stats_path.with_name(output_stats_path.stem + ".tmp.npy")
+                np.save(tmp_in,  self.input_stats)
+                np.save(tmp_out, self.output_stats)
+                os.replace(tmp_in,  input_stats_path)
+                os.replace(tmp_out, output_stats_path)
+                print(f"  Saved INPUT  stats → {input_stats_path}")
+                print(f"  Saved OUTPUT stats → {output_stats_path}")
         
         elif self.config.split in ("val", "all"):
             if input_stats_path.exists() and output_stats_path.exists():
@@ -830,7 +846,7 @@ def load_training_stats_from_config(config: ClimatesetHPConfig) -> Dict:
     else:
         print(f"WARNING: Input stats not found at {input_stats_path}")
         stats["input_stats"] = None
-    
+
     if output_stats_path.exists():
         stats["output_stats"] = np.load(output_stats_path, allow_pickle=True).item()
         print(f"Loaded output stats from {output_stats_path}")
@@ -879,18 +895,20 @@ if __name__ == "__main__":
         random_seed=42,
     )
 
-    print("=" * 70)
-    print("Creating ALL dataset 1")
-    print("=" * 70)
-    all_ds1 = ClimatesetDataHP(config_all1)
-    print(all_ds1[0]["input"].shape, all_ds1[0]["target"].shape)  # sanity check
-
     # 1. Train dataset – computes and saves stats from TRAIN indices only
     print("=" * 70)
     print("Creating TRAIN dataset")
     print("=" * 70)
     train_ds = ClimatesetDataHP(config)
     print(train_ds[0]["input"].shape, train_ds[0]["target"].shape)  # sanity check
+
+    # all_ds1 needs stats on disk – create it after train_ds has saved them
+    print("=" * 70)
+    print("Creating ALL dataset 1")
+    print("=" * 70)
+    all_ds1 = ClimatesetDataHP(config_all1)
+    all_ds1.set_normalization_stats(**train_ds.get_normalization_stats())
+    print(all_ds1[0]["input"].shape, all_ds1[0]["target"].shape)  # sanity check
     # 2. Val dataset – loads the stats saved above (shares raw cache)
     print("\n" + "=" * 70)
     print("Creating VAL dataset")
@@ -934,3 +952,91 @@ if __name__ == "__main__":
             f"range=[{all_inputs.min():.2f}, {all_inputs.max():.2f}]")
         print(f"  target mean={all_targets.mean():.4f}  std={all_targets.std():.4f}  "
             f"range=[{all_targets.min():.2f}, {all_targets.max():.2f}]")
+
+    # -----------------------------------------------------------------------
+    # DEBUG: per-variable stats before vs after HEALPix projection
+    # Loads raw netCDF files directly — no cache, no normalization.
+    # Use a short year range and single scenario for speed.
+    # -----------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("DEBUG: Stats pre- vs post-HEALPix (raw files, no cache)")
+    print("=" * 70)
+
+    debug_config = ClimatesetHPConfig(
+        nside=32,
+        climate_model="AWI-CM-1-1-MR",
+        ensemble="r1i1p1f1",
+        input_vars=["CH4", "SO2", "CO2", "BC"],
+        output_vars=["tas", "pr"],
+        scenarios=["ssp126", "ssp370", "ssp585"],
+        years="2015-2100",
+        historical_years=None,
+        seq_len=1,
+        normalized=False,
+        split="train",
+        cache=False,
+        val_fraction=0.1,
+        random_seed=42,
+    )
+
+    # Build a minimal dataset shell to reuse path-discovery helpers
+    # without triggering the full __init__ load pipeline.
+    _dbg = object.__new__(ClimatesetDataHP)
+    _dbg.config         = debug_config
+    _dbg.input_dir      = Path(debug_config.data_dir) / "inputs" / "input4mips"
+    _dbg.target_dir     = Path(debug_config.data_dir) / "outputs" / "CMIP6"
+    _dbg.years          = debug_config.get_years_list(debug_config.years)
+    _dbg.historical_years = []
+
+    def _print_pre_post_hp(instance, paths, coord_names, section_label):
+        print(f"\n  {section_label}")
+        lat_name, _ = coord_names
+        for var, var_files in paths.items():
+            if not var_files:
+                print(f"    {var}: no files found, skipping")
+                continue
+            datasets = [xr.open_dataset(f, decode_times=False) for f in sorted(var_files)]
+            ds_xr = xr.concat(datasets, dim="time").sortby("time")
+            arr_xr = ds_xr.to_array().squeeze("variable")
+
+            raw = arr_xr.to_numpy().astype(np.float32)
+            print(f"    {var}  PRE-HP       : shape={raw.shape}  "
+                  f"mean={raw.mean():.6e}  std={raw.std():.6e}  "
+                  f"min={raw.min():.6e}  max={raw.max():.6e}")
+
+            # Latitude-weighted stats (area weight = cos(lat)); skipped if coord absent
+            if lat_name in arr_xr.coords and raw.ndim >= 2:
+                lat_vals = arr_xr.coords[lat_name].values.astype(np.float64)
+                lat_w = np.cos(np.deg2rad(lat_vals))          # (nlat,)
+                raw_f64 = raw.astype(np.float64)
+                # reshape to (1, nlat, 1, ...) so it broadcasts over (time, lat, lon)
+                w = lat_w.reshape([1] + [len(lat_w)] + [1] * (raw_f64.ndim - 2))
+                w_sum   = np.sum(np.broadcast_to(w, raw_f64.shape))
+                w_mean  = float(np.sum(raw_f64 * w) / w_sum)
+                w_std   = float(np.sqrt(np.sum(w * (raw_f64 - w_mean) ** 2) / w_sum))
+                print(f"    {var}  PRE-HP(lat-w): "
+                      f"mean={w_mean:.6e}  std={w_std:.6e}  "
+                      f"(cos-lat weighted over {len(lat_vals)} lats)")
+
+            hp = instance._interpolate_to_hp(arr_xr, coord_names)
+            print(f"    {var}  POST-HP      : shape={hp.shape}  "
+                  f"mean={hp.mean():.6e}  std={hp.std():.6e}  "
+                  f"min={hp.min():.6e}  max={hp.max():.6e}")
+
+            for d in datasets:
+                d.close()
+
+    for scenario in debug_config.scenarios:
+        year_label = f"{debug_config.years}"
+        _print_pre_post_hp(
+            _dbg,
+            _dbg._get_input_paths(scenario),
+            coord_names=("lat", "lon"),
+            section_label=f"INPUT  ({scenario}, {year_label})",
+        )
+        _print_pre_post_hp(
+            _dbg,
+            _dbg._get_output_paths(scenario),
+            coord_names=("y", "x"),
+            section_label=f"OUTPUT ({scenario}, {year_label})",
+        )

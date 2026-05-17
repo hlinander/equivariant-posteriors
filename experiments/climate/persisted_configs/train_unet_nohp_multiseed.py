@@ -87,6 +87,7 @@ def create_config(ensemble_id, epoch=200, batch_size=12, climate_model_idx=0):
         seq_len=seq_len,
         seq_to_seq=seq_to_seq,
         normalized=normalized,
+        spherical_normalization=True,
         cache=True,
         val_fraction=val_fraction,
         random_seed=random_seed,
@@ -119,7 +120,7 @@ def create_config(ensemble_id, epoch=200, batch_size=12, climate_model_idx=0):
         ),
         batch_size=batch_size,
         ensemble_id=ensemble_id,
-        _version=10,
+        _version=12,
     )
 
     train_eval = TrainEval(

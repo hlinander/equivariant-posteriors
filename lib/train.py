@@ -508,16 +508,29 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
             init_model, device_ids=device_id_list, find_unused_parameters=True
         )
 
+    # Re-import classes fresh to avoid dill deserialization breaking
+    # isinstance checks inside PyTorch (e.g. scheduler checking Optimizer type)
+    import importlib
+
+    opt_cls = train_config.optimizer.optimizer
+    opt_module = importlib.import_module(opt_cls.__module__)
+    fresh_opt_cls = getattr(opt_module, opt_cls.__name__)
+
     # Optimizer factories marked with takes_model receive the model itself
     # (e.g. to group parameters by module type); plain torch optimizers get
     # the usual parameter iterable.
-    if getattr(train_config.optimizer.optimizer, "takes_model", False):
+    if getattr(fresh_opt_cls, "takes_model", False):
         opt_params = init_model
     else:
         opt_params = init_model.parameters()
-    opt = train_config.optimizer.optimizer(
-        opt_params, **train_config.optimizer.kwargs
-    )
+    opt = fresh_opt_cls(opt_params, **train_config.optimizer.kwargs)
+
+    scheduler = None
+    if train_config.scheduler_config is not None:
+        sched_cls = train_config.scheduler_config.scheduler
+        sched_module = importlib.import_module(sched_cls.__module__)
+        fresh_sched_cls = getattr(sched_module, sched_cls.__name__)
+        scheduler = fresh_sched_cls(opt, **train_config.scheduler_config.kwargs)
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
         metric() for metric in train_run.train_eval.validation_metrics
@@ -532,6 +545,7 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
         epoch=0,
         batch=0,
         train_dataloader=train_dataloader,
+        scheduler=scheduler,
         val_dataloader=val_dataloader,
         next_visualization=0.0,
         next_visualizer=0,
@@ -645,6 +659,9 @@ def do_training_unlocked(train_run: TrainRun, state: TrainEpochState, device_id)
     print("Run epochs...")
     while state.epoch < train_run.epochs:
         train(train_run, state, train_epoch_spec)
+
+        if state.scheduler is not None:
+            state.scheduler.step()
 
         state.epoch += 1
         if ddp.get_rank() == 0:

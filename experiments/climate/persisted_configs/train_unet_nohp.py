@@ -20,13 +20,14 @@ import lib.model_factory as model_factory
 from lib.distributed_trainer import distributed_train
 
 # ---- Dataset (grid-based, no HEALPix) ------------------------------------
-from experiments.climate.climateset_data_no_hp import ClimatesetConfig
-from experiments.climate.climateset_data_no_hp import ClimatesetData
+from experiments.climate.data.climateset_data_no_hp import ClimatesetConfig
+from experiments.climate.data.climateset_data_no_hp import ClimatesetData
+from experiments.climate.data.climateset_data_no_hp import get_fire_type
 
 # ---- Model (UNet adapter — no emulator/Lightning dependency) --------------
-from experiments.climate.models_climatesetrepo.unet_adapter import (
-    UNetAdapterConfig,
-    UNetAdapter,
+from experiments.climate.adapted_climateset_baselines.adapted_models.unet import (
+    UNetConfig,
+    UNet,
 )
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ CLIMATE_MODELS = [
 # Config factory
 # ---------------------------------------------------------------------------
 
-def create_config(ensemble_id, epoch=200, batch_size=4):
+def create_config(ensemble_id, epoch=400, batch_size=12):
     loss = torch.nn.MSELoss()
 
     model_name, ensemble = CLIMATE_MODELS[ensemble_id]
@@ -67,7 +68,7 @@ def create_config(ensemble_id, epoch=200, batch_size=4):
     # Shared train / val dataset parameters
     random_seed   = 7
     val_fraction  = 0.1
-    seq_len       = 12
+    seq_len       = 12 #12
     seq_to_seq    = True
     normalized    = True
 
@@ -82,15 +83,13 @@ def create_config(ensemble_id, epoch=200, batch_size=4):
         val_fraction=val_fraction,
         random_seed=random_seed,
         channels_last=False,   # UNetAdapter expects channels-first
+        fire_type=get_fire_type(model_name),
     )
 
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
-        model_config=UNetAdapterConfig(
+        model_config=UNetConfig(
             readout="pooling",
-            # 250 km ClimateSet grid: (lat=96, lon=144)
-            longitude=96,
-            latitude=144,
             seq_len=seq_len,
             seq_to_seq=seq_to_seq,
         ),
@@ -130,7 +129,7 @@ def create_config(ensemble_id, epoch=200, batch_size=4):
         save_nth_epoch=1,
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=10,
-        validate_nth_epoch=5,
+        validate_nth_epoch=10,
         visualize_terminal=False,
     )
     return train_run
@@ -149,9 +148,9 @@ if __name__ == "__main__":
     data_factory.register_dataset(ClimatesetConfig, ClimatesetData)
 
     mf = model_factory.get_factory()
-    mf.register(UNetAdapterConfig, UNetAdapter)
+    mf.register(UNetConfig, UNet)
 
     print("Starting distributed training...")
-    config = create_config(ensemble_id=variant_idx, epoch=200)
+    config = create_config(ensemble_id=variant_idx, epoch=100)
     request_train_run(config)
     distributed_train([config])

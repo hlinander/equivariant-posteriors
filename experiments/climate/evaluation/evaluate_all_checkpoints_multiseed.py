@@ -16,7 +16,7 @@ Usage:
     python run_slurm_sweep.py experiments/climate/evaluation/evaluate_all_checkpoints_multiseed.py
 
     # HEALPix baseline (SwinHP) — evaluator is auto-detected from CONFIG:
-    CONFIG=experiments/climate/persisted_configs/train_climate_baseline_multiseed.py \
+    CONFIG=experiments/climate/persisted_configs/train_climate_pear_multiseed.py \
     CLIMATE_MODEL_IDX=12 N_SEEDS=3 NUM_VARIANTS=1 \
     python run_slurm_sweep.py experiments/climate/evaluation/evaluate_all_checkpoints_multiseed.py
 """

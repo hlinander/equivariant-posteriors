@@ -32,7 +32,7 @@ from lib.dataspec import DataSpec
 from lib.distributed_trainer import distributed_train
 from lib.serialization import deserialize_model, DeserializeConfig
 
-from experiments.climate.climateset_data_hp import ClimatesetHPConfig, ClimatesetDataHP
+from experiments.climate.data.climateset_data_hp import ClimatesetHPConfig, ClimatesetDataHP, get_fire_type
 from experiments.climate.models.swin_hp_climateset_seq import (
     SwinHPClimatesetSeqConfig,
     SwinHPClimatesetSeq,
@@ -105,6 +105,7 @@ def create_config(ensemble_id, epoch=300, batch_size=4):
             seq_to_seq=True,
             normalized=True,
             cache=True,
+            fire_type=get_fire_type(model),
         ),
         val_data_config=ClimatesetHPConfig(
             nside=NSIDE,
@@ -118,6 +119,7 @@ def create_config(ensemble_id, epoch=300, batch_size=4):
             seq_to_seq=True,
             normalized=True,
             cache=True,
+            fire_type=get_fire_type(model),
         ),
         loss=loss_fn,
         optimizer=OptimizerConfig(

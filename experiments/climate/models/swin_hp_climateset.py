@@ -30,7 +30,7 @@ from experiments.weather.models.hp_windowing import (
     get_nest_win_idcs,
 )
 
-from experiments.climate.climateset_data_hp import ClimatesetDataSpec
+from experiments.climate.data.climateset_data_hp import ClimatesetDataSpec
 
 from lib.serialize_human import serialize_human
 
@@ -782,6 +782,6 @@ class SwinHPClimateset(nn.Module):
 
     def forward(self, batch):
         x_surface = self._forward(batch["input"])
-        x_surface = x_surface.permute(0, 2, 1) # B, N_pix, C_surface
+        x_surface = x_surface.permute(0, 2, 1) # B, C, N_pix
         return dict(logits_output=x_surface) #TODO: Change key name appropriately
 

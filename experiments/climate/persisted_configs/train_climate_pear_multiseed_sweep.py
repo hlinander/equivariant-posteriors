@@ -4,21 +4,21 @@ Sweep file for training SwinHP with multiple seeds on a single climate model.
 Usage:
     # 3 seeds on NorESM2-LM (climate model index 12):
     CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py \
-        experiments/climate/persisted_configs/train_climate_baseline_multiseed_sweep.py
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
 
     # Dry run to inspect the batch script:
     CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py --dry-run \
-        experiments/climate/persisted_configs/train_climate_baseline_multiseed_sweep.py
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
 
     # Run locally (sequential, no SLURM):
     CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py --run-local \
-        experiments/climate/persisted_configs/train_climate_baseline_multiseed_sweep.py
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
 """
 
 import os
 from lib.generic_ablation import get_config_grid
 
-from experiments.climate.persisted_configs.train_climate_baseline_multiseed import (
+from experiments.climate.persisted_configs.train_climate_pear_multiseed import (
     create_config,
     ClimatesetHPConfig,
     ClimatesetDataHP,

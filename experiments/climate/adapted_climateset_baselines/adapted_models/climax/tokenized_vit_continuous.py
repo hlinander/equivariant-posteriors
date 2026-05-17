@@ -229,7 +229,6 @@ class TokenizedViTContinuous(TokenizedBase):
             x = x.reshape(
                 b, t, len(self.out_vars), self.img_size[0], self.img_size[1]
             )  # B T C H W
-
         return x
 
     def forward(self, x, lead_times, region_info: Optional[Union[Dict, None]] = None):
