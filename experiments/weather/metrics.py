@@ -143,7 +143,9 @@ class RMSE:
 @dataclass
 class EquivarianceError:
     surface: Dict[float, List[float]]
-    upper: Dict[float, List[float]] 
+    upper: Dict[float, List[float]]
+    surface_std: Dict[float, List[float]]
+    upper_std: Dict[float, List[float]]
     n_measurements: int
 
 
@@ -170,8 +172,7 @@ def rotate_longitude_map_np(m, angle_deg, nested=True):
 
     angle_rad = np.deg2rad(angle_deg)
 
-    # backward sampling:
-    # output(theta, phi) = input(theta, phi - angle)
+    # backward sampling: output(theta, phi) = input(theta, phi - angle)
     phi_src = (phi - angle_rad) % (2 * np.pi)
 
     return hp.get_interp_val(m, theta, phi_src, nest=nested)
@@ -180,15 +181,6 @@ def rotate_longitude_map_np(m, angle_deg, nested=True):
 def rotate_tensor_last_dim_healpix(x, angle_deg, nested=True):
     """
     Rotate a tensor along its last dimension, assuming the last dimension is a HEALPix map.
-
-    Supports shapes like:
-      [npix]
-      [C, npix]
-      [C, L, npix]
-      [B, C, npix]
-      [B, C, L, npix]
-      etc.
-
     Returns a tensor on the same device/dtype as x.
     """
     if not torch.is_tensor(x):
@@ -199,10 +191,7 @@ def rotate_tensor_last_dim_healpix(x, angle_deg, nested=True):
     shape = x.shape
     npix = shape[-1]
 
-    # Flatten all leading dimensions so we rotate one map at a time
     x_flat = x.reshape(-1, npix)
-
-    # healpy works with numpy on CPU
     x_np = x_flat.detach().cpu().numpy()
 
     rotated_np = np.empty_like(x_np)
@@ -211,6 +200,63 @@ def rotate_tensor_last_dim_healpix(x, angle_deg, nested=True):
 
     rotated = torch.from_numpy(rotated_np).to(device=original_device, dtype=original_dtype)
     return rotated.reshape(shape)
+
+
+@dataclass
+class PrecomputedRotation:
+    """Interpolation neighbours and weights for a fixed HEALPix longitude rotation."""
+    pixels: torch.Tensor   # [4, npix] int64
+    weights: torch.Tensor  # [4, npix] float32
+
+
+def precompute_rotation(nside, angle_deg, nested=True, device="cpu"):
+    """
+    Precompute bilinear interpolation indices and weights for rotating a HEALPix
+    map by angle_deg around the polar axis.  Call once per (nside, angle) and
+    reuse across all batches/channels.
+    """
+    npix = hp.nside2npix(nside)
+    pix = np.arange(npix)
+    theta, phi = hp.pix2ang(nside, pix, nest=nested)
+    phi_src = (phi - np.deg2rad(angle_deg)) % (2 * np.pi)
+    pixels, weights = hp.get_interp_weights(nside, theta, phi_src, nest=nested)
+    # pixels: [4, npix] int64, weights: [4, npix] float64
+    pixels_t = torch.from_numpy(pixels.astype(np.int64)).to(device)
+    weights_t = torch.from_numpy(weights.astype(np.float32)).to(device)
+    return PrecomputedRotation(pixels=pixels_t, weights=weights_t)
+
+
+def apply_rotation_precomputed(x, rot: "PrecomputedRotation"):
+    """
+    Apply a precomputed HEALPix rotation to tensor x (last dim = npix).
+    Fully vectorised — no Python loop over channels.
+    x: [*, npix] tensor on any device/dtype.
+    rot.pixels / rot.weights must be on the same device as x.
+    """
+    shape = x.shape
+    npix = shape[-1]
+    x_flat = x.reshape(-1, npix)                          # [N, npix]
+    # x_flat[:, rot.pixels]: [N, 4, npix], weights: [4, npix]
+    rotated = (x_flat[:, rot.pixels] * rot.weights).sum(dim=1)  # [N, npix]
+    return rotated.to(dtype=x.dtype).reshape(shape)
+
+
+def shift_sample_precomputed(sample, rot: "PrecomputedRotation"):
+    """Like shift_sample but uses a PrecomputedRotation — no per-call healpy overhead."""
+    if "input_surface" in sample and "input_upper" in sample:
+        surface_key, upper_key = "input_surface", "input_upper"
+    elif "logits_surface" in sample and "logits_upper" in sample:
+        surface_key, upper_key = "logits_surface", "logits_upper"
+    else:
+        raise ValueError(
+            "Sample must contain either "
+            "'input_surface'/'input_upper' or "
+            "'logits_surface'/'logits_upper'"
+        )
+    rotated_sample = dict(sample)
+    rotated_sample[surface_key] = apply_rotation_precomputed(sample[surface_key], rot)
+    rotated_sample[upper_key] = apply_rotation_precomputed(sample[upper_key], rot)
+    return rotated_sample
 
 
 def shift_sample(sample, angle_deg, nested=True):
@@ -255,7 +301,7 @@ def shift_sample(sample, angle_deg, nested=True):
     return rotated_sample
 
 
-def equivariance_error(model, dataloader, device, sensitivity=4, nested=True, max_batches=None):
+def equivariance_error(model, dataloader, device, sensitivity=4, nested=True, max_batches=None, relative=False, optimised=False):
     """
     Measure approximate rotational equivariance of a model under longitude rotations.
 
@@ -266,83 +312,108 @@ def equivariance_error(model, dataloader, device, sensitivity=4, nested=True, ma
       4. unrotate prediction: R_-a y_r
       5. compare y with R_-a y_r
 
-    Returned structure:
-      - surface[angle] -> tensor/array of shape [C]
-      - upper[angle]   -> tensor/array of shape [C, L]
+    If relative=True, reports ||f(Rα x) − Rα f(x)||_rms / ||f(x)||_rms per channel.
+    This is scale-invariant and the correct metric for untrained / randomly-initialised
+    models where the absolute output magnitude is meaningless.
 
-    Note:
-      This follows the reduction style of your rmse_hp reference:
-          sqrt((a-b)^2) -> mean over batch and pixels
-      so numerically this is mean absolute error per channel, not strict RMSE.
+    Interpolation indices are precomputed once per angle before the batch loop,
+    eliminating the per-batch/per-channel healpy overhead.
+
+    Returned structure:
+      - surface[angle] -> tensor of shape [C]
+      - upper[angle]   -> tensor of shape [C, L]
     """
+    _EPS = 1e-8
     model = model.to(device)
     model.eval()
 
     angles = [i * (360.0 / sensitivity) for i in range(1, sensitivity)]
 
-    surface_sums = {angle: None for angle in angles}
-    upper_sums = {angle: None for angle in angles}
-    counts = {angle: 0 for angle in angles}
+    surface_batches = {angle: [] for angle in angles}
+    upper_batches = {angle: [] for angle in angles}
+
+    # Precomputed rotations; populated lazily on first batch so we know nside.
+    rot_fwd: dict = {}   # angle -> PrecomputedRotation
+    rot_bwd: dict = {}   # angle -> PrecomputedRotation (inverse)
 
     for batch_idx, batch in enumerate(tqdm.tqdm(dataloader)):
         if max_batches is not None and batch_idx >= max_batches:
             break
 
-        batch = {
-            k: v.to(device) if hasattr(v, "to") else v
-            for k, v in batch.items()
-        }
+        batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
+
+        # Build rotation lookup once from the first batch's pixel count.
+        if not rot_fwd:
+            npix = batch["input_surface"].shape[-1]
+            nside = hp.npix2nside(npix)
+            for angle in angles:
+                rot_fwd[angle] = precompute_rotation(nside, angle, nested=nested, device=device)
+                rot_bwd[angle] = precompute_rotation(nside, -angle, nested=nested, device=device)
 
         with torch.no_grad():
             output = model(batch)
 
-        ref_surface = output["logits_surface"]   # expected shape [B, C, Npix]
-        ref_upper = output["logits_upper"]       # expected shape [B, C, L, Npix]
+        ref_surface = output["logits_surface"]   # [B, C, Npix]
+        ref_upper = output["logits_upper"]       # [B, C, L, Npix]
 
         for angle_deg in angles:
-            rotated_input = shift_sample(batch, angle_deg, nested=nested)
+            rotated_input = shift_sample_precomputed(batch, rot_fwd[angle_deg])
 
             with torch.no_grad():
                 rotated_output = model(rotated_input)
 
-            rotated_output_unrotated = shift_sample(rotated_output, -angle_deg, nested=nested)
 
-            pred_surface = rotated_output_unrotated["logits_surface"]
-            pred_upper = rotated_output_unrotated["logits_upper"]
-
-
-            err_surface = torch.sqrt((ref_surface - pred_surface) ** 2)   # [B, C, Npix]
-            err_upper = torch.sqrt((ref_upper - pred_upper) ** 2)         # [B, C, L, Npix]
-
-            # mean over batch and pixels, keep channels
-            batch_surface_mean = err_surface.mean(dim=(0, 2))             # [C]
-
-            # mean over batch and pixels, keep channels and levels
-            batch_upper_mean = err_upper.mean(dim=(0, 3))                 # [C, L]
-
-            if surface_sums[angle_deg] is None:
-                surface_sums[angle_deg] = batch_surface_mean.detach().clone()
-                upper_sums[angle_deg] = batch_upper_mean.detach().clone()
+            if optimised:
+                unrotated = shift_sample_precomputed(rotated_output, rot_bwd[angle_deg])
+                ref_s  = ref_surface
+                ref_u  = ref_upper
+                pred_s = unrotated["logits_surface"]
+                pred_u = unrotated["logits_upper"]
             else:
-                surface_sums[angle_deg] += batch_surface_mean.detach()
-                upper_sums[angle_deg] += batch_upper_mean.detach()
+                rotated_ref = shift_sample_precomputed(
+                    {"logits_surface": ref_surface, "logits_upper": ref_upper},
+                    rot_fwd[angle_deg],
+                )
+                ref_s  = rotated_ref["logits_surface"]
+                ref_u  = rotated_ref["logits_upper"]
+                pred_s = rotated_output["logits_surface"]
+                pred_u = rotated_output["logits_upper"]
 
-            counts[angle_deg] += 1
+            if relative:
+                # Relative equivariance error, bounded in [0, 1]:
+                #   REE = ||f(Rx) - Rf(x)||_rms / sqrt(||f(Rx)||_rms² + ||f(x)||_rms²)
+                # Denominator is the RMS of the two outputs combined, so REE ∈ [0, 1].
+                # 0 = perfectly equivariant; ~1 = completely uncorrelated outputs.
+                # Normalising by both norms (not just ||f(x)||) avoids values > 1 that
+                # arise when the two outputs are uncorrelated random vectors.
+                diff_s_rms = (ref_s - pred_s).pow(2).mean(dim=-1).sqrt()   # [B, C]
+                denom_s = (ref_s.pow(2).mean(dim=-1) + pred_s.pow(2).mean(dim=-1)).sqrt()  # [B, C]
+                err_surface = diff_s_rms / (denom_s + _EPS)                            # [B, C]
 
-    mean_surface = {
-        angle: (surface_sums[angle] / counts[angle]).detach().cpu()
-        for angle in angles
-    }
-    mean_upper = {
-        angle: (upper_sums[angle] / counts[angle]).detach().cpu()
-        for angle in angles
-    }
+                diff_u_rms = (ref_u - pred_u).pow(2).mean(dim=-1).sqrt()       # [B, C, L]
+                denom_u = (ref_u.pow(2).mean(dim=-1) + pred_u.pow(2).mean(dim=-1)).sqrt()      # [B, C, L]
+                err_upper = diff_u_rms / (denom_u + _EPS)                              # [B, C, L]
 
+                surface_batches[angle_deg].append(err_surface.mean(dim=0).detach().cpu())   # [C]
+                upper_batches[angle_deg].append(err_upper.mean(dim=0).detach().cpu())       # [C, L]
+            else:
+                err_surface = torch.sqrt((ref_s - pred_s) ** 2)   # [B, C, Npix]
+                err_upper = torch.sqrt((ref_u - pred_u) ** 2)     # [B, C, L, Npix]
+
+                surface_batches[angle_deg].append(err_surface.mean(dim=(0, 2)).detach().cpu())  # [C]
+                upper_batches[angle_deg].append(err_upper.mean(dim=(0, 3)).detach().cpu())      # [C, L]
+
+    mean_surface = {angle: torch.stack(surface_batches[angle]).mean(dim=0) for angle in angles}
+    std_surface  = {angle: torch.stack(surface_batches[angle]).std(dim=0)  for angle in angles}
+    mean_upper   = {angle: torch.stack(upper_batches[angle]).mean(dim=0)   for angle in angles}
+    std_upper    = {angle: torch.stack(upper_batches[angle]).std(dim=0)    for angle in angles}
 
     return EquivarianceError(
-        surface=mean_surface,   # dict: angle -> [C]
-        upper=mean_upper,       # dict: angle -> [C, L]
-        n_measurements=counts,
+        surface=mean_surface,
+        upper=mean_upper,
+        surface_std=std_surface,
+        upper_std=std_upper,
+        n_measurements={angle: len(surface_batches[angle]) for angle in angles},
     )
             
     
@@ -757,11 +828,8 @@ def rmse_hp(model, dataloader, device_id):
         for _ in range(dataloader.dataset.config.lead_time_days):
             with torch.no_grad():
                 output = model(batch)
-            print(output["logits_surface"], output["logits_upper"])
             batch["input_surface"] = output["logits_surface"]
             batch["input_upper"] = output["logits_upper"]
-        
-        print(batch["input_surface"], batch["input_upper"])
         # with torch.no_grad():
         #     output = model(batch)
         output = {k: v.detach() for k, v in output.items()}
