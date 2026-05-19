@@ -68,6 +68,10 @@ class DataHPConfig:
             del serialize_dict["start_year"]
             del serialize_dict["end_year"]
         del serialize_dict["lead_time_days"]
+        # delta_t was added after existing checkpoints were saved with delta_t=24;
+        # omit it when it equals the original default so old hashes stay valid.
+        if serialize_dict.get("delta_t") == 24:
+            del serialize_dict["delta_t"]
         return serialize_dict
 
     def statistics_name(self):
@@ -782,8 +786,100 @@ class DataHP(torch.utils.data.Dataset):
         return item_dict
 
     def __len__(self):
-        return (days_between_years(self.config.start_year, self.config.end_year) - 1) * 24 // self.config.delta_t 
-    
+        return (days_between_years(self.config.start_year, self.config.end_year) - 1) * 24 // self.config.delta_t
+
+
+@dataclass
+class DataHP24hConfig:
+    """Equivariant dataset sampled every delta_t hours, but with a fixed 24h forecast target."""
+    base: DataHPConfig = None
+
+    def __post_init__(self):
+        if self.base is None:
+            self.base = DataHPConfig()
+
+    def serialize_human(self):
+        return serialize_human(self.__dict__)
+
+    def validation(self):
+        ret = copy.deepcopy(self)
+        ret.base = self.base.validation()
+        return ret
+
+    def with_lead_time_days(self, days: int):
+        ret = copy.deepcopy(self)
+        ret.base = ret.base.with_lead_time_days(days)
+        return ret
+
+
+class DataHP24h(torch.utils.data.Dataset):
+    """
+    Wraps DataHP (equivariant cache) so that samples are spaced every base.delta_t hours
+    but the target is always 24 h after the input, regardless of delta_t.
+    """
+
+    def __init__(self, config: DataHP24hConfig):
+        self.config = config
+        self._ds = DataHP(config.base)
+
+    @staticmethod
+    def data_spec(config: DataHP24hConfig):
+        return DataHP.data_spec(config.base)
+
+    @staticmethod
+    def collate_fn(batch):
+        return DataHP.collate_fn(batch)
+
+    def __len__(self):
+        # Ensure last input + 24h target stays within the dataset window.
+        # DataHP.__len__ already gives (days-1)*24//delta_t which guarantees this
+        # when base.lead_time_days==1; we replicate that guarantee explicitly.
+        base_cfg = self.config.base
+        total_hours = days_between_years(base_cfg.start_year, base_cfg.end_year) * 24
+        return (total_hours - 24) // base_cfg.delta_t
+
+    def __getitem__(self, idx):
+        base_cfg = self.config.base
+
+        # Raw 2h-slot index of the input timestep
+        input_2h_slot = idx * base_cfg.delta_t // 2
+
+        # Target is exactly 24h (12 two-hour slots) after the input
+        target_2h_slot = input_2h_slot + 12
+
+        year_input = base_cfg.start_year + input_2h_slot // (12 * 365)
+        ds_idx_input = input_2h_slot % (12 * 365)
+
+        year_target = base_cfg.start_year + target_2h_slot // (12 * 365)
+        ds_idx_target = target_2h_slot % (12 * 365)
+
+        names = dict(surface="surface.npy", upper="upper.npy")
+
+        sample_dict = self._ds.load_sample(year_input, ds_idx_input, names)
+        target_dict = self._ds.load_sample(year_target, ds_idx_target, names)
+
+        if base_cfg.normalized:
+            stats = deserialize_dataset_statistics(base_cfg.nside).item()
+            for d in [sample_dict, target_dict]:
+                if np.abs(d["surface"]).max() > 50:
+                    surf, upper = normalize_sample(stats, d["surface"], d["upper"])
+                    d["surface"] = surf.astype(np.float32)
+                    d["upper"] = upper.astype(np.float32)
+
+        input_dt = datetime(base_cfg.start_year, 1, 1) + timedelta(hours=input_2h_slot * 2)
+
+        return dict(
+            sample_id=idx,
+            input_surface=sample_dict["surface"],
+            input_upper=sample_dict["upper"],
+            target_surface=target_dict["surface"],
+            target_upper=target_dict["upper"],
+            time=input_dt,
+            masks=sample_dict["masks"],
+            prediction_timedelta_hours=24,
+        )
+
+
 @dataclass
 class DataHPSubsetConfig:
     data_config: DataHPConfig
@@ -1106,12 +1202,28 @@ if __name__ == "__main__":
     #             print(f"NaN indices in input_upper: {nan_indices}")
     #             print(f"Number of NaN values in input_upper: {input_upper[nan_indices[:, 0], nan_indices[:, 1], nan_indices[:, 2]].size}")
 
-    print("Testing subset")
-    cnf = DataHPConfig(nside=64, start_year=2012, end_year=2012, delta_t=2)
-    climate_ds = Climatology(cnf, use_wb2_clim=True)
+    print("=== Testing DataHP24h ===")
 
-    for i in range(len(climate_ds)):
-        sample = climate_ds[i]
-        print(sample["climate_target_surface"].shape, sample["climate_target_upper"].shape)
+    for delta_t in [2, 6, 12, 24]:
+        base_cfg = DataHPConfig(nside=64, start_year=2012, end_year=2012, delta_t=delta_t)
+        cfg = DataHP24hConfig(base=base_cfg).validation()
+        ds = DataHP24h(cfg)
+        print(f"\ndelta_t={delta_t}h  len={len(ds)}")
+
+        # Check first, middle, and last sample
+        for idx in [0, len(ds) // 2, len(ds) - 1]:
+            s = ds[idx]
+            assert s["prediction_timedelta_hours"] == 24, "lead time must be 24h"
+            assert s["input_surface"].shape == s["target_surface"].shape
+            assert s["input_upper"].shape == s["target_upper"].shape
+            gap = s["time"]  # input datetime
+            # Reconstruct expected target datetime from slot arithmetic
+            input_2h = idx * delta_t // 2
+            target_2h = input_2h + 12
+            expected_target_dt = datetime(2019, 1, 1) + timedelta(hours=target_2h * 2)
+            expected_input_dt = datetime(2019, 1, 1) + timedelta(hours=input_2h * 2)
+            assert s["time"] == expected_input_dt, f"input time mismatch: {s['time']} != {expected_input_dt}"
+            print(f"  idx={idx:5d}  input={expected_input_dt}  target={expected_target_dt}  "
+                  f"surf={s['input_surface'].shape}  gap=24h OK")
 
     
