@@ -69,6 +69,18 @@ def create_configs():
     )
 
 
+def run(config):
+    ddp_setup()
+
+    def oom_observer(device, alloc, device_alloc, device_free):
+        print("saving allocated state during OOM")
+        torch.cuda.memory._dump_snapshot("oom_snapshot_new.pickle")
+
+    torch._C._cuda_attach_out_of_memory_observer(oom_observer)
+
+    distributed_train([config])
+
+
 if __name__ == "__main__":
     device_id = ddp_setup()
 
