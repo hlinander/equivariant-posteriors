@@ -1,7 +1,6 @@
 import dataclasses
 import importlib
 import json
-import os
 import torch
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,7 +23,6 @@ import shutil
 import lib.render_duck as duck
 from lib.log import log
 from lib.compute_env import env
-from lib.files import copy_tracked_and_untracked_to_destination
 
 # Re-export for backward compatibility
 from lib.serialize_human import serialize_human
@@ -122,10 +120,6 @@ def serialize(config: SerializeConfig):
     shutil.move(
         checkpoint_path / "train_run.json_tmp", checkpoint_path / "train_run.json"
     )
-    code_path = checkpoint_path / "code"
-    if not code_path.exists() and "NOCOPY" not in os.environ:
-        copy_tracked_and_untracked_to_destination(code_path)
-
     write_status_file(config)
     duck.insert_checkpoint(
         train_epoch_state.model_id,

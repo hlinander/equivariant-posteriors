@@ -29,8 +29,8 @@ from lib.serialization import serialize
 from lib.train_visualization import visualize_progress_batches
 
 from lib.export import export_all
-from lib.paths import get_lock_path
-from lib.files import prepare_results
+from lib.paths import get_lock_path, get_or_create_checkpoint_path
+from lib.files import prepare_results, archive_code_for_run
 import lib.ddp as ddp
 
 
@@ -551,6 +551,12 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
             device_id=config.device_id,
         )
         print(f"Starting fresh training for {train_run.epochs} epochs")
+
+    if ddp.get_rank() == 0:
+        archive_code_for_run(
+            get_or_create_checkpoint_path(train_run.train_config),
+            train_run.run_id,
+        )
 
     return state
 

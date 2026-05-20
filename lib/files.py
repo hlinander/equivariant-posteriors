@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import shutil
+import tarfile
 from filelock import FileLock, Timeout
 import lib.git as git
 import lib.stable_hash as stable_hash
@@ -29,36 +30,44 @@ def write_config_human(config, path):
         f.write(json.dumps(serialize_human(config), indent=2))
 
 
-def copy_tracked_and_untracked_to_destination(dest_path):
+def tar_tracked_and_untracked(dest_tar_path):
+    # Write tracked + untracked files (under 1MB, excluding rust/.venv/__pycache__)
+    # into a single tar.gz archive instead of an unpacked code/ tree, to avoid
+    # blowing up inode counts on the shared filesystem.
     if not git.is_git_repo():
         print("Skipping, no git repo")
         return
     repo = git.git_repo()
 
-    dest_path = Path(dest_path)
-    dest_path.mkdir(parents=True, exist_ok=True)  # Ensure destination exists
+    dest_tar_path = Path(dest_tar_path)
+    dest_tar_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # All tracked files (working tree versions) + untracked files
     all_files = {item.path for item in repo.head.commit.tree.traverse()}
     all_files.update(repo.untracked_files)
 
-    # Directories to skip
-    skip_dirs = {"rust", ".venv", "__pycache__"}
+    skip_dirs = {"rust", ".venv", "__pycache__", "slurm"}
 
-    # Iterate over all files, tracked and untracked
-    for file_path in all_files:
-        # Skip files in excluded directories
-        if any(part in skip_dirs for part in Path(file_path).parts):
-            continue
-        if Path(file_path).is_file():  # Check if it's a file
-            if Path(file_path).stat().st_size > 1000000:
+    tmp = Path(str(dest_tar_path) + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+
+    with tarfile.open(tmp, "w:gz") as tar:
+        for file_path in sorted(all_files):
+            if any(part in skip_dirs for part in Path(file_path).parts):
+                continue
+            src = Path(file_path)
+            # Never follow symlinks: a tracked/untracked symlink could point
+            # outside the working tree. Skip them entirely.
+            if src.is_symlink():
+                continue
+            if not src.is_file():
+                continue
+            if src.stat().st_size > 1000000:
                 print(f"Skipping large file {file_path}")
                 continue
-            dest_file_path = dest_path / file_path
-            dest_file_path.parent.mkdir(
-                parents=True, exist_ok=True
-            )  # Ensure parent directory exists
-            shutil.copy2(file_path, dest_file_path)  # Copy the file
+            tar.add(src, arcname=file_path, recursive=False)
+
+    tmp.rename(dest_tar_path)
 
 
 def copy_tracked_tree_to_destination(dest_path):
@@ -71,7 +80,7 @@ def copy_tracked_tree_to_destination(dest_path):
     dest_path.mkdir(parents=True, exist_ok=True)
 
     # Directories to skip
-    skip_dirs = {"rust", ".venv", "__pycache__"}
+    skip_dirs = {"rust", ".venv", "__pycache__", "slurm"}
 
     # Iterate over all tracked files
     for file in git.git_repo().head.commit.tree.traverse():
@@ -102,11 +111,22 @@ def prepare_results(name: str, config: object) -> Path:
     try:
         with FileLock(get_results_lock_path(name), 5):
             result_path = create_result_path(name, config)
-            if "NOCOPY" not in os.environ:
-                copy_tracked_and_untracked_to_destination(result_path / "code")
             write_config_human(config, result_path / "config.json")
             return result_path
     except Timeout:
         print(
             "[Prepare results] This config is already locked, assuming results path is created elsewhere..."
         )
+
+
+def archive_code_for_run(checkpoint_path, run_id):
+    # Capture a code snapshot once per run, into the checkpoint dir.
+    # Filename includes run_id so each fresh start / resume gets its own
+    # archive (a resume creates a new TrainRun with a new run_id), while
+    # repeated calls within the same run dedup to the same path.
+    if "NOCOPY" in os.environ:
+        return
+    target = Path(checkpoint_path) / f"code_run_{run_id}.tar.gz"
+    if target.exists():
+        return
+    tar_tracked_and_untracked(target)
