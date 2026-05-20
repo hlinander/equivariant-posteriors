@@ -17,6 +17,14 @@ from lib.log import log
 WEATHER_BASE = Path(os.getenv("WEATHER_DATASET", env().paths.datasets / "era5_lite"))
 ERA5_GRIB_DATA_PATH = WEATHER_BASE / "era5_grib_monthly"
 
+# cfgrib writes a `.idx` cache next to each GRIB by default, which fails when
+# the data dir is read-only. Redirect to a per-user writable location.
+CFGRIB_INDEX_DIR = Path(
+    os.getenv("CFGRIB_INDEX_DIR", str(Path.home() / ".cache" / "cfgrib_idx"))
+)
+CFGRIB_INDEX_DIR.mkdir(parents=True, exist_ok=True)
+CFGRIB_INDEXPATH = str(CFGRIB_INDEX_DIR / "{short_hash}.idx")
+
 
 def get_netcat_tmp_dir():
     if "SNIC_TMP" in os.environ:
@@ -101,7 +109,11 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
             sample_config.surface_grib_path(), **sample_config.__dict__
         )
     log("CDS", "Loading surface grib...")
-    xr_grib = xr.load_dataset(sample_config.surface_grib_path(), engine="cfgrib")
+    xr_grib = xr.load_dataset(
+        sample_config.surface_grib_path(),
+        engine="cfgrib",
+        backend_kwargs={"indexpath": CFGRIB_INDEXPATH},
+    )
     surface_nc_file = get_tmp_netcat_file()
     log("CDS", "To netcdf...")
     xr_grib.to_netcdf(surface_nc_file)
@@ -109,7 +121,11 @@ def get_era5_sample(sample_config: ERA5SampleConfig):
     if not sample_config.upper_grib_path().is_file():
         get_upper_variables(sample_config.upper_grib_path(), **sample_config.__dict__)
     log("CDS", "Loading upper grib...")
-    xr_grib = xr.load_dataset(sample_config.upper_grib_path(), engine="cfgrib")
+    xr_grib = xr.load_dataset(
+        sample_config.upper_grib_path(),
+        engine="cfgrib",
+        backend_kwargs={"indexpath": CFGRIB_INDEXPATH},
+    )
     upper_nc_file = get_tmp_netcat_file()
     log("CDS", "To netcdf...")
     xr_grib.to_netcdf(upper_nc_file)
