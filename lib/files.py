@@ -8,6 +8,7 @@ import lib.stable_hash as stable_hash
 from lib.compute_env import env
 from lib.serialize_human import serialize_human
 import os
+import threading
 
 
 def create_result_path(name: str, config: object):
@@ -47,7 +48,7 @@ def tar_tracked_and_untracked(dest_tar_path):
 
     skip_dirs = {"rust", ".venv", "__pycache__", "slurm"}
 
-    tmp = Path(str(dest_tar_path) + ".tmp")
+    tmp = Path(str(dest_tar_path) + f".tmp.{os.getpid()}.{threading.get_ident()}")
     if tmp.exists():
         tmp.unlink()
 

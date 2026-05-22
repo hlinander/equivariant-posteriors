@@ -285,41 +285,44 @@ def test_setup_duck_from_checkpoint(checkpoint_env):
 
 
 def test_code_saved_in_checkpoint(checkpoint_env_with_code):
-    """Serialization saves a code snapshot into the checkpoint directory."""
+    """archive_code_for_run saves a tar.gz code snapshot into the checkpoint directory."""
+    from lib.files import archive_code_for_run
+
     train_run = make_train_run(d_hidden=50)
     _train_and_serialize(train_run)
     checkpoint_hash = stable_hash_str(train_run.train_config)
 
     from lib.compute_env import env
     checkpoint_path = env().paths.checkpoints / f"checkpoint_{checkpoint_hash}"
-    code_path = checkpoint_path / "code"
 
-    assert code_path.is_dir(), "code/ directory should exist in checkpoint"
-    python_files = list(code_path.rglob("*.py"))
-    assert len(python_files) > 0, "code/ should contain Python files"
-    # Verify key files are present
-    assert (code_path / "lib" / "serialization.py").is_file()
-    assert (code_path / "lib" / "train_dataclasses.py").is_file()
+    archive_code_for_run(checkpoint_path, train_run.run_id)
+
+    import tarfile
+    tar_path = checkpoint_path / f"code_run_{train_run.run_id}.tar.gz"
+    assert tar_path.is_file(), "code tar.gz should exist in checkpoint"
+    with tarfile.open(tar_path, "r:gz") as tar:
+        names = tar.getnames()
+    assert any(n.endswith(".py") for n in names), "archive should contain Python files"
+    assert "lib/serialization.py" in names
+    assert "lib/train_dataclasses.py" in names
 
 
 def test_code_saved_only_once(checkpoint_env_with_code):
-    """Code snapshot is only saved on first serialization, not overwritten."""
+    """archive_code_for_run skips if the archive already exists."""
+    from lib.files import archive_code_for_run
+
     train_run = make_train_run(d_hidden=50)
-    state = _train_and_serialize(train_run)
+    _train_and_serialize(train_run)
     checkpoint_hash = stable_hash_str(train_run.train_config)
 
     from lib.compute_env import env
     checkpoint_path = env().paths.checkpoints / f"checkpoint_{checkpoint_hash}"
-    code_path = checkpoint_path / "code"
 
-    # Record modification time of a file in the code snapshot
-    marker = code_path / "lib" / "serialization.py"
-    mtime_first = marker.stat().st_mtime
+    archive_code_for_run(checkpoint_path, train_run.run_id)
+    tar_path = checkpoint_path / f"code_run_{train_run.run_id}.tar.gz"
+    mtime_first = tar_path.stat().st_mtime
 
-    # Serialize again (epoch 2)
-    state.epoch = 2
-    serialize(SerializeConfig(train_run=train_run, train_epoch_state=state))
-
-    # Code directory should not have been rewritten
-    mtime_second = marker.stat().st_mtime
-    assert mtime_first == mtime_second, "code/ should not be overwritten on second serialize"
+    # Call again — should be a no-op
+    archive_code_for_run(checkpoint_path, train_run.run_id)
+    mtime_second = tar_path.stat().st_mtime
+    assert mtime_first == mtime_second, "archive should not be overwritten on second call"
