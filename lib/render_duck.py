@@ -288,6 +288,44 @@ def insert_train_epoch_metric(model_id, run_id, epoch, step, name, dataset, data
     execute(sql, (model_id, run_id, epoch, step, name, dataset, dataset_split, mean, min_val, max_val, count))
 
 
+def ingest_checkpoint_parquets(checkpoint_path, up_to_step):
+    """Load previously exported parquet files from checkpoint analytics dir into in-memory DuckDB.
+
+    Only loads rows with step <= up_to_step to avoid duplicates when the
+    checkpoint is older than the latest exported metrics.
+    """
+    analytics_dir = Path(checkpoint_path) / "analytics"
+    if not analytics_dir.exists():
+        return
+
+    tables_to_ingest = [TRAIN_STEP_METRIC, TRAIN_EPOCH_METRIC]
+    for table_name in tables_to_ingest:
+        table_dir = analytics_dir / table_name
+        if not table_dir.exists():
+            continue
+        parquet_files = sorted(table_dir.glob("*.parquet"))
+        if not parquet_files:
+            continue
+        glob_pattern = str(table_dir / "*.parquet")
+        try:
+            execute(
+                f"INSERT INTO {table_name} SELECT * FROM read_parquet('{glob_pattern}') WHERE step <= ?",
+                (up_to_step,),
+            )
+            print(f"[ingest] Loaded parquets into {table_name} (step <= {up_to_step})")
+        except Exception as e:
+            print(f"[ingest] Failed to load parquets for {table_name}: {e}")
+
+
+def select_train_epoch_metric(model_id, name, dataset_split):
+    sql_select = f"""
+        SELECT epoch, mean FROM {TRAIN_EPOCH_METRIC}
+        WHERE model_id=? AND name=? AND dataset_split=?
+        ORDER BY epoch
+        """
+    return execute_and_fetch(sql_select, (model_id, name, dataset_split))
+
+
 def select_train_step_metric_float(model_id, name):
     sql_select = f"""
         SELECT * FROM (
