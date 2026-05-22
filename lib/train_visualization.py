@@ -46,10 +46,11 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         plt.title(common_metrics[idx])
         plt.xlabel("batches")
         if len(batches) > 1:
-            x = [x for x, _ in batches]
-            y = [y for x, y in batches]
-            plt.yscale("log")
-            plt.plot(x, y, label=f"Train {common_metrics[idx]}")
+            x = [bx for bx, by in batches if by > 0]
+            y = [by for bx, by in batches if by > 0]
+            if len(x) > 1:
+                plt.yscale("log")
+                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
@@ -127,7 +128,6 @@ def visualize_progress(state, train_run, last_postgres_result, device):
     # plt.clt()
     plt.cld()
     plt.scatter()
-    epochs = list(range(state.epoch))
     # Two columns
     plt.subplots(1, 3)
 
@@ -138,37 +138,29 @@ def visualize_progress(state, train_run, last_postgres_result, device):
     common_metrics = sorted(common_metrics)
     n_metrics = min(4, len(common_metrics))
 
-    train_indices = [train_metric_names.index(name) for name in common_metrics]
-    val_indices = [val_metric_names.index(name) for name in common_metrics]
-
     # First column (many metrics in rows)
     plt.subplot(1, 1).subplots(n_metrics, 1)
 
     for idx in range(n_metrics):
-        train_metric = state.train_metrics[train_indices[idx]]
-        val_metric = state.validation_metrics[val_indices[idx]]
+        name = common_metrics[idx]
+        train_rows = duck.select_train_epoch_metric(state.model_id, name, "train")
+        val_rows = duck.select_train_epoch_metric(state.model_id, name, "val")
 
-        train_means = [(epoch, train_metric.mean(epoch)) for epoch in epochs]
-        train_means = [
-            (epoch, mean) for (epoch, mean) in train_means if mean is not None
-        ]
-        val_means = [(epoch, val_metric.mean(epoch)) for epoch in epochs]
-        val_means = [(epoch, mean) for (epoch, mean) in val_means if mean is not None]
         plt.subplot(1, 1).subplot(idx + 1, 1)
-        plt.title(common_metrics[idx])
+        plt.title(name)
         plt.xlabel("epoch")
-        if len(train_means) > 0:
-            x = [epoch for (epoch, mean) in train_means if not math.isnan(mean)]
-            y = [mean for (epoch, mean) in train_means if not math.isnan(mean)]
+        if len(train_rows) > 0:
+            x = [r[0] for r in train_rows if not math.isnan(r[1]) and r[1] > 0]
+            y = [r[1] for r in train_rows if not math.isnan(r[1]) and r[1] > 0]
             if len(x) > 0:
                 plt.yscale("log")
-                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
-        if len(val_means) > 0:
-            x = [epoch for (epoch, mean) in val_means if not math.isnan(mean)]
-            y = [mean for (epoch, mean) in val_means if not math.isnan(mean)]
+                plt.plot(x, y, label=f"Train {name}")
+        if len(val_rows) > 0:
+            x = [r[0] for r in val_rows if not math.isnan(r[1]) and r[1] > 0]
+            y = [r[1] for r in val_rows if not math.isnan(r[1]) and r[1] > 0]
             if len(x) > 0:
                 plt.yscale("log")
-                plt.plot(x, y, label=f"Val {common_metrics[idx]}")
+                plt.plot(x, y, label=f"Val {name}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)
