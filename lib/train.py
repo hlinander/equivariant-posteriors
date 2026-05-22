@@ -26,7 +26,7 @@ from lib.serialization import DeserializeConfig
 from lib.serialization import deserialize
 from lib.serialization import serialize
 
-from lib.train_visualization import visualize_progress_batches
+from lib.train_visualization import visualize_progress_batches, visualize_progress
 
 from lib.export import export_all
 from lib.paths import get_lock_path, get_or_create_checkpoint_path
@@ -238,7 +238,7 @@ def train(
         dataloader.sampler.set_epoch(train_epoch_state.epoch)
 
     diagnostics_interval = train_run.train_eval.diagnostics_interval
-    visualizers = [visualize_progress_batches]
+    visualizers = [visualize_progress_batches, visualize_progress]
     for i, batch in enumerate(dataloader):
         batch_time = train_epoch_state.timing_metric.stop("batch")
         if batch_time is not None:
@@ -262,7 +262,7 @@ def train(
         run_diagnostics = (i % diagnostics_interval == 0)
         train_epoch_state._last_step_had_diagnostics = run_diagnostics
 
-        batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=True) if hasattr(v, "to") else v for k, v in batch.items()}
         output = model(batch)
 
         loss_val = loss(output, batch)
@@ -270,6 +270,7 @@ def train(
 
         t_db = time.time()
         if ddp.get_rank() == 0:
+            t_train_step = time.time()
             duck.insert_train_step(
                 train_epoch_state.model_id,
                 train_run.run_id,
@@ -279,6 +280,15 @@ def train(
                 .__name__,
                 batch["sample_id"].long().tolist(),
             )
+            t_train_step = time.time() - t_train_step
+            if run_diagnostics:
+                duck.insert_train_step_metric(
+                    train_epoch_state.model_id,
+                    train_run.run_id,
+                    "t_insert_train_step",
+                    train_epoch_state.batch,
+                    t_train_step,
+                )
 
         # Gradient clipping always runs (when configured), independent of diagnostics
         if train_run.train_config.gradient_clipping is not None:
@@ -420,6 +430,9 @@ def train(
                         train_epoch_spec.device_id,
                     )
                     train_epoch_state.timing_metric.stop("visualize")
+                    train_epoch_state.next_visualizer = (
+                        train_epoch_state.next_visualizer + 1
+                    ) % len(visualizers)
         except Exception as e:
             logging.error("Visualization failed")
             logging.error(str(e))
@@ -540,6 +553,8 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
         if state is not None:
             if ddp.get_rank() == 0:
                 duck.insert_model_with_model_id(train_run, state.model_id)
+                checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
+                duck.ingest_checkpoint_parquets(checkpoint_path, up_to_step=state.batch)
             print(f"Resuming from epoch {state.epoch}/{train_run.epochs} (batch {state.batch})")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
