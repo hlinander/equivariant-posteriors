@@ -10,6 +10,8 @@ from lib.datasets.subset import DataSubsetConfig, DataSubset
 from lib.datasets.join import DataJoinConfig, DataJoin
 from lib.datasets.commonsense_qa import DataCommonsenseQaConfig, DataCommonsenseQa
 from experiments.weather.data import DataHP, DataHPConfig
+from lib.datasets.sparse_parity import DataSparseParityConfig, DataSparseParity
+from lib.datasets.finite_field_det import DataFiniteFieldDetConfig, DataFiniteFieldDet
 
 # from experiments.lora_ensembles.configs import NLPDatasetConfig
 # from experiments.lora_ensembles.configs import NLPDataset
@@ -28,3 +30,5 @@ def register_datasets(factory):
     factory.register(DataJoinConfig, DataJoin)
     factory.register(DataCommonsenseQaConfig, DataCommonsenseQa)
     factory.register(DataHPConfig, DataHP)
+    factory.register(DataSparseParityConfig, DataSparseParity)
+    factory.register(DataFiniteFieldDetConfig, DataFiniteFieldDet)

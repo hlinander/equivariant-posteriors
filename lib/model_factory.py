@@ -8,6 +8,7 @@ from lib.models.transformer import Transformer, TransformerConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp import MLP, MLPConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
+from lib.models.grok_mlp import GrokMLP, GrokMLPConfig
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
@@ -55,6 +56,7 @@ class _ModelFactory:
         self.register(MLPConfig, MLP)
         self.register(MLPClassConfig, MLPClass)
         self.register(MLPProjClassConfig, MLPProjClass)
+        self.register(GrokMLPConfig, GrokMLP)
         self.register(ResnetConfig, Resnet)
         self.register(SwinTinyConfig, SwinTiny)
         self.register(LLaMA2GenerativeConfig, LLaMA2Generative)
