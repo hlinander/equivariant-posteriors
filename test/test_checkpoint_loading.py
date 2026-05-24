@@ -326,3 +326,149 @@ def test_code_saved_only_once(checkpoint_env_with_code):
     archive_code_for_run(checkpoint_path, train_run.run_id)
     mtime_second = tar_path.stat().st_mtime
     assert mtime_first == mtime_second, "archive should not be overwritten on second call"
+
+
+def _make_grokking_train_run(train_size=64, epochs=10):
+    """Create a small grokking-style config for testing resume behavior."""
+    from lib.models.grok_mlp import GrokMLPConfig
+    from lib.datasets.sparse_parity import DataSparseParityConfig
+    from lib.classification_metrics import create_classification_metrics
+
+    ce = torch.nn.CrossEntropyLoss()
+
+    def ce_loss(output, batch):
+        return ce(output["logits"], batch["target"])
+
+    train_config = TrainConfig(
+        model_config=GrokMLPConfig(width=32, depth=2, activation="relu"),
+        train_data_config=DataSparseParityConfig(
+            d=10, k=2, n_samples=train_size, seed=0, subset_seed=0
+        ),
+        val_data_config=DataSparseParityConfig(
+            d=10, k=2, n_samples=train_size, seed=1, subset_seed=0
+        ),
+        loss=ce_loss,
+        optimizer=OptimizerConfig(
+            optimizer=torch.optim.AdamW,
+            kwargs=dict(lr=1e-3, weight_decay=1.0),
+        ),
+        batch_size=train_size,
+        ensemble_id=0,
+    )
+    train_eval = create_classification_metrics(None, 2)
+    return TrainRun(
+        compute_config=ComputeConfig(distributed=False, num_workers=0),
+        train_config=train_config,
+        train_eval=train_eval,
+        epochs=epochs,
+        save_nth_epoch=1,
+        validate_nth_epoch=epochs,
+        project="test_resume",
+    )
+
+
+def _run_n_steps(state, train_run, n, device="cpu"):
+    """Run n full-batch training steps, return loss after each."""
+    from lib.train_dataclasses import TrainEpochSpec
+
+    losses = []
+    for _ in range(n):
+        state.model.train()
+        batch = next(iter(state.train_dataloader))
+        batch = {k: v.to(device) if hasattr(v, "to") else v for k, v in batch.items()}
+        output = state.model(batch)
+        loss = train_run.train_config.loss(output, batch)
+        loss.backward()
+        state.optimizer.step()
+        state.optimizer.zero_grad(set_to_none=True)
+        losses.append(loss.item())
+        state.epoch += 1
+        state.batch += 1
+    return losses
+
+
+def test_resume_model_params_match(checkpoint_env):
+    """Model parameters are identical after serialize/deserialize roundtrip."""
+    from lib.serialization import deserialize
+
+    train_run = _make_grokking_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+
+    # Train 20 steps to warm up optimizer (Adam m/v buffers need many steps)
+    _run_n_steps(state, train_run, 20)
+
+    # Serialize
+    serialize(SerializeConfig(train_run=train_run, train_epoch_state=state))
+
+    original_params = {k: v.clone() for k, v in state.model.state_dict().items()}
+
+    # Deserialize
+    config = DeserializeConfig(train_run=train_run, device_id="cpu")
+    restored = deserialize(config)
+    assert restored is not None
+
+    for k, v in restored.model.state_dict().items():
+        assert torch.equal(v, original_params[k]), f"Model param mismatch on {k}"
+
+
+def test_resume_optimizer_state_match(checkpoint_env):
+    """Optimizer state (Adam m/v buffers, step count) is identical after roundtrip."""
+    from lib.serialization import deserialize
+
+    train_run = _make_grokking_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+
+    _run_n_steps(state, train_run, 20)
+    serialize(SerializeConfig(train_run=train_run, train_epoch_state=state))
+
+    original_opt_sd = state.optimizer.state_dict()
+
+    config = DeserializeConfig(train_run=train_run, device_id="cpu")
+    restored = deserialize(config)
+    restored_opt_sd = restored.optimizer.state_dict()
+
+    # Compare state dicts (which use canonical integer keys)
+    assert original_opt_sd["state"].keys() == restored_opt_sd["state"].keys()
+    for k in original_opt_sd["state"]:
+        for sk in original_opt_sd["state"][k]:
+            orig = original_opt_sd["state"][k][sk]
+            rest = restored_opt_sd["state"][k][sk]
+            if torch.is_tensor(orig):
+                assert torch.equal(orig, rest), f"Optimizer state mismatch: param {k}, key {sk}"
+            else:
+                assert orig == rest, f"Optimizer state mismatch: param {k}, key {sk}: {orig} vs {rest}"
+
+
+def test_resume_produces_identical_next_step(checkpoint_env):
+    """The first training step after resume produces the same loss as continuous training."""
+    from lib.serialization import deserialize
+
+    train_run = _make_grokking_train_run()
+
+    # Path A: train 20 steps, then 3 more continuously
+    torch.manual_seed(42)
+    state_a = create_initial_state(train_run, None, "cpu")
+    _run_n_steps(state_a, train_run, 20)
+    losses_a = _run_n_steps(state_a, train_run, 3)
+
+    # Path B: train 20 steps, serialize, deserialize, then 3 more
+    torch.manual_seed(42)
+    state_b = create_initial_state(train_run, None, "cpu")
+    _run_n_steps(state_b, train_run, 20)
+    serialize(SerializeConfig(train_run=train_run, train_epoch_state=state_b))
+    config = DeserializeConfig(train_run=train_run, device_id="cpu")
+    state_b = deserialize(config)
+    losses_b = _run_n_steps(state_b, train_run, 3)
+
+    for i, (la, lb) in enumerate(zip(losses_a, losses_b)):
+        assert abs(la - lb) < 1e-6, f"Step {i} loss diverged: continuous={la}, resumed={lb}"
+
+    # Also verify params match
+    for k in state_a.model.state_dict():
+        assert torch.allclose(
+            state_a.model.state_dict()[k],
+            state_b.model.state_dict()[k],
+            atol=1e-6,
+        ), f"Params diverged on {k} after continued training"
+
+
