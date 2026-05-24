@@ -1,6 +1,5 @@
 import torch
 import itertools
-import math
 from dataclasses import dataclass
 from lib.dataspec import DataSpec
 from lib.data_utils import create_sample_legacy
@@ -10,11 +9,24 @@ from lib.data_utils import create_sample_legacy
 class DataFiniteFieldDetConfig:
     n: int = 3
     p: int = 5
-    n_samples: int = 10000
-    seed: int = 0
+    frac: float = 0.5  # fraction of total dataset (p^(n*n)) used for training
+    seed: int = 0  # controls the train/val split
+    seq: bool = False  # True: input shape (n*n, p) for transformers
+    validation: bool = False  # True: return held-out complement
+
+    @property
+    def total_size(self):
+        return self.p ** (self.n * self.n)
+
+    @property
+    def n_samples(self):
+        n_train = int(self.frac * self.total_size)
+        if self.validation:
+            return self.total_size - n_train
+        return n_train
 
     def serialize_human(self):
-        return self.__dict__
+        return {**self.__dict__, "n_samples": self.n_samples, "total_size": self.total_size}
 
 
 def _det_mod_p_batched(matrices, p):
@@ -46,32 +58,61 @@ def _det_mod_p_batched(matrices, p):
     return det % p
 
 
+def _enumerate_all_matrices(n, p):
+    """Enumerate all p^(n*n) matrices over F_p as a (total, n*n) integer tensor."""
+    n_entries = n * n
+    total = p ** n_entries
+    # Build all combinations using base-p digit expansion
+    entries = torch.zeros(total, n_entries, dtype=torch.long)
+    for col in range(n_entries):
+        period = p ** (n_entries - 1 - col)
+        entries[:, col] = (torch.arange(total) // period) % p
+    return entries
+
+
 class DataFiniteFieldDet(torch.utils.data.Dataset):
     def __init__(self, data_config: DataFiniteFieldDetConfig):
         n = data_config.n
         p = data_config.p
         n_entries = n * n
 
+        # Enumerate all matrices and shuffle deterministically
+        all_entries = _enumerate_all_matrices(n, p)
         rng = torch.Generator()
         rng.manual_seed(data_config.seed)
-        # Sample random matrices with entries in {0, ..., p-1}
-        entries = torch.randint(0, p, (data_config.n_samples, n_entries), generator=rng)
+        perm = torch.randperm(all_entries.shape[0], generator=rng)
+        all_entries = all_entries[perm]
+
+        # Split into train / validation
+        n_train = int(data_config.frac * all_entries.shape[0])
+        if data_config.validation:
+            entries = all_entries[n_train:]
+        else:
+            entries = all_entries[:n_train]
 
         # One-hot encode each entry
-        one_hot = torch.nn.functional.one_hot(entries.long(), num_classes=p).float()
-        self.xs = one_hot.reshape(data_config.n_samples, n_entries * p)
+        one_hot = torch.nn.functional.one_hot(entries, num_classes=p).float()
+        if data_config.seq:
+            self.xs = one_hot  # (n_samples, n*n, p)
+        else:
+            self.xs = one_hot.reshape(entries.shape[0], n_entries * p)
 
         # Compute determinant mod p for each matrix (vectorized)
-        matrices = entries.long().reshape(data_config.n_samples, n, n)
+        matrices = entries.reshape(entries.shape[0], n, n)
         self.ys = _det_mod_p_batched(matrices, p)
 
-        self.sample_ids = torch.arange(data_config.n_samples, dtype=torch.int32)
+        self.sample_ids = torch.arange(entries.shape[0], dtype=torch.int32)
 
     @staticmethod
     def data_spec(config):
-        dim = config.n * config.n * config.p
+        if config.seq:
+            return DataSpec(
+                input_shape=torch.Size([config.n * config.n, config.p]),
+                target_shape=torch.Size([1]),
+                output_shape=torch.Size([config.p]),
+            )
         return DataSpec(
-            input_shape=torch.Size([dim]),
+            input_shape=torch.Size([config.n * config.n * config.p]),
             target_shape=torch.Size([1]),
             output_shape=torch.Size([config.p]),
         )
