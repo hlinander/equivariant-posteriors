@@ -27,30 +27,33 @@ def visualize_progress_batches(state, train_run, last_postgres_result, device):
         set(train_metric_names)
     )  # .intersection(set(val_metric_names)))
     common_metrics = sorted(common_metrics)
-    n_metrics = min(4, len(common_metrics))
 
-    train_indices = [train_metric_names.index(name) for name in common_metrics]
-    # val_indices = [val_metric_names.index(name) for name in common_metrics]
+    extra_metrics = ["norm_ratio"]
+    all_metrics = common_metrics + extra_metrics
+    n_metrics = min(5, len(all_metrics))
 
     # First column (many metrics in rows)
     plt.subplot(1, 1).subplots(n_metrics, 1)
 
     for idx in range(n_metrics):
-        train_metric = state.train_metrics[train_indices[idx]]
-
-        batches = duck.select_train_step_metric_float(
-            state.model_id, train_metric.name()
-        )
+        name = all_metrics[idx]
+        batches = duck.select_train_step_metric_float(state.model_id, name)
 
         plt.subplot(1, 1).subplot(idx + 1, 1)
-        plt.title(common_metrics[idx])
+        plt.title(name)
         plt.xlabel("batches")
+        use_log = name not in extra_metrics
         if len(batches) > 1:
-            x = [bx for bx, by in batches if by > 0]
-            y = [by for bx, by in batches if by > 0]
+            if use_log:
+                x = [bx for bx, by in batches if by > 0]
+                y = [by for bx, by in batches if by > 0]
+            else:
+                x = [bx for bx, by in batches if not math.isnan(by)]
+                y = [by for bx, by in batches if not math.isnan(by)]
             if len(x) > 1:
-                plt.yscale("log")
-                plt.plot(x, y, label=f"Train {common_metrics[idx]}")
+                if use_log:
+                    plt.yscale("log")
+                plt.plot(x, y, label=f"Train {name}")
 
     # Second column (config)
     plt.subplot(1, 2).subplots(2, 1)

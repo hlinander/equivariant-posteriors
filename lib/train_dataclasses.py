@@ -46,6 +46,7 @@ class TrainEpochState:
     batch_time_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
     batch_time_diag_accumulator: EpochMetricAccumulator = field(default_factory=EpochMetricAccumulator)
     _last_step_had_diagnostics: bool = False
+    _peak_parameter_norm: float = 0.0
 
 
 @dataclass

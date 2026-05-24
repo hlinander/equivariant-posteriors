@@ -317,6 +317,17 @@ def ingest_checkpoint_parquets(checkpoint_path, up_to_step):
             print(f"[ingest] Failed to load parquets for {table_name}: {e}")
 
 
+def select_max_train_step_metric(model_id, name):
+    sql_select = f"""
+        SELECT MAX(value_float) FROM {TRAIN_STEP_METRIC}
+        WHERE model_id=? AND name=? AND type=?
+        """
+    rows = execute_and_fetch(sql_select, (model_id, name, FLOAT))
+    if rows and rows[0][0] is not None:
+        return rows[0][0]
+    return None
+
+
 def select_train_epoch_metric(model_id, name, dataset_split):
     sql_select = f"""
         SELECT epoch, mean FROM {TRAIN_EPOCH_METRIC}

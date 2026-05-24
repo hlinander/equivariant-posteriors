@@ -350,6 +350,10 @@ def train(
                     p.detach().norm().pow(2) for p in model.parameters()
                 ).sqrt().item()
                 train_epoch_state.parameter_norm_accumulator.update(param_norm)
+                train_epoch_state._peak_parameter_norm = max(
+                    train_epoch_state._peak_parameter_norm, param_norm
+                )
+                norm_ratio = param_norm / train_epoch_state._peak_parameter_norm
                 if ddp.get_rank() == 0:
                     duck.insert_train_step_metric(
                         train_epoch_state.model_id,
@@ -357,6 +361,13 @@ def train(
                         "parameter_norm",
                         train_epoch_state.batch,
                         param_norm,
+                    )
+                    duck.insert_train_step_metric(
+                        train_epoch_state.model_id,
+                        train_run.run_id,
+                        "norm_ratio",
+                        train_epoch_state.batch,
+                        norm_ratio,
                     )
 
         optimizer.zero_grad(set_to_none=True)
@@ -555,6 +566,9 @@ def load_or_create_state(train_run: TrainRun, device_id) -> TrainEpochState:
                 duck.insert_model_with_model_id(train_run, state.model_id)
                 checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
                 duck.ingest_checkpoint_parquets(checkpoint_path, up_to_step=state.batch)
+                peak = duck.select_max_train_step_metric(state.model_id, "parameter_norm")
+                if peak is not None:
+                    state._peak_parameter_norm = peak
             print(f"Resuming from epoch {state.epoch}/{train_run.epochs} (batch {state.batch})")
     except Exception as e:
         print("ERROR: Failed to load checkpoint, creating a new initial state.")
