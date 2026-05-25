@@ -60,16 +60,6 @@ def flush_table_to_s3(
     # Ensure we're using the local database
     cursor.execute("USE local")
 
-    # Ensure sync_state table exists
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_state (
-            table_name TEXT PRIMARY KEY,
-            last_synced_timestamp DOUBLE
-        )
-        """
-    )
-
     # Get last synced timestamp
     result = cursor.execute(
         """

@@ -312,6 +312,18 @@ def ingest_checkpoint_parquets(checkpoint_path, up_to_step):
                 f"INSERT INTO {table_name} SELECT * FROM read_parquet('{glob_pattern}') WHERE step <= ?",
                 (up_to_step,),
             )
+            # Advance sync timestamps so exporters don't re-export ingested rows
+            max_ts = execute_and_fetch(
+                f"SELECT MAX(EPOCH(timestamp)) FROM {table_name}"
+            )
+            if max_ts and max_ts[0][0] is not None:
+                ts = float(max_ts[0][0])
+                for prefix in ["", "ckpt_"]:
+                    execute(
+                        "INSERT INTO sync_state (table_name, last_synced_timestamp) VALUES (?, ?) "
+                        "ON CONFLICT (table_name) DO UPDATE SET last_synced_timestamp = EXCLUDED.last_synced_timestamp",
+                        (f"{prefix}{table_name}", ts),
+                    )
             print(f"[ingest] Loaded parquets into {table_name} (step <= {up_to_step})")
         except Exception as e:
             print(f"[ingest] Failed to load parquets for {table_name}: {e}")
@@ -563,6 +575,14 @@ def execute_and_fetch(sql, params=None):
         raise e
 
 
+def sql_create_table_sync_state():
+    return """
+        CREATE TABLE IF NOT EXISTS sync_state (
+            table_name TEXT PRIMARY KEY,
+            last_synced_timestamp DOUBLE
+        )"""
+
+
 def _ensure_schema(executor=execute):
     executor(sql_create_table_models())
     executor(sql_create_table_runs())
@@ -574,6 +594,7 @@ def _ensure_schema(executor=execute):
     executor(sql_create_table_checkpoint_sample_metric())
     executor(sql_create_table_train_step_metric())
     executor(sql_create_table_train_epoch_metric())
+    executor(sql_create_table_sync_state())
 
 
 def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):

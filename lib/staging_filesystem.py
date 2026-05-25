@@ -34,16 +34,6 @@ def flush_table_to_filesystem(
     # Ensure we're using the local database
     cursor.execute("USE local")
 
-    # Ensure sync_state table exists
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_state (
-            table_name TEXT PRIMARY KEY,
-            last_synced_timestamp DOUBLE
-        )
-        """
-    )
-
     sync_key = f"{sync_key_prefix}{table_name}"
 
     # Get last synced timestamp

@@ -472,3 +472,94 @@ def test_resume_produces_identical_next_step(checkpoint_env):
         ), f"Params diverged on {k} after continued training"
 
 
+def test_ingest_parquets_no_duplicate_export(checkpoint_env):
+    """After ingesting parquets on resume, the exporter should not re-export the same rows."""
+    from lib.staging_filesystem import flush_table_to_filesystem
+
+    train_run = _make_grokking_train_run()
+    state = create_initial_state(train_run, None, "cpu")
+
+    # Train a few steps and insert metrics into duck
+    for step in range(5):
+        state.model.train()
+        batch = next(iter(state.train_dataloader))
+        output = state.model(batch)
+        loss_val = train_run.train_config.loss(output, batch)
+        loss_val.backward()
+        state.optimizer.step()
+        state.optimizer.zero_grad(set_to_none=True)
+        state.batch += 1
+        state.epoch += 1
+        duck.insert_train_step_metric(
+            state.model_id, train_run.run_id, "accuracy", state.batch, loss_val.item()
+        )
+
+    # Flush metrics to checkpoint analytics dir
+    from lib.paths import get_or_create_checkpoint_path
+    checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
+    analytics_dir = checkpoint_path / "analytics"
+    cursor = duck.CONN.cursor()
+    flush_table_to_filesystem(
+        "train_step_metric", analytics_dir, cursor, run_id=train_run.run_id,
+    )
+
+    # Verify parquets were written
+    parquet_files_before = list((analytics_dir / "train_step_metric").glob("*.parquet"))
+    assert len(parquet_files_before) > 0
+
+    # Count rows exported
+    import duckdb
+    first_export_rows = duckdb.execute(
+        f"SELECT COUNT(*) FROM read_parquet('{analytics_dir}/train_step_metric/*.parquet')"
+    ).fetchone()[0]
+    assert first_export_rows == 5
+
+    # Simulate resume: reset duck, re-ensure schema, ingest parquets
+    duck.CONN.close()
+    duck.CONN = None
+    duck.SCHEMA_ENSURED = False
+    duck.ensure_duck(train_run)
+    duck.insert_model_with_model_id(train_run, state.model_id)
+    duck.ingest_checkpoint_parquets(checkpoint_path, up_to_step=state.batch)
+
+    # Verify ingested data is in memory
+    in_memory_count = duck.execute_and_fetch(
+        "SELECT COUNT(*) FROM train_step_metric"
+    )[0][0]
+    assert in_memory_count == 5
+
+    # Now try to flush again - should export nothing (sync timestamps advanced)
+    cursor = duck.CONN.cursor()
+    result = flush_table_to_filesystem(
+        "train_step_metric", analytics_dir, cursor, run_id=train_run.run_id,
+    )
+    assert result is None, "Exporter should not re-export ingested rows"
+
+    # Train a few more steps and insert new metrics
+    for step in range(3):
+        state.model.train()
+        batch = next(iter(state.train_dataloader))
+        output = state.model(batch)
+        loss_val = train_run.train_config.loss(output, batch)
+        loss_val.backward()
+        state.optimizer.step()
+        state.optimizer.zero_grad(set_to_none=True)
+        state.batch += 1
+        state.epoch += 1
+        duck.insert_train_step_metric(
+            state.model_id, train_run.run_id, "accuracy", state.batch, loss_val.item()
+        )
+
+    # Flush again - should only export the 3 new rows
+    result = flush_table_to_filesystem(
+        "train_step_metric", analytics_dir, cursor, run_id=train_run.run_id,
+    )
+    assert result is not None, "Exporter should export new rows"
+
+    # Count total rows across all parquet files
+    total_rows = duckdb.execute(
+        f"SELECT COUNT(*) FROM read_parquet('{analytics_dir}/train_step_metric/*.parquet')"
+    ).fetchone()[0]
+    assert total_rows == 8, f"Expected 5 + 3 = 8 total rows, got {total_rows}"
+
+
