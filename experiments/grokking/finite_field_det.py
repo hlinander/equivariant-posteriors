@@ -19,7 +19,8 @@ def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq
     train_eval = create_classification_metrics(None, p)
     train_eval.log_gradient_norm = True
     train_eval.log_parameter_norm = True
-    train_eval.diagnostics_interval = 10
+    train_eval.log_sample_ids = False
+    train_eval.diagnostics_interval = 100
 
     train_data = DataFiniteFieldDetConfig(
         n=n, p=p, frac=frac, seed=ensemble_id, seq=seq
@@ -37,7 +38,7 @@ def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq
             optimizer=torch.optim.AdamW,
             kwargs=dict(lr=lr, weight_decay=weight_decay),
         ),
-        batch_size=min(train_data.n_samples, 10000),
+        batch_size=train_data.n_samples,
         ensemble_id=ensemble_id,
         _version=1,
     )
@@ -192,8 +193,49 @@ def p13_sweep_configs():
     return mlp + transformer
 
 
+def large_p_sweep_configs():
+    """MLP sweep over larger primes p in {17, 23, 31}, n=2."""
+    return get_config_grid(
+        create_mlp_config,
+        dict(
+            width=[256],
+            depth=[2, 4],
+            n=[2],
+            p=[17, 23, 31],
+            frac=[0.3, 0.5, 0.7],
+            weight_decay=[1.0, 0.1],
+            lr=[1e-3],
+            ensemble_id=[0],
+        ),
+    )
+
+
+def cancelled_middle_configs():
+    """Re-run only the 13 middle MLP configs killed by the GPU util watcher in
+    job 16680904 (depth=2 p=23/31 frac=0.5/0.7 + p=31 frac=0.3, and depth=4 p=23
+    frac=0.5/0.7). Same model/data identity as large_p_sweep_configs so runs
+    resume from existing checkpoints.
+    """
+    specs = [
+        (2, 23, 0.5, 1.0), (2, 23, 0.5, 0.1),
+        (2, 23, 0.7, 1.0), (2, 23, 0.7, 0.1),
+        (2, 31, 0.3, 1.0), (2, 31, 0.3, 0.1),
+        (2, 31, 0.5, 1.0), (2, 31, 0.5, 0.1),
+        (2, 31, 0.7, 1.0),
+        (4, 23, 0.5, 1.0), (4, 23, 0.5, 0.1),
+        (4, 23, 0.7, 1.0), (4, 23, 0.7, 0.1),
+    ]
+    return [
+        (lambda depth=depth, p=p, frac=frac, wd=wd: create_mlp_config(
+            width=256, depth=depth, n=2, p=p, frac=frac,
+            weight_decay=wd, lr=1e-3, ensemble_id=0,
+        ))
+        for (depth, p, frac, wd) in specs
+    ]
+
+
 def create_configs():
-    return p13_sweep_configs()
+    return cancelled_middle_configs()
 
 
 def run(config):
