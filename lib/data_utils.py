@@ -1,4 +1,5 @@
 import torch
+from types import SimpleNamespace
 from lib.train_dataclasses import ComputeConfig
 
 
@@ -19,3 +20,46 @@ def get_sampler(
 
 def create_sample_legacy(input, target, sample_id):
     return dict(input=input, target=target, sample_id=sample_id)
+
+
+class GPUResidentDataLoader:
+    """Minimal DataLoader for GPU-resident datasets.
+
+    Skips the CPU sampler / Python-int list / pin_memory path. Yields the dict
+    returned by dataset.__getitems__(idx) where idx is a GPU LongTensor.
+    Quacks enough like torch.utils.data.DataLoader for lib/train.py: exposes
+    .sampler (a stub whose class name is not "DistributedSampler").
+    """
+
+    def __init__(self, dataset, batch_size: int, shuffle: bool, device,
+                 drop_last: bool = False, seed: int = 0):
+        assert hasattr(dataset, "__getitems__"), (
+            "GPUResidentDataLoader requires dataset.__getitems__(indices)"
+        )
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.device = device
+        self.drop_last = drop_last
+        gen = torch.Generator(device=device)
+        gen.manual_seed(int(seed))
+        self.generator = gen
+        self.sampler = SimpleNamespace()  # not DistributedSampler
+
+    def __len__(self):
+        n = len(self.dataset)
+        if self.drop_last:
+            return n // self.batch_size
+        return (n + self.batch_size - 1) // self.batch_size
+
+    def __iter__(self):
+        n = len(self.dataset)
+        if self.shuffle:
+            perm = torch.randperm(n, device=self.device, generator=self.generator)
+        else:
+            perm = torch.arange(n, device=self.device)
+        for start in range(0, n, self.batch_size):
+            end = start + self.batch_size
+            if end > n and self.drop_last:
+                break
+            yield self.dataset.__getitems__(perm[start:end])

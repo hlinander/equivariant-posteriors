@@ -135,6 +135,7 @@ class TrainEval:
     data_visualizer: Callable[[object, TrainEpochState], None] = None
     log_gradient_norm: bool = False
     log_parameter_norm: bool = False
+    log_sample_ids: bool = True  # per-step row in train_steps; off for tiny-batch high-step regimes
     diagnostics_interval: int = 10  # run diagnostics every N steps
 
     def serialize_human(self):
@@ -143,6 +144,7 @@ class TrainEval:
             val_metric=[metric().name() for metric in self.validation_metrics],
             log_gradient_norm=self.log_gradient_norm,
             log_parameter_norm=self.log_parameter_norm,
+            log_sample_ids=self.log_sample_ids,
             diagnostics_interval=self.diagnostics_interval,
         )
 

@@ -12,7 +12,7 @@ from filelock import FileLock
 from lib.metric import MetricSample, Metric
 from lib.timing_metric import Timing
 import lib.data_factory as data_factory
-from lib.data_utils import get_sampler
+from lib.data_utils import get_sampler, GPUResidentDataLoader
 import lib.model_factory as model_factory
 import lib.render_duck as duck
 
@@ -269,7 +269,7 @@ def train(
         loss_val.backward()
 
         t_db = time.time()
-        if ddp.get_rank() == 0:
+        if ddp.get_rank() == 0 and train_run.train_eval.log_sample_ids:
             t_train_step = time.time()
             duck.insert_train_step(
                 train_epoch_state.model_id,
@@ -469,42 +469,54 @@ def create_dataloader(
     return dataloader
 
 
+def _is_gpu_resident(ds, device_id):
+    """Opt-in GPU residency: dataset moves itself on-device via .to(device)."""
+    if device_id is None or not hasattr(ds, "to"):
+        return False
+    ds.to(device_id)
+    return True
+
+
+def _make_dataloader(ds, train_run: TrainRun, device_id, shuffle: bool, seed: int):
+    compute = train_run.compute_config
+    batch_size = train_run.train_config.batch_size
+    if _is_gpu_resident(ds, device_id):
+        assert compute.num_workers == 0, (
+            "GPU-resident datasets (.to(device)) require num_workers=0; "
+            "CUDA tensors can't be shared via fork."
+        )
+        assert not compute.distributed, (
+            "GPU-resident dataset path doesn't support DDP yet."
+        )
+        return GPUResidentDataLoader(
+            ds, batch_size=batch_size, shuffle=shuffle, device=device_id, seed=seed,
+        )
+    sampler, shuffle_eff = get_sampler(compute, ds, shuffle=shuffle)
+    return torch.utils.data.DataLoader(
+        ds,
+        batch_size=batch_size,
+        drop_last=False,
+        sampler=sampler,
+        shuffle=shuffle_eff,
+        num_workers=compute.num_workers,
+        collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
+        pin_memory=True,
+        persistent_workers=True and compute.num_workers > 0,
+    )
+
+
 def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_id):
     train_config = train_run.train_config
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
-
-    train_sampler, train_shuffle = get_sampler(
-        train_run.compute_config, train_ds, shuffle=True
+    train_dataloader = _make_dataloader(
+        train_ds, train_run, device_id, shuffle=True, seed=train_config.ensemble_id,
     )
 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=train_config.batch_size,
-        drop_last=False,
-        sampler=train_sampler,
-        shuffle=train_shuffle,
-        num_workers=train_run.compute_config.num_workers,
-        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
-        pin_memory=True,
-        persistent_workers=True and train_run.compute_config.num_workers > 0,
-    )
     if train_config.val_data_config is not None:
         val_ds = data_factory.get_factory().create(train_config.val_data_config)
-        val_sampler, val_shuffle = get_sampler(
-            train_run.compute_config, val_ds, shuffle=False
-        )
-        assert val_shuffle is False
-        val_dataloader = torch.utils.data.DataLoader(
-            val_ds,
-            batch_size=train_config.batch_size,
-            shuffle=val_shuffle,
-            drop_last=False,
-            sampler=val_sampler,
-            num_workers=train_run.compute_config.num_workers,
-            collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
-            pin_memory=True,
-            persistent_workers=True and train_run.compute_config.num_workers > 0,
+        val_dataloader = _make_dataloader(
+            val_ds, train_run, device_id, shuffle=False, seed=train_config.ensemble_id,
         )
     else:
         val_dataloader = None
