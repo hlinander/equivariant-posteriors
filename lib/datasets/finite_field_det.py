@@ -120,5 +120,23 @@ class DataFiniteFieldDet(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return create_sample_legacy(self.xs[idx], self.ys[idx], self.sample_ids[idx])
 
+    def __getitems__(self, indices):
+        idx = torch.as_tensor(indices, dtype=torch.long, device=self.xs.device)
+        return dict(
+            input=self.xs[idx],
+            target=self.ys[idx],
+            sample_id=self.sample_ids[idx],
+        )
+
+    def to(self, device):
+        self.xs = self.xs.to(device)
+        self.ys = self.ys.to(device)
+        self.sample_ids = self.sample_ids.to(device)
+        return self
+
+    @staticmethod
+    def collate_fn(batch):
+        return batch
+
     def __len__(self):
         return self.xs.shape[0]
