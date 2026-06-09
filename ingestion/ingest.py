@@ -55,20 +55,26 @@ INGEST_BATCH_SIZE = 50
 _SCHEMA_ENSURED = False
 
 
-def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str):
+def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str, s3_url_style: str = "path"):
     """Create S3 client for file operations"""
     import boto3
+    from botocore.config import Config
 
     # Ensure endpoint has a protocol (boto3 requires it)
     if not s3_endpoint.startswith("http://") and not s3_endpoint.startswith("https://"):
         # Default to https if no protocol specified
         s3_endpoint = f"https://{s3_endpoint}"
 
+    # Bucket addressing: "path" (endpoint/bucket/key — MinIO, Hetzner) or
+    # "vhost" (bucket.endpoint/key — virtual-hosted, e.g. Hexabyte). boto3 calls
+    # the virtual-hosted style "virtual".
+    addressing = "virtual" if s3_url_style == "vhost" else "path"
     return boto3.client(
         "s3",
         aws_access_key_id=s3_key,
         aws_secret_access_key=s3_secret,
         endpoint_url=s3_endpoint,
+        config=Config(s3={"addressing_style": addressing}),
     )
 
 
@@ -678,7 +684,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
         ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint, s3.url_style)
 
         # Get S3 client for file operations (list/move)
-        s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint)
+        s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint, s3.url_style)
 
         # Process each table
         for table_name in SYNC_TABLES:
