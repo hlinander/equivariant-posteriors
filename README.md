@@ -22,6 +22,45 @@ uv run run.py --mode cpu experiments/mnist/dense.py
 
 On first run, `env.py` is auto-created with defaults. All data is stored under `.local/` (add to `.gitignore`).
 
+### Secrets (SOPS + age)
+
+The analytics pipeline (S3 staging credentials) reads its secrets from a
+SOPS-encrypted file at the repo root. Only leaf values are ciphertext —
+diffs stay reviewable.
+
+```
+.sops.yaml             # recipient list (age public keys)
+secrets.example.yaml   # plaintext template (committed)
+secrets.enc.yaml       # encrypted, committed
+secrets.yaml           # plaintext, gitignored — only exists transiently
+lib/secrets.py         # tiny `sops -d` loader, cached per process
+```
+
+Bootstrap (once per machine):
+
+```bash
+# 1. install sops + age
+#    macOS:  brew install sops age
+#    linux:  download static binaries from each project's GitHub releases
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt
+grep "public key" ~/.config/sops/age/keys.txt        # copy this line
+
+# 2. paste the age1... public key into .sops.yaml under `age:`
+# 3. encrypt your secrets
+cp secrets.example.yaml secrets.yaml
+$EDITOR secrets.yaml                                 # paste real values
+sops -e secrets.yaml > secrets.enc.yaml
+rm secrets.yaml
+```
+
+Day-to-day: `sops secrets.enc.yaml` decrypts into `$EDITOR` and re-encrypts on
+save. Anything that imports `env.py` will pick up the new values on next start.
+
+Adding a teammate: append their age public key to `.sops.yaml`, then
+`sops updatekeys secrets.enc.yaml` to re-wrap the data key for the new
+recipient.
+
 ### SLURM
 
 Submit a single experiment to SLURM:

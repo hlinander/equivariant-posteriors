@@ -1,0 +1,18 @@
+# SOPS config.
+#
+# `creation_rules` tells `sops` who can decrypt newly created files. Add a
+# public age key per person/machine that needs to read the secrets.
+#
+# Bootstrap (do this once):
+#   1. install age (https://github.com/FiloSottile/age/releases)
+#   2. mkdir -p ~/.config/sops/age && age-keygen -o ~/.config/sops/age/keys.txt
+#   3. copy the line `# public key: age1...` from that file
+#   4. paste it into the `age:` list below (replacing AGE_PUBLIC_KEY_PLACEHOLDER)
+#
+# Adding a teammate later:
+#   - append their age public key to the `age:` list
+#   - run `sops updatekeys secrets.enc.yaml` to re-wrap the data key
+creation_rules:
+  - path_regex: secrets(\.enc)?\.yaml$
+    age: >-
+      age10th5re449xktreymmq44vdc8e007yvqhn52unmpxk4jv490vxg4qrlzna0
