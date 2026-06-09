@@ -211,9 +211,9 @@ def ensure_s3_credentials(cursor):
     cursor.execute("INSTALL aws")
     cursor.execute("LOAD aws")
 
-    # Configure S3 settings for MinIO compatibility
-    # Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted (bucket.endpoint/key)
-    cursor.execute("SET s3_url_style='path'")
+    # path-style: endpoint/bucket/key (MinIO default)
+    # vhost-style: bucket.endpoint/key (AWS default, some providers require it)
+    cursor.execute(f"SET s3_url_style='{s3.url_style}'")
 
     # Determine if we should use SSL based on endpoint
     use_ssl = not s3.endpoint.startswith("http://")
@@ -231,7 +231,7 @@ def ensure_s3_credentials(cursor):
             SECRET '{s3.secret}',
             REGION '{s3.region}',
             ENDPOINT '{endpoint}',
-            URL_STYLE 'path',
+            URL_STYLE '{s3.url_style}',
             USE_SSL {str(use_ssl).lower()}
         )
         """

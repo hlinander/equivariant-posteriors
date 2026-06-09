@@ -73,15 +73,20 @@ def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str):
 
 
 def ensure_s3_credentials(
-    conn, s3_key: str, s3_secret: str, s3_region: str, s3_endpoint: str
+    conn,
+    s3_key: str,
+    s3_secret: str,
+    s3_region: str,
+    s3_endpoint: str,
+    s3_url_style: str = "path",
 ):
     """Ensure S3 credentials are configured in DuckDB"""
     conn.execute("INSTALL aws")
     conn.execute("LOAD aws")
 
-    # Configure S3 settings for MinIO compatibility
-    # Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted (bucket.endpoint/key)
-    conn.execute("SET s3_url_style='path'")
+    # path-style: endpoint/bucket/key (MinIO default)
+    # vhost-style: bucket.endpoint/key (AWS default, some providers require it)
+    conn.execute(f"SET s3_url_style='{s3_url_style}'")
 
     # Determine if we should use SSL based on endpoint
     use_ssl = not s3_endpoint.startswith("http://")
@@ -99,7 +104,7 @@ def ensure_s3_credentials(
             SECRET '{s3_secret}',
             REGION '{s3_region}',
             ENDPOINT '{endpoint}',
-            URL_STYLE 'path',
+            URL_STYLE '{s3_url_style}',
             USE_SSL {str(use_ssl).lower()}
         )
         """
@@ -629,7 +634,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
         conn.execute("INSTALL aws")
 
         # Configure S3 for DuckLake data path
-        ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint)
+        ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint, s3.url_style)
 
         print("[ingest] Attaching...")
         conn.execute(
@@ -670,7 +675,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
         s3 = config.staging.s3
 
         # Configure S3 credentials in DuckDB (for read_parquet)
-        ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint)
+        ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint, s3.url_style)
 
         # Get S3 client for file operations (list/move)
         s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint)

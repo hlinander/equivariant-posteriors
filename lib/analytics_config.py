@@ -24,6 +24,7 @@ class S3Config:
     secret: str = ""  # Secret access key
     region: str = "us-east-1"
     endpoint: str = ""  # e.g., "https://s3.amazonaws.com" or "http://localhost:9000"
+    url_style: Literal["path", "vhost"] = "path"  # "vhost" = bucket.endpoint/key
 
     def __str__(self):
         # Mask credentials for display
