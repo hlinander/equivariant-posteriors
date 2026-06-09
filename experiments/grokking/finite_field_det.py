@@ -8,6 +8,7 @@ from lib.models.transformer import TransformerConfig
 from lib.datasets.finite_field_det import DataFiniteFieldDetConfig
 from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
+from experiments.grokking.lyapunov_metric import compute_lyapunov_for_epoch
 
 
 def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq=False):
@@ -50,10 +51,11 @@ def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq
         train_eval=train_eval,
         epochs=100000,
         save_nth_epoch=1000,
-        validate_nth_epoch=50,
+        validate_nth_epoch=10,
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=5000,
         visualize_interval_s=5,
+        post_validate_hook=compute_lyapunov_for_epoch,
     )
 
 
@@ -234,8 +236,40 @@ def cancelled_middle_configs():
     ]
 
 
+def p17_lyapunov_smoke_configs():
+    """Tiny p=17 smoke set at ensemble_id=1 to validate the Lyapunov hook."""
+    specs = [
+        (2, 0.3, 1.0),
+        (2, 0.5, 0.1),
+    ]
+    return [
+        (lambda depth=depth, frac=frac, wd=wd: create_mlp_config(
+            width=256, depth=depth, n=2, p=17, frac=frac,
+            weight_decay=wd, lr=1e-3, ensemble_id=1,
+        ))
+        for (depth, frac, wd) in specs
+    ]
+
+
+def p23_p31_lyapunov_configs():
+    """Full MLP grid at ensemble_id=1 with the live mean-FTLE hook, p in {23, 31}."""
+    return get_config_grid(
+        create_mlp_config,
+        dict(
+            width=[256],
+            depth=[2, 4],
+            n=[2],
+            p=[23, 31],
+            frac=[0.3, 0.5, 0.7],
+            weight_decay=[1.0, 0.1],
+            lr=[1e-3],
+            ensemble_id=[1],
+        ),
+    )
+
+
 def create_configs():
-    return cancelled_middle_configs()
+    return p23_p31_lyapunov_configs()
 
 
 def run(config):
