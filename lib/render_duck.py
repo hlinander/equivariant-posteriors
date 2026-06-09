@@ -298,7 +298,7 @@ def ingest_checkpoint_parquets(checkpoint_path, up_to_step):
     if not analytics_dir.exists():
         return
 
-    tables_to_ingest = [TRAIN_STEP_METRIC, TRAIN_EPOCH_METRIC]
+    tables_to_ingest = [TRAIN_STEP_METRIC, TRAIN_EPOCH_METRIC, CHECKPOINT_SAMPLE_METRIC]
     for table_name in tables_to_ingest:
         table_dir = analytics_dir / table_name
         if not table_dir.exists():

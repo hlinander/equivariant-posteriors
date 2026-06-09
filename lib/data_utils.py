@@ -1,6 +1,42 @@
 import torch
 from types import SimpleNamespace
-from lib.train_dataclasses import ComputeConfig
+from lib.train_dataclasses import ComputeConfig, TrainRun
+
+
+def is_gpu_resident(ds, device_id):
+    """Opt-in GPU residency: dataset moves itself on-device via .to(device)."""
+    if device_id is None or not hasattr(ds, "to"):
+        return False
+    ds.to(device_id)
+    return True
+
+
+def make_dataloader(ds, train_run: TrainRun, device_id, shuffle: bool, seed: int):
+    compute = train_run.compute_config
+    batch_size = train_run.train_config.batch_size
+    if is_gpu_resident(ds, device_id):
+        assert compute.num_workers == 0, (
+            "GPU-resident datasets (.to(device)) require num_workers=0; "
+            "CUDA tensors can't be shared via fork."
+        )
+        assert not compute.distributed, (
+            "GPU-resident dataset path doesn't support DDP yet."
+        )
+        return GPUResidentDataLoader(
+            ds, batch_size=batch_size, shuffle=shuffle, device=device_id, seed=seed,
+        )
+    sampler, shuffle_eff = get_sampler(compute, ds, shuffle=shuffle)
+    return torch.utils.data.DataLoader(
+        ds,
+        batch_size=batch_size,
+        drop_last=False,
+        sampler=sampler,
+        shuffle=shuffle_eff,
+        num_workers=compute.num_workers,
+        collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
+        pin_memory=True,
+        persistent_workers=True and compute.num_workers > 0,
+    )
 
 
 def get_sampler(

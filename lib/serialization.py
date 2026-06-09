@@ -16,7 +16,7 @@ from lib.paths import (
     get_model_epoch_checkpoint_path,
 )
 import lib.model_factory as model_factory
-from lib.data_utils import get_sampler
+from lib.data_utils import get_sampler, make_dataloader
 from lib.ddp import get_rank
 from lib.stable_hash import json_dumps_dataclass_str
 import shutil
@@ -303,37 +303,13 @@ def deserialize(config: DeserializeConfig):
     data_dict = file_data.__dict__
 
     train_ds = data_factory.get_factory().create(train_config.train_data_config)
-
-    train_sampler, train_shuffle = get_sampler(
-        config.train_run.compute_config, train_ds, shuffle=True
-    )
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=train_config.batch_size,
-        drop_last=False,
-        sampler=train_sampler,
-        shuffle=train_shuffle,
-        num_workers=config.train_run.compute_config.num_workers,
-        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
-        pin_memory=True,
-        persistent_workers=True and config.train_run.compute_config.num_workers > 0,
+    train_dataloader = make_dataloader(
+        train_ds, config.train_run, config.device_id, shuffle=True, seed=0,
     )
     if train_config.val_data_config is not None:
         val_ds = data_factory.get_factory().create(train_config.val_data_config)
-        val_sampler, val_shuffle = get_sampler(
-            config.train_run.compute_config, val_ds, shuffle=False
-        )
-        val_dataloader = torch.utils.data.DataLoader(
-            val_ds,
-            batch_size=train_config.batch_size,
-            shuffle=False,
-            drop_last=False,
-            sampler=val_sampler,
-            num_workers=config.train_run.compute_config.num_workers,
-            collate_fn=val_ds.collate_fn if hasattr(val_ds, "collate_fn") else None,
-            pin_memory=True,
-            persistent_workers=True and config.train_run.compute_config.num_workers > 0,
+        val_dataloader = make_dataloader(
+            val_ds, config.train_run, config.device_id, shuffle=False, seed=0,
         )
     else:
         val_dataloader = None

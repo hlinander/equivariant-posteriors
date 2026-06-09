@@ -226,6 +226,7 @@ class TrainRun:
     visualize_interval_s: int = 10
     gpu_monitor: GPUMonitorConfig = field(default_factory=GPUMonitorConfig)
     notes: object = None
+    post_validate_hook: object = None  # Callable(model, train_run, state, device) called at end of validate() on rank 0
     argv: str = " ".join(sys.argv)
     git_rev: str = get_rev()
     env: str = field(default_factory=lambda: os.environ.copy())
