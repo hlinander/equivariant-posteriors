@@ -508,8 +508,15 @@ def create_initial_state(train_run: TrainRun, code_path: Optional[Path], device_
             init_model, device_ids=device_id_list, find_unused_parameters=True
         )
 
+    # Optimizer factories marked with takes_model receive the model itself
+    # (e.g. to group parameters by module type); plain torch optimizers get
+    # the usual parameter iterable.
+    if getattr(train_config.optimizer.optimizer, "takes_model", False):
+        opt_params = init_model
+    else:
+        opt_params = init_model.parameters()
     opt = train_config.optimizer.optimizer(
-        init_model.parameters(), **train_config.optimizer.kwargs
+        opt_params, **train_config.optimizer.kwargs
     )
     train_metrics = [metric() for metric in train_run.train_eval.train_metrics]
     validation_metrics = [
