@@ -5,6 +5,7 @@ from lib.train_dataclasses import TrainConfig, TrainRun, OptimizerConfig, Comput
 from lib.classification_metrics import create_classification_metrics
 from lib.models.grok_mlp import GrokMLPConfig
 from lib.models.transformer import TransformerConfig
+from lib.models.transformer_encoder import TransformerEncoderConfig
 from lib.datasets.finite_field_det import DataFiniteFieldDetConfig
 from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
@@ -70,6 +71,22 @@ def create_transformer_config(
     embed_d, num_layers, num_heads, n, p, frac, weight_decay, lr, ensemble_id
 ):
     model_config = TransformerConfig(
+        embed_d=embed_d,
+        mlp_dim=embed_d * 4,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        softmax=True,
+        activation="relu",
+    )
+    return _make_train_run(
+        model_config, n, p, frac, weight_decay, lr, ensemble_id, seq=True
+    )
+
+
+def create_transformer_encoder_config(
+    embed_d, num_layers, num_heads, n, p, frac, weight_decay, lr, ensemble_id
+):
+    model_config = TransformerEncoderConfig(
         embed_d=embed_d,
         mlp_dim=embed_d * 4,
         num_layers=num_layers,
@@ -193,6 +210,27 @@ def p13_sweep_configs():
         ),
     )
     return mlp + transformer
+
+
+def p13_transformer_encoder_configs():
+    """Self-attention-only transformer (TransformerEncoder) on p=13 n=2 det,
+    mirroring the transformer grid in p13_sweep_configs for comparison with the
+    cross-attending Transformer runs.
+    """
+    return get_config_grid(
+        create_transformer_encoder_config,
+        dict(
+            embed_d=[64],
+            num_layers=[2, 4],
+            num_heads=[4],
+            n=[2],
+            p=[13],
+            frac=[0.9, 0.7, 0.5, 0.3],
+            weight_decay=[1.0, 0.3, 0.1],
+            lr=[1e-3],
+            ensemble_id=[0],
+        ),
+    )
 
 
 def large_p_sweep_configs():
