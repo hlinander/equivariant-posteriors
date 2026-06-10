@@ -5,6 +5,7 @@ from lib.models.conv_small import ConvSmall, ConvSmallConfig
 from lib.models.conv import Conv, ConvConfig
 from lib.models.conv_lap import ConvLAP, ConvLAPConfig
 from lib.models.transformer import Transformer, TransformerConfig
+from lib.models.transformer_encoder import TransformerEncoder, TransformerEncoderConfig
 from lib.models.mlp import MLPClass, MLPClassConfig
 from lib.models.mlp import MLP, MLPConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
@@ -53,6 +54,7 @@ class _ModelFactory:
         self.register(ConvConfig, Conv)
         self.register(ConvLAPConfig, ConvLAP)
         self.register(TransformerConfig, Transformer)
+        self.register(TransformerEncoderConfig, TransformerEncoder)
         self.register(MLPConfig, MLP)
         self.register(MLPClassConfig, MLPClass)
         self.register(MLPProjClassConfig, MLPProjClass)
