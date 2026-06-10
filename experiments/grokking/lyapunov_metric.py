@@ -24,7 +24,8 @@ def _subsample_indices(n_total: int, device, seed: int) -> torch.Tensor:
 
 
 def _compute_ftle(model, xs: torch.Tensor) -> torch.Tensor:
-    """Top FTLE per sample. xs shape: (B, D_in).
+    """Top FTLE per sample. xs shape: (B, *input_shape) — flat (B, D_in) for
+    MLPs or (B, seq, D) for transformers.
 
     Top singular value via eigh of the small (out_dim, out_dim) Gram J J^T —
     avoids batched SVD on small matrices, which has no efficient cusolver path
@@ -32,13 +33,14 @@ def _compute_ftle(model, xs: torch.Tensor) -> torch.Tensor:
     """
 
     def adapter(xi: torch.Tensor) -> torch.Tensor:
-        # xi: (D_in,) single sample (vmap strips the batch dim)
-        return model({"input": xi.reshape(1, -1)})["logits"].squeeze(0)
+        # xi: (*input_shape,) single sample (vmap strips the batch dim)
+        return model({"input": xi.unsqueeze(0)})["logits"].squeeze(0)
 
     out = []
     for start in range(0, xs.shape[0], JACOBIAN_CHUNK):
         jac = torch.func.vmap(torch.func.jacrev(adapter))(xs[start : start + JACOBIAN_CHUNK])
-        jac = jac.reshape(jac.shape[:1] + (-1,) + jac.shape[-1:])
+        # (chunk, out_dim, *input_shape) -> (chunk, out_dim, D_in)
+        jac = jac.reshape(jac.shape[0], jac.shape[1], -1)
         gram = jac @ jac.transpose(-1, -2)
         evs = torch.linalg.eigvalsh(gram)
         out.append(0.5 * torch.log(evs[:, -1].clamp_min(1e-30)))
