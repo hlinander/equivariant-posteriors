@@ -268,8 +268,28 @@ def p23_p31_lyapunov_configs():
     )
 
 
+def p17_lyapunov_configs():
+    """Full MLP grid for p=17 at ensemble_id=2 with the live mean-FTLE hook.
+    Fresh ensemble_id so this is a clean smoke for the new analytics ingest
+    (no resume from prior smoke-set checkpoints).
+    """
+    return get_config_grid(
+        create_mlp_config,
+        dict(
+            width=[256],
+            depth=[2, 4],
+            n=[2],
+            p=[17],
+            frac=[0.3, 0.5, 0.7],
+            weight_decay=[1.0, 0.1],
+            lr=[1e-3],
+            ensemble_id=[2],
+        ),
+    )
+
+
 def create_configs():
-    return p23_p31_lyapunov_configs()
+    return p17_lyapunov_configs()
 
 
 def run(config):
