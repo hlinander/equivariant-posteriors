@@ -8,11 +8,23 @@ from lib.models.transformer import TransformerConfig
 from lib.models.transformer_encoder import TransformerEncoderConfig
 from lib.datasets.finite_field_det import DataFiniteFieldDetConfig
 from lib.generic_ablation import get_config_grid
+from lib.optimizers import adamw_no_decay_norm_bias
 from lib.distributed_trainer import distributed_train
 from experiments.grokking.lyapunov_metric import compute_lyapunov_for_epoch
 
 
-def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq=False):
+def _make_train_run(
+    model_config,
+    n,
+    p,
+    frac,
+    weight_decay,
+    lr,
+    ensemble_id,
+    seq=False,
+    optimizer=torch.optim.AdamW,
+    gradient_clipping=None,
+):
     loss = torch.nn.CrossEntropyLoss()
 
     def ce_loss(output, batch):
@@ -37,10 +49,11 @@ def _make_train_run(model_config, n, p, frac, weight_decay, lr, ensemble_id, seq
         val_data_config=val_data,
         loss=ce_loss,
         optimizer=OptimizerConfig(
-            optimizer=torch.optim.AdamW,
+            optimizer=optimizer,
             kwargs=dict(lr=lr, weight_decay=weight_decay),
         ),
         batch_size=train_data.n_samples,
+        gradient_clipping=gradient_clipping,
         ensemble_id=ensemble_id,
         _version=1,
     )
@@ -100,6 +113,35 @@ def create_transformer_encoder_config(
     )
     return _make_train_run(
         model_config, n, p, frac, weight_decay, lr, ensemble_id, seq=True
+    )
+
+
+def create_transformer_encoder_stable_config(
+    embed_d, num_layers, num_heads, n, p, frac, weight_decay, lr, ensemble_id
+):
+    """TransformerEncoder with the stability fixes: model defaults
+    (pre-LN, sqrt(embed_d) embedding scale) plus no weight decay on
+    normalization params / biases and gradient clipping.
+    """
+    model_config = TransformerEncoderConfig(
+        embed_d=embed_d,
+        mlp_dim=embed_d * 4,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        softmax=True,
+        activation="relu",
+    )
+    return _make_train_run(
+        model_config,
+        n,
+        p,
+        frac,
+        weight_decay,
+        lr,
+        ensemble_id,
+        seq=True,
+        optimizer=adamw_no_decay_norm_bias,
+        gradient_clipping=1.0,
     )
 
 
@@ -223,6 +265,27 @@ def p13_transformer_encoder_configs():
     """
     return get_config_grid(
         create_transformer_encoder_config,
+        dict(
+            embed_d=[64],
+            num_layers=[2, 4],
+            num_heads=[4],
+            n=[2],
+            p=[13],
+            frac=[0.9, 0.7, 0.5, 0.3],
+            weight_decay=[1.0, 0.3, 0.1],
+            lr=[1e-3],
+            ensemble_id=[0],
+        ),
+    )
+
+
+def p13_transformer_encoder_stable_configs():
+    """p13_transformer_encoder_configs grid with the stability fixes
+    (see create_transformer_encoder_stable_config) for comparison against the
+    unfixed TransformerEncoder baseline.
+    """
+    return get_config_grid(
+        create_transformer_encoder_stable_config,
         dict(
             embed_d=[64],
             num_layers=[2, 4],
