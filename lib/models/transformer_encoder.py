@@ -13,6 +13,11 @@ class TransformerEncoderConfig:
     num_heads: int
     softmax: bool
     activation: str = "gelu"
+    # norm_first=False + legacy_embed_scale=True reproduce
+    # lib.models.transformer.Transformer (post-LN, sqrt(32) embedding scale
+    # instead of sqrt(embed_d)).
+    norm_first: bool = True
+    legacy_embed_scale: bool = False
 
     def serialize_human(self):
         return self.__dict__
@@ -32,6 +37,7 @@ class TransformerEncoder(torch.nn.Module):
         self.config = config
         embed_d = config.embed_d
         self.embed = torch.nn.Linear(data_spec.input_shape[-1], embed_d, bias=True)
+        self.embed_scale = math.sqrt(32 if config.legacy_embed_scale else embed_d)
         self.pos_embed = PositionalEncoding(embed_d, dropout=0.0)
         layer = torch.nn.TransformerEncoderLayer(
             d_model=embed_d,
@@ -40,6 +46,7 @@ class TransformerEncoder(torch.nn.Module):
             dropout=0.0,
             batch_first=True,
             activation=config.activation,
+            norm_first=config.norm_first,
         )
         self.transformer = torch.nn.TransformerEncoder(
             layer,
@@ -53,7 +60,7 @@ class TransformerEncoder(torch.nn.Module):
         return self.forward_tensor(batch["input"])
 
     def forward_tensor(self, x):
-        embed = self.embed(x) * math.sqrt(32)
+        embed = self.embed(x) * self.embed_scale
         embed = self.pos_embed(embed)
         tout = self.transformer(embed)
         output = self.debed(tout[:, 0, :])

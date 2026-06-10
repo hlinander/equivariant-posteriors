@@ -86,6 +86,8 @@ def create_transformer_config(
 def create_transformer_encoder_config(
     embed_d, num_layers, num_heads, n, p, frac, weight_decay, lr, ensemble_id
 ):
+    """Legacy overrides (post-LN, sqrt(32) embedding scale) to match the
+    cross-attending Transformer runs, isolating the architecture change."""
     model_config = TransformerEncoderConfig(
         embed_d=embed_d,
         mlp_dim=embed_d * 4,
@@ -93,6 +95,8 @@ def create_transformer_encoder_config(
         num_heads=num_heads,
         softmax=True,
         activation="relu",
+        norm_first=False,
+        legacy_embed_scale=True,
     )
     return _make_train_run(
         model_config, n, p, frac, weight_decay, lr, ensemble_id, seq=True
