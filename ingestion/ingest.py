@@ -68,7 +68,9 @@ ARCHIVE_COPY_WORKERS = 64
 S3_CLIENT_POOL = 80
 _SCHEMA_ENSURED = False
 
-# Observability tables (written into the lake so dashboards can monitor ingestion).
+# Observability: a single append-only event log is the source of truth; the legacy
+# names below are recreated as SQL views over it for dashboard compatibility.
+INGEST_EVENTS_TABLE = "ingest_events"
 INGEST_METRICS_TABLE = "ingest_metrics"
 INGEST_PROGRESS_TABLE = "ingest_progress"
 INGEST_STAGING_SAMPLE_TABLE = "ingest_staging_sample"
@@ -375,144 +377,126 @@ def ensure_ingestion_state_table(conn):
     )
 
 
-def ensure_metrics_tables(conn):
-    """Ensure the ingestion observability tables exist (idempotent).
+def ensure_events_table(conn):
+    """Ensure the single append-only ingestion event log exists (idempotent).
 
-    ingest_metrics: one row per table per cycle (only for tables with activity) —
-        staging depth, files/rows ingested, files archived, duration, error.
-    ingest_progress: a heartbeat written just before each batch is ingested, so a
-        dashboard can see which files are in flight right now (including the batch
-        that was being read when a cycle stalled or failed). table_total_files is
-        the count this table planned to process this cycle, so a live "processed /
-        total" progress bar can be computed mid-cycle (processed = sum of
-        batch_file_count for the cycle+table; total = max(table_total_files)).
-    ingest_staging_sample: one row per table written at the TOP of each cycle (before
-        any ingest), capturing current staging depth. Lets a dashboard show every
-        table's target up front — independent of the sequential drain — and gives a
-        clean arrivals signal sampled before draining (sum(staged_files) = cycle
-        target; the series over cycles shows files arriving).
+    ingest_events is the one source of truth for ingestion analytics; everything
+    else (staging depth, ingest/archive progress, per-cycle metrics, the timeline)
+    derives from it via SQL. Columns are generic; their meaning depends on
+    event_type (see record_events callers and ensure_compat_views):
+
+        cycle_started_at  groups all events of one cycle
+        event_type        cycle_start | staging_sample | table_start | ingest_batch
+                          | ingest_done | archive_start | archive_chunk | archive_done
+                          | table_error
+        table_name        NULL for cycle-level events
+        seq               batch / chunk index
+        file_count        files this event concerns (staged / batch / ingested / archived)
+        byte_count        bytes (staging_sample)
+        row_count         rows (ingest_done)
+        total_files       the phase's target (denominator for a burn-up)
+        detail            error message / free text
+        files             optional in-flight file list (ingest_batch)
     """
     conn.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {INGEST_METRICS_TABLE} (
-            cycle_started_at   TIMESTAMPTZ,
-            table_name         TEXT,
-            staging_file_count BIGINT,
-            staging_bytes      BIGINT,
-            files_ingested     BIGINT,
-            rows_ingested      BIGINT,
-            files_archived     BIGINT,
-            duration_seconds   DOUBLE,
-            error              TEXT,
-            recorded_at        TIMESTAMPTZ
-        )
-        """
-    )
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {INGEST_PROGRESS_TABLE} (
+        CREATE TABLE IF NOT EXISTS {INGEST_EVENTS_TABLE} (
+            ts               TIMESTAMPTZ,
             cycle_started_at TIMESTAMPTZ,
+            event_type       TEXT,
             table_name       TEXT,
-            batch_index      INTEGER,
-            batch_file_count INTEGER,
-            batch_files      TEXT[],
-            table_total_files INTEGER,
-            started_at       TIMESTAMPTZ
-        )
-        """
-    )
-    # Migrate progress tables created before table_total_files existed.
-    conn.execute(
-        f"ALTER TABLE {INGEST_PROGRESS_TABLE} ADD COLUMN IF NOT EXISTS table_total_files INTEGER"
-    )
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {INGEST_STAGING_SAMPLE_TABLE} (
-            cycle_started_at TIMESTAMPTZ,
-            table_name       TEXT,
-            staged_files     BIGINT,
-            staged_bytes     BIGINT,
-            sampled_at       TIMESTAMPTZ
+            seq              INTEGER,
+            file_count       BIGINT,
+            byte_count       BIGINT,
+            row_count        BIGINT,
+            total_files      BIGINT,
+            detail           TEXT,
+            files            TEXT[]
         )
         """
     )
 
 
-def record_progress(
-    conn,
-    cycle_started_at,
-    table_name: str,
-    batch_index: int,
-    batch: list[str],
-    table_total_files: int,
-):
-    """Heartbeat the batch about to be ingested so dashboards see in-flight work.
-
-    table_total_files is the total this table planned to process this cycle, carried
-    on every batch row so a live progress bar can divide processed-so-far by it.
-    """
-    files_arr = "[" + ", ".join("'" + f.replace("'", "''") + "'" for f in batch) + "]"
-    conn.execute(
-        f"""
-        INSERT INTO {INGEST_PROGRESS_TABLE}
-            (cycle_started_at, table_name, batch_index, batch_file_count, batch_files,
-             table_total_files, started_at)
-        VALUES (?, ?, ?, ?, {files_arr}, ?, now())
+def ensure_compat_views(conn):
+    """Recreate the legacy table names as views over ingest_events so existing
+    dashboards keep working. Best-effort — never break ingestion if a view fails."""
+    views = {
+        INGEST_STAGING_SAMPLE_TABLE: f"""
+            SELECT cycle_started_at, table_name,
+                   file_count AS staged_files, byte_count AS staged_bytes, ts AS sampled_at
+            FROM {INGEST_EVENTS_TABLE} WHERE event_type = 'staging_sample'
         """,
-        (cycle_started_at, table_name, batch_index, len(batch), table_total_files),
-    )
+        INGEST_PROGRESS_TABLE: f"""
+            SELECT cycle_started_at, table_name,
+                   seq AS batch_index, file_count AS batch_file_count,
+                   files AS batch_files, total_files AS table_total_files, ts AS started_at
+            FROM {INGEST_EVENTS_TABLE} WHERE event_type = 'ingest_batch'
+        """,
+        INGEST_METRICS_TABLE: f"""
+            SELECT cycle_started_at, table_name,
+                   max(file_count) FILTER (WHERE event_type='staging_sample') AS staging_file_count,
+                   max(byte_count) FILTER (WHERE event_type='staging_sample') AS staging_bytes,
+                   max(file_count) FILTER (WHERE event_type='ingest_done')    AS files_ingested,
+                   max(row_count)  FILTER (WHERE event_type='ingest_done')    AS rows_ingested,
+                   max(file_count) FILTER (WHERE event_type='archive_done')   AS files_archived,
+                   date_diff('second',
+                             min(ts) FILTER (WHERE event_type='table_start'),
+                             max(ts) FILTER (WHERE event_type IN ('archive_done','ingest_done','table_error')))
+                     AS duration_seconds,
+                   any_value(detail) FILTER (WHERE event_type='table_error') AS error,
+                   max(ts) AS recorded_at
+            FROM {INGEST_EVENTS_TABLE}
+            WHERE table_name IS NOT NULL
+            GROUP BY cycle_started_at, table_name
+        """,
+    }
+    for name, select_sql in views.items():
+        # Old schema stored these as base tables; drop so a view can take the name.
+        # DROP TABLE on an existing view errors ("not a table") — that's fine, it just
+        # means the migration already happened; swallow it.
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {name}")
+        except Exception:
+            pass
+        try:
+            conn.execute(f"CREATE OR REPLACE VIEW {name} AS {select_sql}")
+        except Exception as e:
+            print(f"[ingest] WARNING: could not create compat view {name}: {e}")
 
 
-def record_metrics(conn, cycle_started_at, metric_rows: list[dict]):
-    """Bulk-insert one row per active table for this cycle (a single lake snapshot)."""
-    if not metric_rows:
+def record_events(conn, events: list[dict]):
+    """Append rows to the ingest_events log. Each event dict has 'event_type' plus
+    any of: cycle_started_at, table_name, seq, file_count, byte_count, row_count,
+    total_files, detail, files (list[str]). ts is stamped server-side via now()."""
+    if not events:
         return
     values_sql = []
     params = []
-    for m in metric_rows:
-        values_sql.append("(?, ?, ?, ?, ?, ?, ?, ?, ?, now())")
+    for e in events:
+        files = e.get("files")
+        if files:
+            files_lit = "[" + ", ".join("'" + f.replace("'", "''") + "'" for f in files) + "]"
+        else:
+            files_lit = "NULL"
+        values_sql.append(f"(now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, {files_lit})")
         params.extend(
             [
-                cycle_started_at,
-                m["table_name"],
-                m["staging_file_count"],
-                m["staging_bytes"],
-                m["files_ingested"],
-                m["rows_ingested"],
-                m["files_archived"],
-                m["duration_seconds"],
-                m["error"],
+                e.get("cycle_started_at"),
+                e["event_type"],
+                e.get("table_name"),
+                e.get("seq"),
+                e.get("file_count"),
+                e.get("byte_count"),
+                e.get("row_count"),
+                e.get("total_files"),
+                e.get("detail"),
             ]
         )
     conn.execute(
         f"""
-        INSERT INTO {INGEST_METRICS_TABLE}
-            (cycle_started_at, table_name, staging_file_count, staging_bytes,
-             files_ingested, rows_ingested, files_archived, duration_seconds, error,
-             recorded_at)
-        VALUES {", ".join(values_sql)}
-        """,
-        params,
-    )
-
-
-def record_staging_sample(conn, cycle_started_at, samples: list[tuple]):
-    """Bulk-insert a top-of-cycle staging-depth snapshot (one row per table).
-
-    samples is a list of (table_name, staged_files, staged_bytes). Written as a
-    single lake snapshot so a dashboard sees every table's target at cycle start.
-    """
-    if not samples:
-        return
-    values_sql = []
-    params = []
-    for table_name, staged_files, staged_bytes in samples:
-        values_sql.append("(?, ?, ?, ?, now())")
-        params.extend([cycle_started_at, table_name, staged_files, staged_bytes])
-    conn.execute(
-        f"""
-        INSERT INTO {INGEST_STAGING_SAMPLE_TABLE}
-            (cycle_started_at, table_name, staged_files, staged_bytes, sampled_at)
+        INSERT INTO {INGEST_EVENTS_TABLE}
+            (ts, cycle_started_at, event_type, table_name, seq,
+             file_count, byte_count, row_count, total_files, detail, files)
         VALUES {", ".join(values_sql)}
         """,
         params,
@@ -725,25 +709,37 @@ def ingest_table(
             print(f"[ingest]   DRY RUN - would process {f}")
         return 0, 0
 
+    emit = write_progress and cycle_started_at is not None
     total_rows = 0
     total_to_process = len(files_to_process)
+    if emit:
+        record_events(conn, [{
+            "event_type": "table_start", "cycle_started_at": cycle_started_at,
+            "table_name": table_name, "total_files": total_to_process,
+        }])
     for i in range(0, total_to_process, batch_size):
         batch = files_to_process[i : i + batch_size]
         batch_index = i // batch_size + 1
         print(f"[ingest]   Batch {batch_index}: {len(batch)} files")
         # Heartbeat the batch before reading it, so a dashboard sees in-flight work
-        # even while a slow batch is still being fetched from S3. Carry the table's
-        # planned total so a live processed/total progress bar can be computed.
-        if write_progress and cycle_started_at is not None:
-            record_progress(
-                conn, cycle_started_at, table_name, batch_index, batch, total_to_process
-            )
+        # even while a slow batch is still being fetched from S3.
+        if emit:
+            record_events(conn, [{
+                "event_type": "ingest_batch", "cycle_started_at": cycle_started_at,
+                "table_name": table_name, "seq": batch_index, "file_count": len(batch),
+                "total_files": total_to_process, "files": batch,
+            }])
         total_rows += _ingest_batch(conn, table_name, batch)
 
+    if emit:
+        record_events(conn, [{
+            "event_type": "ingest_done", "cycle_started_at": cycle_started_at,
+            "table_name": table_name, "file_count": total_to_process, "row_count": total_rows,
+        }])
     print(
         f"[ingest] Ingested {total_rows} total rows from {len(files_to_process)} files"
     )
-    return len(files_to_process), total_rows
+    return total_to_process, total_rows
 
 
 def archive_processed_files(
@@ -752,10 +748,15 @@ def archive_processed_files(
     staging_prefix: str,
     archive_prefix: str,
     processed_files: set[str],
+    conn=None,
+    cycle_started_at=None,
+    table_name=None,
+    write_events: bool = False,
 ) -> int:
     """Move processed files from staging to archive. Returns the number archived.
 
-    Copies are parallelized with threads, then originals are batch-deleted.
+    Copies are parallelized with threads, then originals are batch-deleted. Emits
+    archive_start / archive_chunk / archive_done events when write_events is set.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -767,12 +768,19 @@ def archive_processed_files(
 
         key = s3_path.replace(f"s3://{bucket}/", "")
         filename = Path(key).name
-        table_name = key.split("/")[1]
-        archive_key = f"{archive_prefix}/{table_name}/{filename}"
+        key_table = key.split("/")[1]
+        archive_key = f"{archive_prefix}/{key_table}/{filename}"
         moves.append((key, archive_key))
 
     if not moves:
         return 0
+
+    emit = write_events and conn is not None and cycle_started_at is not None
+    if emit:
+        record_events(conn, [{
+            "event_type": "archive_start", "cycle_started_at": cycle_started_at,
+            "table_name": table_name, "total_files": len(moves),
+        }])
 
     print(f"[archive] Archiving {len(moves)} files")
 
@@ -800,8 +808,19 @@ def archive_processed_files(
                 Delete={"Objects": [{"Key": src} for src, _ in chunk]},
             )
             done += len(chunk)
+            if emit:
+                record_events(conn, [{
+                    "event_type": "archive_chunk", "cycle_started_at": cycle_started_at,
+                    "table_name": table_name, "seq": i // CHUNK + 1,
+                    "file_count": len(chunk), "total_files": len(moves),
+                }])
             print(f"[archive]   Moved {done}/{len(moves)} files")
 
+    if emit:
+        record_events(conn, [{
+            "event_type": "archive_done", "cycle_started_at": cycle_started_at,
+            "table_name": table_name, "file_count": len(moves),
+        }])
     print(f"[archive] Archived {len(moves)} files")
     return len(moves)
 
@@ -864,7 +883,8 @@ def ingest_all_from_config(config, dry_run: bool = False):
         print("[ingest] Ensuring central database schema exists")
         ensure_central_schema(conn)
         ensure_ingestion_state_table(conn)
-        ensure_metrics_tables(conn)
+        ensure_events_table(conn)
+        ensure_compat_views(conn)
         _SCHEMA_ENSURED = True
 
     # Get already processed files
@@ -873,36 +893,21 @@ def ingest_all_from_config(config, dry_run: bool = False):
     print(f"[ingest] Already processed {len(processed_files)} files")
 
     total_files = 0
-    # Per-cycle observability. cycle_started_at ties together all metric/progress
-    # rows for this pass. Each table's metric row is written as soon as that table
-    # finishes (not batched to cycle end) so the metrics stay live even while a long
-    # cycle is still grinding through the backlog. errors collects per-table failures
-    # so one bad table (e.g. the checkpoint timeout) no longer aborts the cycle.
+    # Per-cycle observability. cycle_started_at ties together every event of this
+    # pass in the ingest_events log; all dashboards/metrics derive from that log.
+    # errors collects per-table failures so one bad table (e.g. a checkpoint timeout)
+    # no longer aborts the cycle — it's recorded as a table_error event and we go on.
     cycle_started_at = datetime.now(timezone.utc)
     errors: list[tuple[str, Exception]] = []
 
-    def _add_metric(table_name, staging_file_count, staging_bytes, files_ingested,
-                    rows_ingested, files_archived, duration_seconds, error):
-        # Skip fully idle tables to keep the metrics table (and snapshot count) lean.
-        if not (staging_file_count or files_ingested or files_archived or error):
+    def _record_events(events):
+        # Event writes must never break ingestion — log and continue on failure.
+        if dry_run or not events:
             return
-        if dry_run:
-            return
-        row = {
-            "table_name": table_name,
-            "staging_file_count": staging_file_count,
-            "staging_bytes": staging_bytes,
-            "files_ingested": files_ingested,
-            "rows_ingested": rows_ingested,
-            "files_archived": files_archived,
-            "duration_seconds": duration_seconds,
-            "error": error,
-        }
-        # Writing metrics must never break ingestion — log and continue on failure.
         try:
-            record_metrics(conn, cycle_started_at, [row])
+            record_events(conn, events)
         except Exception as e:
-            print(f"[ingest] WARNING: failed to record metric for {table_name}: {e}")
+            print(f"[ingest] WARNING: failed to record events: {e}")
 
     try:
         # Dispatch based on staging type
@@ -950,19 +955,16 @@ def ingest_all_from_config(config, dry_run: bool = False):
                         continue
                     staged_cache[table_name] = s
                     samples.append((table_name, len(s), sum(sz for _, sz in s)))
-            if not dry_run:
-                try:
-                    record_staging_sample(conn, cycle_started_at, samples)
-                except Exception as e:
-                    print(f"[ingest] WARNING: failed to record staging sample: {e}")
+            # cycle_start + a staging_sample event per table (every table's target up front)
+            _record_events(
+                [{"event_type": "cycle_start", "cycle_started_at": cycle_started_at}]
+                + [{"event_type": "staging_sample", "cycle_started_at": cycle_started_at,
+                    "table_name": t, "file_count": n, "byte_count": b} for (t, n, b) in samples]
+            )
 
             # Process each table
             for table_name in SYNC_TABLES:
                 table_prefix = f"{config.staging.prefix}/{table_name}"
-                t0 = time.monotonic()
-                staging_file_count = staging_bytes = 0
-                files_processed = rows_ingested = files_archived = 0
-                err = None
                 try:
                     # Reuse the cycle-start listing; fall back to a fresh list only
                     # if the up-front list failed for this table.
@@ -973,9 +975,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
                             s3_client, config.staging.bucket, table_prefix
                         )
                     s3_files = [p for p, _ in staged]
-                    staging_file_count = len(s3_files)
-                    staging_bytes = sum(sz for _, sz in staged)
-                    print(f"[ingest] Found {staging_file_count} files for {table_name}")
+                    print(f"[ingest] Found {len(s3_files)} files for {table_name}")
 
                     # Ingest
                     files_processed, rows_ingested = ingest_table(
@@ -987,24 +987,25 @@ def ingest_all_from_config(config, dry_run: bool = False):
                     # Archive all staging files that have been ingested
                     # (newly processed + any stragglers from prior runs)
                     if not dry_run:
-                        files_archived = archive_processed_files(
+                        archive_processed_files(
                             s3_client,
                             config.staging.bucket,
                             config.staging.prefix,
                             config.staging.archive_prefix,
                             set(s3_files),
+                            conn=conn, cycle_started_at=cycle_started_at,
+                            table_name=table_name, write_events=True,
                         )
                 except Exception as e:
-                    err = str(e)
                     errors.append((table_name, e))
                     print(f"[ingest] ERROR processing {table_name}: {e}")
                     import traceback
 
                     traceback.print_exc()
-                _add_metric(
-                    table_name, staging_file_count, staging_bytes, files_processed,
-                    rows_ingested, files_archived, time.monotonic() - t0, err,
-                )
+                    _record_events([{
+                        "event_type": "table_error", "cycle_started_at": cycle_started_at,
+                        "table_name": table_name, "detail": str(e),
+                    }])
 
         elif config.is_filesystem_staging():
             print(f"[ingest] Using filesystem staging: {config.staging.staging_dir}")
@@ -1013,36 +1014,28 @@ def ingest_all_from_config(config, dry_run: bool = False):
             archive_dir = Path(config.staging.archive_dir)
 
             # Top-of-cycle staging snapshot (see S3 branch for rationale).
-            if not dry_run:
-                samples = []
-                for table_name in SYNC_TABLES:
-                    try:
-                        fs = list_filesystem_files(staging_dir, table_name)
-                        samples.append(
-                            (table_name, len(fs),
-                             sum(Path(f).stat().st_size for f in fs if Path(f).exists()))
-                        )
-                    except Exception as e:
-                        print(f"[ingest] WARNING: staging sample failed for {table_name}: {e}")
+            samples = []
+            for table_name in SYNC_TABLES:
                 try:
-                    record_staging_sample(conn, cycle_started_at, samples)
+                    fs = list_filesystem_files(staging_dir, table_name)
+                    samples.append(
+                        (table_name, len(fs),
+                         sum(Path(f).stat().st_size for f in fs if Path(f).exists()))
+                    )
                 except Exception as e:
-                    print(f"[ingest] WARNING: failed to record staging sample: {e}")
+                    print(f"[ingest] WARNING: staging sample failed for {table_name}: {e}")
+            _record_events(
+                [{"event_type": "cycle_start", "cycle_started_at": cycle_started_at}]
+                + [{"event_type": "staging_sample", "cycle_started_at": cycle_started_at,
+                    "table_name": t, "file_count": n, "byte_count": b} for (t, n, b) in samples]
+            )
 
             # Process each table
             for table_name in SYNC_TABLES:
-                t0 = time.monotonic()
-                staging_file_count = staging_bytes = 0
-                files_processed = rows_ingested = files_archived = 0
-                err = None
                 try:
                     # List files in staging directory
                     fs_files = list_filesystem_files(staging_dir, table_name)
-                    staging_file_count = len(fs_files)
-                    staging_bytes = sum(
-                        Path(f).stat().st_size for f in fs_files if Path(f).exists()
-                    )
-                    print(f"[ingest] Found {staging_file_count} files for {table_name}")
+                    print(f"[ingest] Found {len(fs_files)} files for {table_name}")
 
                     # Ingest (DuckDB's read_parquet works with filesystem paths)
                     files_processed, rows_ingested = ingest_table(
@@ -1056,18 +1049,16 @@ def ingest_all_from_config(config, dry_run: bool = False):
                         for file_path_str in fs_files:
                             file_path = Path(file_path_str)
                             move_filesystem_file(file_path, archive_dir, table_name)
-                            files_archived += 1
                 except Exception as e:
-                    err = str(e)
                     errors.append((table_name, e))
                     print(f"[ingest] ERROR processing {table_name}: {e}")
                     import traceback
 
                     traceback.print_exc()
-                _add_metric(
-                    table_name, staging_file_count, staging_bytes, files_processed,
-                    rows_ingested, files_archived, time.monotonic() - t0, err,
-                )
+                    _record_events([{
+                        "event_type": "table_error", "cycle_started_at": cycle_started_at,
+                        "table_name": table_name, "detail": str(e),
+                    }])
 
         else:
             raise ValueError(f"Unknown staging type: {config.staging.type}")
