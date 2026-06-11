@@ -60,11 +60,12 @@ INGEST_BATCH_SIZE = 200
 # a probe showed ~3x more files/s at 16-way vs the 8-core default. RAM is ample, so
 # oversubscribe threads to keep more concurrent GETs in flight.
 S3_READ_THREADS = 16
-# Archiving (staging->archive copy + delete) is server-side and latency-bound, so it
-# scales with concurrency the same way reads do. Default boto3 pool is 10, so the
-# client pool below must be at least this large or workers just queue on connections.
-ARCHIVE_COPY_WORKERS = 32
-S3_CLIENT_POOL = 64
+# Archiving (staging->archive copy + delete) is server-side; under the storage
+# throttle it's backend-bound, so concurrency has a low ceiling (a probe showed
+# ~4/6/8 files/s at 10/32/64 workers). Still worth running wide. Default boto3 pool
+# is 10, so the client pool must be at least this large or workers queue on sockets.
+ARCHIVE_COPY_WORKERS = 64
+S3_CLIENT_POOL = 80
 _SCHEMA_ENSURED = False
 
 # Observability tables (written into the lake so dashboards can monitor ingestion).
@@ -756,7 +757,7 @@ def archive_processed_files(
 
     Copies are parallelized with threads, then originals are batch-deleted.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
 
     # Build list of (source_key, dest_key) pairs
     moves = []
@@ -784,24 +785,22 @@ def archive_processed_files(
             Key=dest,
         )
 
+    # Move in durable chunks: parallel-copy a chunk, then delete those sources,
+    # before moving to the next. A restart (e.g. a deploy) loses at most one chunk
+    # of progress instead of the whole archive — the previous copy-all-then-delete
+    # -all meant any interruption re-copied every file next cycle (straggler pile-up).
+    CHUNK = 1000
+    done = 0
     with ThreadPoolExecutor(max_workers=ARCHIVE_COPY_WORKERS) as pool:
-        futures = {pool.submit(copy_one, m): m for m in moves}
-        done = 0
-        for future in as_completed(futures):
-            future.result()  # raise on error
-            done += 1
-            if done % 1000 == 0 or done == len(moves):
-                print(f"[archive]   Copied {done}/{len(moves)} files")
-
-    # Batch delete originals (S3 DeleteObjects allows up to 1000 keys per call)
-    source_keys = [src for src, _ in moves]
-    for i in range(0, len(source_keys), 1000):
-        batch = source_keys[i : i + 1000]
-        s3_client.delete_objects(
-            Bucket=bucket,
-            Delete={"Objects": [{"Key": k} for k in batch]},
-        )
-        print(f"[archive]   Deleted batch {i // 1000 + 1}: {len(batch)} files")
+        for i in range(0, len(moves), CHUNK):
+            chunk = moves[i : i + CHUNK]
+            list(pool.map(copy_one, chunk))  # raises on first error
+            s3_client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": src} for src, _ in chunk]},
+            )
+            done += len(chunk)
+            print(f"[archive]   Moved {done}/{len(moves)} files")
 
     print(f"[archive] Archived {len(moves)} files")
     return len(moves)
