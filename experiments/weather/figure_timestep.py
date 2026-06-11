@@ -17,6 +17,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as patheffects
 from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
 
@@ -24,60 +25,81 @@ HERE = Path(__file__).parent
 
 NSIDE = 64
 N_LEVELS = 13
-RNG = np.random.default_rng(7)
+SAMPLE_PATH = HERE / "example_data" / "figure_sample_2019-06-01.npz"
+
+# surface vars: [msl, u10, v10, t2m]; upper vars: [z, q, t, u, v],
+# levels ordered 1000 hPa (index 0) -> 50 hPa
+VARIABLES = {
+    "t2m": dict(surface_var=3, upper_var=2),  # temperature
+    "u10": dict(surface_var=1, upper_var=3),  # u-wind
+}
 
 # --- octant cutout / shell geometry --------------------------------------
+# The solid inner sphere is the surface; the 13 upper levels stack outward
+# (1000 hPa just above the surface, 50 hPa outermost).
 WEDGE = 90.0  # octant: lon in [0, WEDGE], lat in [0, 90] removed
-N_LAYERS = 1 + N_LEVELS  # surface + upper levels
+N_LAYERS = N_LEVELS  # shells: one per upper level
 R_OUT = 1.0
-DR_SURFACE = 0.05
 DR_LEVEL = 0.034
 CMAP = "plasma"
-CLIM = (-1.3, 2.2)
-
-
-def synfast_nest(seed):
-    ell = np.arange(3 * NSIDE)
-    cl = 1.0 / (1.0 + ell.astype(float)) ** 3.0
-    np.random.seed(seed)
-    m = healpy.synfast(cl, NSIDE)
-    m = healpy.reorder(m, r2n=True)
-    return m / m.std()
 
 
 class Fields:
-    """Plausible weather-looking fields on the HEALPix grid.
+    """Real ERA5 validation sample on the HEALPix grid (nested ordering).
 
-    Static part (latitude gradient + land/topography from the real masks)
-    plus smooth random 'weather' that drifts eastward with time.
+    Surface variable on the solid inner sphere, the upper variable on the
+    13 pressure-level shells stacked above it.
+    Produced by extract_sample_pair.py on the cluster.
     """
 
-    def __init__(self):
-        masks = np.load(HERE / "masks" / "masks_hp_64.npy")
-        self.land = masks[0]
-        self.topo = masks[2]
-        self.noise_a = synfast_nest(3)
-        self.noise_b = synfast_nest(11)
+    def __init__(
+        self,
+        surface_var,
+        upper_var,
+        path=SAMPLE_PATH,
+        denormalize=True,
+        azimuth=0.0,
+        upper_sigma=None,
+        upper_trend=1.0,
+    ):
+        """upper_sigma / upper_trend: visualization middle ground between
+        normalized and absolute. Each upper level's spatial variation is
+        rendered with fixed amplitude `upper_sigma` (physical units), and the
+        vertical trend of the level means is kept but compressed by the
+        factor `upper_trend` (1 = true means, 0 = flat like normalized),
+        anchored at the lowest level (1000 hPa)."""
+        d = np.load(path)
+        self.azimuth = azimuth  # rotates the data under the fixed cutout
 
-    def _pix(self, lon, lat):
-        return healpy.ang2pix(NSIDE, lon % 360.0, lat, nest=True, lonlat=True)
+        def field(key, var, mean, std):
+            arr = d[key] * std + mean if denormalize else d[key]
+            return arr[var].astype(np.float32)
+
+        self.surface = {
+            t: field(f"{key}_surface", surface_var, d["mean_surface"], d["std_surface"])
+            for t, key in ((0, "input"), (1, "target"))
+        }
+        upper_std = upper_sigma if upper_sigma is not None else d["std_upper"]
+        mean_upper = d["mean_upper"]
+        if upper_trend != 1.0:
+            anchor = mean_upper[:, :1]
+            mean_upper = anchor + upper_trend * (mean_upper - anchor)
+        self.upper = {
+            t: field(f"{key}_upper", upper_var, mean_upper, upper_std)
+            for t, key in ((0, "input"), (1, "target"))
+        }
+        self.time = str(d["time"])
+        allv = np.concatenate([self.surface[0], self.upper[0].ravel()])
+        self.clim = (np.percentile(allv, 1), np.percentile(allv, 99))
 
     def sample(self, lon, lat, level, t):
         """level: 0 = surface, 1..N_LEVELS = upper levels. t: 0 or 1."""
-        drift = 14.0 * t
-        pix = self._pix(lon, lat)
-        pix_adv = self._pix(lon - drift, lat)
-        latw = np.cos(np.radians(lat)) ** 3
+        pix = healpy.ang2pix(
+            NSIDE, (np.asarray(lon) + self.azimuth) % 360.0, lat, nest=True, lonlat=True
+        )
         if level == 0:
-            static = -0.85 + 1.9 * latw + 0.18 * self.land[pix] - 0.15 * self.topo[pix]
-            noise = 0.5 * self.noise_a[pix_adv]
-        else:
-            k = level - 1
-            alpha = (k / max(N_LEVELS - 1, 1)) * np.pi / 2
-            n = np.cos(alpha) * self.noise_a[pix_adv] + np.sin(alpha) * self.noise_b[pix_adv]
-            static = -0.5 + (1.7 - 0.06 * k) * latw - 0.08 * k
-            noise = 0.38 * n
-        return static + noise
+            return self.surface[t][pix]
+        return self.upper[t][level - 1][pix]
 
 
 def lonlat_to_xyz(lon, lat, r):
@@ -104,11 +126,15 @@ def grid_mesh(lon2d, lat2d, r2d, scalars):
 
 
 def layer_radii(layer):
-    """Outer/inner radius of layer (0 = surface, 1.. = upper levels)."""
-    if layer == 0:
-        return R_OUT, R_OUT - DR_SURFACE
-    r_out = R_OUT - DR_SURFACE - (layer - 1) * DR_LEVEL
+    """Outer/inner radius of shell `layer` (0 = outermost = 50 hPa)."""
+    r_out = R_OUT - layer * DR_LEVEL
     return r_out, r_out - DR_LEVEL
+
+
+def shell_level(layer):
+    """Field level of shell `layer`: outermost shell is the top of the
+    atmosphere (50 hPa), the innermost is 1000 hPa."""
+    return N_LEVELS - layer
 
 
 R_CORE = layer_radii(N_LAYERS - 1)[1]
@@ -137,7 +163,7 @@ def banded_face(fields, t, lat, lon, n_per_layer=6):
         lat2d = np.full_like(r2d, lat) if fixed_lat else sweep2d
         lon2d = sweep2d if fixed_lat else np.full_like(r2d, lon)
         parts.append((r2d, lat2d, lon2d))
-        s_parts.append(fields.sample(lon2d, lat2d, layer, t))
+        s_parts.append(fields.sample(lon2d, lat2d, shell_level(layer), t))
     r2d = np.concatenate([p[0] for p in parts], axis=0)
     lat2d = np.concatenate([p[1] for p in parts], axis=0)
     lon2d = np.concatenate([p[2] for p in parts], axis=0)
@@ -188,21 +214,20 @@ def render_globe(fields, t, path, size=1100):
     pl.set_background("white")
     common = dict(
         cmap=CMAP,
-        clim=CLIM,
+        clim=fields.clim,
         show_scalar_bar=False,
         lighting=False,
     )
-    # outer sphere minus the octant: full southern half + partial northern half
-    pl.add_mesh(sphere_patch(fields, t, 0, R_OUT, (-90, 0), (0, 360)), **common)
-    pl.add_mesh(sphere_patch(fields, t, 0, R_OUT, (0, 90), (WEDGE, 360)), **common)
+    # outer sphere (50 hPa) minus the octant: full southern half + partial north
+    top = shell_level(0)
+    pl.add_mesh(sphere_patch(fields, t, top, R_OUT, (-90, 0), (0, 360)), **common)
+    pl.add_mesh(sphere_patch(fields, t, top, R_OUT, (0, 90), (WEDGE, 360)), **common)
     # cut faces: two meridional quarter-disk walls + equatorial shelf
     pl.add_mesh(banded_face(fields, t, np.linspace(0, 90, 130), 0.0), **common)
     pl.add_mesh(banded_face(fields, t, np.linspace(0, 90, 130), WEDGE), **common)
     pl.add_mesh(banded_face(fields, t, 0.0, np.linspace(0, WEDGE, 130)), **common)
-    # floor of the cutout: the deepest level's surface
-    pl.add_mesh(
-        sphere_patch(fields, t, N_LEVELS, R_CORE, (0, 90), (0, WEDGE)), **common
-    )
+    # floor of the cutout: the solid inner sphere is the surface field
+    pl.add_mesh(sphere_patch(fields, t, 0, R_CORE, (0, 90), (0, WEDGE)), **common)
     pl.add_mesh(
         layer_separators(),
         color="#222233",
@@ -244,9 +269,15 @@ def pear_image(px=320):
             continue
     img = Image.new("RGBA", (font.size + 40, font.size + 40), (0, 0, 0, 0))
     ImageDraw.Draw(img).text((20, 20), "\U0001f350", font=font, embedded_color=True)
-    bbox = img.getbbox()
-    img = img.crop(bbox).resize((px, px), Image.LANCZOS)
-    return np.asarray(img)
+    img = img.crop(img.getbbox())
+    # resize with premultiplied alpha to avoid dark fringing at the edges
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    arr[..., :3] *= arr[..., 3:]
+    img = Image.fromarray((arr * 255).astype(np.uint8)).resize((px, px), Image.LANCZOS)
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    alpha = np.maximum(arr[..., 3:], 1e-3)
+    arr[..., :3] = np.clip(arr[..., :3] / alpha, 0, 1)
+    return arr
 
 
 def crop_alpha(img, pad=8):
@@ -258,32 +289,36 @@ def crop_alpha(img, pad=8):
     return img[r0 : r1 + 1 + pad, c0 : c1 + 1 + pad]
 
 
-def compose(globe0_path, globe1_path, out_base):
+def compose(globe0_path, globe1_path, out_base, pdf=True, transparent=True):
     g0 = crop_alpha(plt.imread(globe0_path))
     g1 = crop_alpha(plt.imread(globe1_path))
     pear = pear_image()
 
     fig = plt.figure(figsize=(12, 5.2))
-    label_kw = dict(fontsize=46, color="#555555", ha="center")
+    label_kw = dict(fontsize=46, color="white", ha="center")
 
     ax0 = fig.add_axes([0.015, 0.02, 0.36, 0.78])
     ax0.imshow(g0)
     ax0.axis("off")
     fig.text(0.195, 0.84, r"$t_0$", **label_kw)
 
-    axp = fig.add_axes([0.42, 0.42, 0.16, 0.42])
+    axp = fig.add_axes([0.42, 0.46, 0.16, 0.42])
     axp.imshow(pear)
     axp.axis("off")
 
-    axa = fig.add_axes([0.375, 0.05, 0.25, 0.40])
+    # arrow axis spans the same height as the globes so y=0.5 is the equator
+    axa = fig.add_axes([0.375, 0.02, 0.25, 0.78])
     axa.axis("off")
     axa.set_xlim(0, 1)
     axa.set_ylim(0, 1)
-    axa.annotate(
+    ann = axa.annotate(
         "",
         xy=(1.0, 0.5),
         xytext=(0.0, 0.5),
-        arrowprops=dict(arrowstyle="-|>", lw=4.5, color="black", mutation_scale=45),
+        arrowprops=dict(arrowstyle="-|>", lw=4.5, color="white", mutation_scale=45),
+    )
+    ann.arrow_patch.set_path_effects(
+        [patheffects.withStroke(linewidth=8, foreground="#2b2b2b")]
     )
 
     ax1 = fig.add_axes([0.625, 0.02, 0.36, 0.78])
@@ -291,27 +326,75 @@ def compose(globe0_path, globe1_path, out_base):
     ax1.axis("off")
     fig.text(0.805, 0.84, r"$t_0 + \Delta t$", **label_kw)
 
-    fig.patches.append(
-        plt.Rectangle(
-            (0.004, 0.008),
-            0.992,
-            0.984,
-            transform=fig.transFigure,
-            fill=False,
-            edgecolor="#1a1a1a",
-            linewidth=6,
-        )
-    )
-    fig.savefig(f"{out_base}.png", dpi=200, facecolor="white")
-    fig.savefig(f"{out_base}.pdf", facecolor="white")
+    save_kw = dict(transparent=True) if transparent else dict(facecolor="white")
+    fig.savefig(f"{out_base}.png", dpi=200, **save_kw)
+    if pdf:
+        fig.savefig(f"{out_base}.pdf", **save_kw)
     plt.close(fig)
 
 
+def contact_sheet(paths, labels, out_path, n_cols=2):
+    n_rows = int(np.ceil(len(paths) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 7, n_rows * 3.4))
+    for ax in np.asarray(axes).ravel():
+        ax.axis("off")
+    for ax, path, label in zip(np.asarray(axes).ravel(), paths, labels):
+        ax.imshow(plt.imread(path))
+        ax.set_title(label, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, facecolor="white")
+    plt.close(fig)
+
+
+def final_figure(tmp):
+    """The selected version: t2m, azimuth 0, sigma 12, trend 0.5."""
+    fields = Fields(**VARIABLES["t2m"], azimuth=0, upper_sigma=12.0, upper_trend=0.5)
+    globes = [tmp / f"globe_final_t{t}.png" for t in (0, 1)]
+    for t, globe in enumerate(globes):
+        if not globe.exists():
+            render_globe(fields, t=t, path=globe)
+    compose(*globes, HERE / "figure_timestep")
+    print("wrote", HERE / "figure_timestep.png")
+
+
+def variant_sweep(tmp):
+    out_dir = HERE / "figure_timestep_variants"
+    out_dir.mkdir(exist_ok=True)
+    angles = range(0, 360, 45)
+    for var_name, var in VARIABLES.items():
+        for denormalize, suffix in ((True, ""), (False, "_normalized")):
+            variants = []
+            for az in angles:
+                fields = Fields(**var, denormalize=denormalize, azimuth=az)
+                globes = [
+                    tmp / f"globe_{var_name}{suffix}_az{az:03d}_t{t}.png"
+                    for t in (0, 1)
+                ]
+                for t, globe in enumerate(globes):
+                    if not globe.exists():
+                        render_globe(fields, t=t, path=globe)
+                base = out_dir / f"{var_name}{suffix}_az{az:03d}"
+                compose(*globes, base, pdf=False)
+                variants.append(f"{base}.png")
+                print("wrote", f"{base}.png", flush=True)
+            sheet = out_dir / f"overview_{var_name}{suffix}.png"
+            contact_sheet(variants, [f"azimuth {az}°" for az in angles], sheet)
+            print("wrote", sheet, flush=True)
+
+
 if __name__ == "__main__":
-    fields = Fields()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="render all variable/normalization/azimuth variants",
+    )
+    args = parser.parse_args()
     tmp = HERE / ".figure_timestep_tmp"
     tmp.mkdir(exist_ok=True)
-    render_globe(fields, t=0, path=tmp / "globe_t0.png")
-    render_globe(fields, t=1, path=tmp / "globe_t1.png")
-    compose(tmp / "globe_t0.png", tmp / "globe_t1.png", HERE / "figure_timestep")
-    print("wrote", HERE / "figure_timestep.png")
+    if args.sweep:
+        variant_sweep(tmp)
+    else:
+        final_figure(tmp)
