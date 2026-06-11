@@ -8,6 +8,7 @@ log of the top singular value of the per-sample input->logits Jacobian via
 `checkpoint_sample_metric` analytics table.
 """
 import torch
+from torch.nn.attention import sdpa_kernel, SDPBackend
 
 import lib.render_duck as duck
 
@@ -38,7 +39,11 @@ def _compute_ftle(model, xs: torch.Tensor) -> torch.Tensor:
 
     out = []
     for start in range(0, xs.shape[0], JACOBIAN_CHUNK):
-        jac = torch.func.vmap(torch.func.jacrev(adapter))(xs[start : start + JACOBIAN_CHUNK])
+        # Fused attention backward has no vmap batching rule, so vmap falls
+        # back to a serial per-sample loop; the math backend decomposes
+        # attention into batchable ops (~250x faster here, no-op for MLPs).
+        with sdpa_kernel([SDPBackend.MATH]):
+            jac = torch.func.vmap(torch.func.jacrev(adapter))(xs[start : start + JACOBIAN_CHUNK])
         # (chunk, out_dim, *input_shape) -> (chunk, out_dim, D_in)
         jac = jac.reshape(jac.shape[0], jac.shape[1], -1)
         gram = jac @ jac.transpose(-1, -2)
