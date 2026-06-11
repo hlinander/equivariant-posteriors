@@ -785,29 +785,35 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
     total_files = 0
     # Per-cycle observability. cycle_started_at ties together all metric/progress
-    # rows for this pass; metric_rows is flushed in a single lake snapshot at the
-    # end. errors collects per-table failures so one bad table (e.g. the checkpoint
-    # timeout) no longer aborts the whole cycle — we record it and move on.
+    # rows for this pass. Each table's metric row is written as soon as that table
+    # finishes (not batched to cycle end) so the metrics stay live even while a long
+    # cycle is still grinding through the backlog. errors collects per-table failures
+    # so one bad table (e.g. the checkpoint timeout) no longer aborts the cycle.
     cycle_started_at = datetime.now(timezone.utc)
-    metric_rows: list[dict] = []
     errors: list[tuple[str, Exception]] = []
 
     def _add_metric(table_name, staging_file_count, staging_bytes, files_ingested,
                     rows_ingested, files_archived, duration_seconds, error):
         # Skip fully idle tables to keep the metrics table (and snapshot count) lean.
-        if staging_file_count or files_ingested or files_archived or error:
-            metric_rows.append(
-                {
-                    "table_name": table_name,
-                    "staging_file_count": staging_file_count,
-                    "staging_bytes": staging_bytes,
-                    "files_ingested": files_ingested,
-                    "rows_ingested": rows_ingested,
-                    "files_archived": files_archived,
-                    "duration_seconds": duration_seconds,
-                    "error": error,
-                }
-            )
+        if not (staging_file_count or files_ingested or files_archived or error):
+            return
+        if dry_run:
+            return
+        row = {
+            "table_name": table_name,
+            "staging_file_count": staging_file_count,
+            "staging_bytes": staging_bytes,
+            "files_ingested": files_ingested,
+            "rows_ingested": rows_ingested,
+            "files_archived": files_archived,
+            "duration_seconds": duration_seconds,
+            "error": error,
+        }
+        # Writing metrics must never break ingestion — log and continue on failure.
+        try:
+            record_metrics(conn, cycle_started_at, [row])
+        except Exception as e:
+            print(f"[ingest] WARNING: failed to record metric for {table_name}: {e}")
 
     try:
         # Dispatch based on staging type
@@ -918,13 +924,6 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
         else:
             raise ValueError(f"Unknown staging type: {config.staging.type}")
-
-        # Flush this cycle's metrics as a single lake snapshot.
-        if not dry_run:
-            try:
-                record_metrics(conn, cycle_started_at, metric_rows)
-            except Exception as e:
-                print(f"[ingest] WARNING: failed to record ingest metrics: {e}")
 
         print(f"[ingest] Ingestion complete. Processed {total_files} files.")
     finally:
