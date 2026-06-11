@@ -784,14 +784,23 @@ def archive_processed_files(
 
     print(f"[archive] Archiving {len(moves)} files")
 
-    # Parallel copy
+    # Parallel copy. Tolerate a missing source: under heavy delete load RGW listing
+    # can briefly return an already-deleted key, and one such file must not abort the
+    # whole table's archive (which would keep staging from ever draining).
+    from botocore.exceptions import ClientError
+
     def copy_one(src_dest):
         src, dest = src_dest
-        s3_client.copy_object(
-            Bucket=bucket,
-            CopySource={"Bucket": bucket, "Key": src},
-            Key=dest,
-        )
+        try:
+            s3_client.copy_object(
+                Bucket=bucket,
+                CopySource={"Bucket": bucket, "Key": src},
+                Key=dest,
+            )
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NoSuchObject"):
+                return  # source already gone — effectively already archived
+            raise
 
     # Move in durable chunks: parallel-copy a chunk, then delete those sources,
     # before moving to the next. A restart (e.g. a deploy) loses at most one chunk
