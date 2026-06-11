@@ -23,6 +23,7 @@ The ingestion process uses AnalyticsConfig from env.py and automatically handles
 
 import argparse
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 import duckdb
 
@@ -53,6 +54,10 @@ SYNC_TABLES = [
 TYPES = ["int", "float", "text"]
 INGEST_BATCH_SIZE = 50
 _SCHEMA_ENSURED = False
+
+# Observability tables (written into the lake so dashboards can monitor ingestion).
+INGEST_METRICS_TABLE = "ingest_metrics"
+INGEST_PROGRESS_TABLE = "ingest_progress"
 
 
 def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str, s3_url_style: str = "path"):
@@ -353,6 +358,91 @@ def ensure_ingestion_state_table(conn):
     )
 
 
+def ensure_metrics_tables(conn):
+    """Ensure the ingestion observability tables exist (idempotent).
+
+    ingest_metrics: one row per table per cycle (only for tables with activity) —
+        staging depth, files/rows ingested, files archived, duration, error.
+    ingest_progress: a heartbeat written just before each batch is ingested, so a
+        dashboard can see which files are in flight right now (including the batch
+        that was being read when a cycle stalled or failed).
+    """
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INGEST_METRICS_TABLE} (
+            cycle_started_at   TIMESTAMPTZ,
+            table_name         TEXT,
+            staging_file_count BIGINT,
+            staging_bytes      BIGINT,
+            files_ingested     BIGINT,
+            rows_ingested      BIGINT,
+            files_archived     BIGINT,
+            duration_seconds   DOUBLE,
+            error              TEXT,
+            recorded_at        TIMESTAMPTZ
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INGEST_PROGRESS_TABLE} (
+            cycle_started_at TIMESTAMPTZ,
+            table_name       TEXT,
+            batch_index      INTEGER,
+            batch_file_count INTEGER,
+            batch_files      TEXT[],
+            started_at       TIMESTAMPTZ
+        )
+        """
+    )
+
+
+def record_progress(conn, cycle_started_at, table_name: str, batch_index: int, batch: list[str]):
+    """Heartbeat the batch about to be ingested so dashboards see in-flight work."""
+    files_arr = "[" + ", ".join("'" + f.replace("'", "''") + "'" for f in batch) + "]"
+    conn.execute(
+        f"""
+        INSERT INTO {INGEST_PROGRESS_TABLE}
+            (cycle_started_at, table_name, batch_index, batch_file_count, batch_files, started_at)
+        VALUES (?, ?, ?, ?, {files_arr}, now())
+        """,
+        (cycle_started_at, table_name, batch_index, len(batch)),
+    )
+
+
+def record_metrics(conn, cycle_started_at, metric_rows: list[dict]):
+    """Bulk-insert one row per active table for this cycle (a single lake snapshot)."""
+    if not metric_rows:
+        return
+    values_sql = []
+    params = []
+    for m in metric_rows:
+        values_sql.append("(?, ?, ?, ?, ?, ?, ?, ?, ?, now())")
+        params.extend(
+            [
+                cycle_started_at,
+                m["table_name"],
+                m["staging_file_count"],
+                m["staging_bytes"],
+                m["files_ingested"],
+                m["rows_ingested"],
+                m["files_archived"],
+                m["duration_seconds"],
+                m["error"],
+            ]
+        )
+    conn.execute(
+        f"""
+        INSERT INTO {INGEST_METRICS_TABLE}
+            (cycle_started_at, table_name, staging_file_count, staging_bytes,
+             files_ingested, rows_ingested, files_archived, duration_seconds, error,
+             recorded_at)
+        VALUES {", ".join(values_sql)}
+        """,
+        params,
+    )
+
+
 def get_processed_files(conn) -> set[str]:
     """Get set of already processed file paths"""
     result = conn.execute("SELECT DISTINCT file_path FROM ingestion_state").fetchall()
@@ -396,6 +486,20 @@ def list_s3_files(s3_client, bucket: str, prefix: str) -> list[str]:
                 files.append(f"s3://{bucket}/{key}")
 
     return files
+
+
+def list_s3_files_with_sizes(s3_client, bucket: str, prefix: str) -> list[tuple[str, int]]:
+    """List parquet files in an S3 prefix with their sizes, in a single listing pass."""
+    out = []
+    paginator = s3_client.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith(".parquet"):
+                out.append((f"s3://{bucket}/{key}", obj["Size"]))
+
+    return out
 
 
 def move_s3_file(s3_client, bucket: str, source_key: str, dest_key: str):
@@ -515,37 +619,44 @@ def ingest_table(
     processed_files: set[str],
     dry_run: bool = False,
     batch_size: int = INGEST_BATCH_SIZE,
-) -> int:
+    cycle_started_at=None,
+    write_progress: bool = False,
+) -> tuple[int, int]:
     """
     Ingest a single unified table, splitting by type.
 
     Files are processed in batches to balance S3 round-trips against memory.
 
-    Returns the number of files processed.
+    Returns (files_processed, rows_ingested).
     """
     files_to_process = [f for f in parquet_files if f not in processed_files]
 
     if not files_to_process:
         print(f"[ingest] No new files to process for {table_name}")
-        return 0
+        return 0, 0
 
     print(f"[ingest] Processing {len(files_to_process)} files for {table_name}")
 
     if dry_run:
         for f in files_to_process:
             print(f"[ingest]   DRY RUN - would process {f}")
-        return 0
+        return 0, 0
 
     total_rows = 0
     for i in range(0, len(files_to_process), batch_size):
         batch = files_to_process[i : i + batch_size]
-        print(f"[ingest]   Batch {i // batch_size + 1}: {len(batch)} files")
+        batch_index = i // batch_size + 1
+        print(f"[ingest]   Batch {batch_index}: {len(batch)} files")
+        # Heartbeat the batch before reading it, so a dashboard sees in-flight work
+        # even while a slow batch is still being fetched from S3.
+        if write_progress and cycle_started_at is not None:
+            record_progress(conn, cycle_started_at, table_name, batch_index, batch)
         total_rows += _ingest_batch(conn, table_name, batch)
 
     print(
         f"[ingest] Ingested {total_rows} total rows from {len(files_to_process)} files"
     )
-    return len(files_to_process)
+    return len(files_to_process), total_rows
 
 
 def archive_processed_files(
@@ -554,8 +665,8 @@ def archive_processed_files(
     staging_prefix: str,
     archive_prefix: str,
     processed_files: set[str],
-):
-    """Move processed files from staging to archive.
+) -> int:
+    """Move processed files from staging to archive. Returns the number archived.
 
     Copies are parallelized with threads, then originals are batch-deleted.
     """
@@ -574,7 +685,7 @@ def archive_processed_files(
         moves.append((key, archive_key))
 
     if not moves:
-        return
+        return 0
 
     print(f"[archive] Archiving {len(moves)} files")
 
@@ -607,6 +718,7 @@ def archive_processed_files(
         print(f"[archive]   Deleted batch {i // 100 + 1}: {len(batch)} files")
 
     print(f"[archive] Archived {len(moves)} files")
+    return len(moves)
 
 
 def ingest_all_from_config(config, dry_run: bool = False):
@@ -663,6 +775,7 @@ def ingest_all_from_config(config, dry_run: bool = False):
         print("[ingest] Ensuring central database schema exists")
         ensure_central_schema(conn)
         ensure_ingestion_state_table(conn)
+        ensure_metrics_tables(conn)
         _SCHEMA_ENSURED = True
 
     # Get already processed files
@@ -671,75 +784,157 @@ def ingest_all_from_config(config, dry_run: bool = False):
     print(f"[ingest] Already processed {len(processed_files)} files")
 
     total_files = 0
+    # Per-cycle observability. cycle_started_at ties together all metric/progress
+    # rows for this pass; metric_rows is flushed in a single lake snapshot at the
+    # end. errors collects per-table failures so one bad table (e.g. the checkpoint
+    # timeout) no longer aborts the whole cycle — we record it and move on.
+    cycle_started_at = datetime.now(timezone.utc)
+    metric_rows: list[dict] = []
+    errors: list[tuple[str, Exception]] = []
 
-    # Dispatch based on staging type
-    if config.is_s3_staging():
-        print(
-            f"[ingest] Using S3 staging: s3://{config.staging.bucket}/{config.staging.prefix}"
-        )
-
-        s3 = config.staging.s3
-
-        # Configure S3 credentials in DuckDB (for read_parquet)
-        ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint, s3.url_style)
-
-        # Get S3 client for file operations (list/move)
-        s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint, s3.url_style)
-
-        # Process each table
-        for table_name in SYNC_TABLES:
-            table_prefix = f"{config.staging.prefix}/{table_name}"
-
-            # List files in S3
-            s3_files = list_s3_files(s3_client, config.staging.bucket, table_prefix)
-            print(f"[ingest] Found {len(s3_files)} files for {table_name}")
-
-            # Ingest
-            files_processed = ingest_table(
-                conn, table_name, s3_files, processed_files, dry_run
+    def _add_metric(table_name, staging_file_count, staging_bytes, files_ingested,
+                    rows_ingested, files_archived, duration_seconds, error):
+        # Skip fully idle tables to keep the metrics table (and snapshot count) lean.
+        if staging_file_count or files_ingested or files_archived or error:
+            metric_rows.append(
+                {
+                    "table_name": table_name,
+                    "staging_file_count": staging_file_count,
+                    "staging_bytes": staging_bytes,
+                    "files_ingested": files_ingested,
+                    "rows_ingested": rows_ingested,
+                    "files_archived": files_archived,
+                    "duration_seconds": duration_seconds,
+                    "error": error,
+                }
             )
-            total_files += files_processed
 
-            # Archive all staging files that have been ingested
-            # (newly processed + any stragglers from prior runs)
-            if not dry_run:
-                archive_processed_files(
-                    s3_client,
-                    config.staging.bucket,
-                    config.staging.prefix,
-                    config.staging.archive_prefix,
-                    set(s3_files),
+    try:
+        # Dispatch based on staging type
+        if config.is_s3_staging():
+            print(
+                f"[ingest] Using S3 staging: s3://{config.staging.bucket}/{config.staging.prefix}"
+            )
+
+            s3 = config.staging.s3
+
+            # Configure S3 credentials in DuckDB (for read_parquet)
+            ensure_s3_credentials(conn, s3.key, s3.secret, s3.region, s3.endpoint, s3.url_style)
+
+            # Get S3 client for file operations (list/move)
+            s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint, s3.url_style)
+
+            # Process each table
+            for table_name in SYNC_TABLES:
+                table_prefix = f"{config.staging.prefix}/{table_name}"
+                t0 = time.monotonic()
+                staging_file_count = staging_bytes = 0
+                files_processed = rows_ingested = files_archived = 0
+                err = None
+                try:
+                    # List files (with sizes) in S3
+                    staged = list_s3_files_with_sizes(
+                        s3_client, config.staging.bucket, table_prefix
+                    )
+                    s3_files = [p for p, _ in staged]
+                    staging_file_count = len(s3_files)
+                    staging_bytes = sum(sz for _, sz in staged)
+                    print(f"[ingest] Found {staging_file_count} files for {table_name}")
+
+                    # Ingest
+                    files_processed, rows_ingested = ingest_table(
+                        conn, table_name, s3_files, processed_files, dry_run,
+                        cycle_started_at=cycle_started_at, write_progress=not dry_run,
+                    )
+                    total_files += files_processed
+
+                    # Archive all staging files that have been ingested
+                    # (newly processed + any stragglers from prior runs)
+                    if not dry_run:
+                        files_archived = archive_processed_files(
+                            s3_client,
+                            config.staging.bucket,
+                            config.staging.prefix,
+                            config.staging.archive_prefix,
+                            set(s3_files),
+                        )
+                except Exception as e:
+                    err = str(e)
+                    errors.append((table_name, e))
+                    print(f"[ingest] ERROR processing {table_name}: {e}")
+                    import traceback
+
+                    traceback.print_exc()
+                _add_metric(
+                    table_name, staging_file_count, staging_bytes, files_processed,
+                    rows_ingested, files_archived, time.monotonic() - t0, err,
                 )
 
-    elif config.is_filesystem_staging():
-        print(f"[ingest] Using filesystem staging: {config.staging.staging_dir}")
+        elif config.is_filesystem_staging():
+            print(f"[ingest] Using filesystem staging: {config.staging.staging_dir}")
 
-        staging_dir = Path(config.staging.staging_dir)
-        archive_dir = Path(config.staging.archive_dir)
+            staging_dir = Path(config.staging.staging_dir)
+            archive_dir = Path(config.staging.archive_dir)
 
-        # Process each table
-        for table_name in SYNC_TABLES:
-            # List files in staging directory
-            fs_files = list_filesystem_files(staging_dir, table_name)
-            print(f"[ingest] Found {len(fs_files)} files for {table_name}")
+            # Process each table
+            for table_name in SYNC_TABLES:
+                t0 = time.monotonic()
+                staging_file_count = staging_bytes = 0
+                files_processed = rows_ingested = files_archived = 0
+                err = None
+                try:
+                    # List files in staging directory
+                    fs_files = list_filesystem_files(staging_dir, table_name)
+                    staging_file_count = len(fs_files)
+                    staging_bytes = sum(
+                        Path(f).stat().st_size for f in fs_files if Path(f).exists()
+                    )
+                    print(f"[ingest] Found {staging_file_count} files for {table_name}")
 
-            # Ingest (DuckDB's read_parquet works with filesystem paths)
-            files_processed = ingest_table(
-                conn, table_name, fs_files, processed_files, dry_run
-            )
-            total_files += files_processed
+                    # Ingest (DuckDB's read_parquet works with filesystem paths)
+                    files_processed, rows_ingested = ingest_table(
+                        conn, table_name, fs_files, processed_files, dry_run,
+                        cycle_started_at=cycle_started_at, write_progress=not dry_run,
+                    )
+                    total_files += files_processed
 
-            # Archive all staging files that have been ingested
-            if not dry_run:
-                for file_path_str in fs_files:
-                    file_path = Path(file_path_str)
-                    move_filesystem_file(file_path, archive_dir, table_name)
+                    # Archive all staging files that have been ingested
+                    if not dry_run:
+                        for file_path_str in fs_files:
+                            file_path = Path(file_path_str)
+                            move_filesystem_file(file_path, archive_dir, table_name)
+                            files_archived += 1
+                except Exception as e:
+                    err = str(e)
+                    errors.append((table_name, e))
+                    print(f"[ingest] ERROR processing {table_name}: {e}")
+                    import traceback
 
-    else:
-        raise ValueError(f"Unknown staging type: {config.staging.type}")
+                    traceback.print_exc()
+                _add_metric(
+                    table_name, staging_file_count, staging_bytes, files_processed,
+                    rows_ingested, files_archived, time.monotonic() - t0, err,
+                )
 
-    print(f"[ingest] Ingestion complete. Processed {total_files} files.")
-    conn.close()
+        else:
+            raise ValueError(f"Unknown staging type: {config.staging.type}")
+
+        # Flush this cycle's metrics as a single lake snapshot.
+        if not dry_run:
+            try:
+                record_metrics(conn, cycle_started_at, metric_rows)
+            except Exception as e:
+                print(f"[ingest] WARNING: failed to record ingest metrics: {e}")
+
+        print(f"[ingest] Ingestion complete. Processed {total_files} files.")
+    finally:
+        conn.close()
+
+    # Surface table failures to the caller (continuous mode pings the healthcheck
+    # /fail), but only after every table has had its chance to run this cycle.
+    if errors:
+        summary = ", ".join(f"{t}: {e}" for t, e in errors)
+        raise RuntimeError(f"Ingestion completed with {len(errors)} table error(s): {summary}")
 
 
 def _ping_healthcheck(url: str, error: Exception | None = None):
