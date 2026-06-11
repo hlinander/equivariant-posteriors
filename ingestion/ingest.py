@@ -365,7 +365,10 @@ def ensure_metrics_tables(conn):
         staging depth, files/rows ingested, files archived, duration, error.
     ingest_progress: a heartbeat written just before each batch is ingested, so a
         dashboard can see which files are in flight right now (including the batch
-        that was being read when a cycle stalled or failed).
+        that was being read when a cycle stalled or failed). table_total_files is
+        the count this table planned to process this cycle, so a live "processed /
+        total" progress bar can be computed mid-cycle (processed = sum of
+        batch_file_count for the cycle+table; total = max(table_total_files)).
     """
     conn.execute(
         f"""
@@ -391,22 +394,39 @@ def ensure_metrics_tables(conn):
             batch_index      INTEGER,
             batch_file_count INTEGER,
             batch_files      TEXT[],
+            table_total_files INTEGER,
             started_at       TIMESTAMPTZ
         )
         """
     )
+    # Migrate progress tables created before table_total_files existed.
+    conn.execute(
+        f"ALTER TABLE {INGEST_PROGRESS_TABLE} ADD COLUMN IF NOT EXISTS table_total_files INTEGER"
+    )
 
 
-def record_progress(conn, cycle_started_at, table_name: str, batch_index: int, batch: list[str]):
-    """Heartbeat the batch about to be ingested so dashboards see in-flight work."""
+def record_progress(
+    conn,
+    cycle_started_at,
+    table_name: str,
+    batch_index: int,
+    batch: list[str],
+    table_total_files: int,
+):
+    """Heartbeat the batch about to be ingested so dashboards see in-flight work.
+
+    table_total_files is the total this table planned to process this cycle, carried
+    on every batch row so a live progress bar can divide processed-so-far by it.
+    """
     files_arr = "[" + ", ".join("'" + f.replace("'", "''") + "'" for f in batch) + "]"
     conn.execute(
         f"""
         INSERT INTO {INGEST_PROGRESS_TABLE}
-            (cycle_started_at, table_name, batch_index, batch_file_count, batch_files, started_at)
-        VALUES (?, ?, ?, ?, {files_arr}, now())
+            (cycle_started_at, table_name, batch_index, batch_file_count, batch_files,
+             table_total_files, started_at)
+        VALUES (?, ?, ?, ?, {files_arr}, ?, now())
         """,
-        (cycle_started_at, table_name, batch_index, len(batch)),
+        (cycle_started_at, table_name, batch_index, len(batch), table_total_files),
     )
 
 
@@ -643,14 +663,18 @@ def ingest_table(
         return 0, 0
 
     total_rows = 0
-    for i in range(0, len(files_to_process), batch_size):
+    total_to_process = len(files_to_process)
+    for i in range(0, total_to_process, batch_size):
         batch = files_to_process[i : i + batch_size]
         batch_index = i // batch_size + 1
         print(f"[ingest]   Batch {batch_index}: {len(batch)} files")
         # Heartbeat the batch before reading it, so a dashboard sees in-flight work
-        # even while a slow batch is still being fetched from S3.
+        # even while a slow batch is still being fetched from S3. Carry the table's
+        # planned total so a live processed/total progress bar can be computed.
         if write_progress and cycle_started_at is not None:
-            record_progress(conn, cycle_started_at, table_name, batch_index, batch)
+            record_progress(
+                conn, cycle_started_at, table_name, batch_index, batch, total_to_process
+            )
         total_rows += _ingest_batch(conn, table_name, batch)
 
     print(
