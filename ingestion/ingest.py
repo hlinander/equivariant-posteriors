@@ -58,6 +58,7 @@ _SCHEMA_ENSURED = False
 # Observability tables (written into the lake so dashboards can monitor ingestion).
 INGEST_METRICS_TABLE = "ingest_metrics"
 INGEST_PROGRESS_TABLE = "ingest_progress"
+INGEST_STAGING_SAMPLE_TABLE = "ingest_staging_sample"
 
 
 def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str, s3_url_style: str = "path"):
@@ -369,6 +370,11 @@ def ensure_metrics_tables(conn):
         the count this table planned to process this cycle, so a live "processed /
         total" progress bar can be computed mid-cycle (processed = sum of
         batch_file_count for the cycle+table; total = max(table_total_files)).
+    ingest_staging_sample: one row per table written at the TOP of each cycle (before
+        any ingest), capturing current staging depth. Lets a dashboard show every
+        table's target up front — independent of the sequential drain — and gives a
+        clean arrivals signal sampled before draining (sum(staged_files) = cycle
+        target; the series over cycles shows files arriving).
     """
     conn.execute(
         f"""
@@ -402,6 +408,17 @@ def ensure_metrics_tables(conn):
     # Migrate progress tables created before table_total_files existed.
     conn.execute(
         f"ALTER TABLE {INGEST_PROGRESS_TABLE} ADD COLUMN IF NOT EXISTS table_total_files INTEGER"
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {INGEST_STAGING_SAMPLE_TABLE} (
+            cycle_started_at TIMESTAMPTZ,
+            table_name       TEXT,
+            staged_files     BIGINT,
+            staged_bytes     BIGINT,
+            sampled_at       TIMESTAMPTZ
+        )
+        """
     )
 
 
@@ -457,6 +474,29 @@ def record_metrics(conn, cycle_started_at, metric_rows: list[dict]):
             (cycle_started_at, table_name, staging_file_count, staging_bytes,
              files_ingested, rows_ingested, files_archived, duration_seconds, error,
              recorded_at)
+        VALUES {", ".join(values_sql)}
+        """,
+        params,
+    )
+
+
+def record_staging_sample(conn, cycle_started_at, samples: list[tuple]):
+    """Bulk-insert a top-of-cycle staging-depth snapshot (one row per table).
+
+    samples is a list of (table_name, staged_files, staged_bytes). Written as a
+    single lake snapshot so a dashboard sees every table's target at cycle start.
+    """
+    if not samples:
+        return
+    values_sql = []
+    params = []
+    for table_name, staged_files, staged_bytes in samples:
+        values_sql.append("(?, ?, ?, ?, now())")
+        params.extend([cycle_started_at, table_name, staged_files, staged_bytes])
+    conn.execute(
+        f"""
+        INSERT INTO {INGEST_STAGING_SAMPLE_TABLE}
+            (cycle_started_at, table_name, staged_files, staged_bytes, sampled_at)
         VALUES {", ".join(values_sql)}
         """,
         params,
@@ -854,6 +894,26 @@ def ingest_all_from_config(config, dry_run: bool = False):
             # Get S3 client for file operations (list/move)
             s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint, s3.url_style)
 
+            # Top-of-cycle staging snapshot: record every table's current depth
+            # before any ingest, so a dashboard knows each table's target up front
+            # (independent of the sequential drain) and sees arrivals sampled
+            # pre-drain. Never let sampling break ingestion.
+            if not dry_run:
+                samples = []
+                for table_name in SYNC_TABLES:
+                    try:
+                        s = list_s3_files_with_sizes(
+                            s3_client, config.staging.bucket,
+                            f"{config.staging.prefix}/{table_name}",
+                        )
+                        samples.append((table_name, len(s), sum(sz for _, sz in s)))
+                    except Exception as e:
+                        print(f"[ingest] WARNING: staging sample failed for {table_name}: {e}")
+                try:
+                    record_staging_sample(conn, cycle_started_at, samples)
+                except Exception as e:
+                    print(f"[ingest] WARNING: failed to record staging sample: {e}")
+
             # Process each table
             for table_name in SYNC_TABLES:
                 table_prefix = f"{config.staging.prefix}/{table_name}"
@@ -905,6 +965,23 @@ def ingest_all_from_config(config, dry_run: bool = False):
 
             staging_dir = Path(config.staging.staging_dir)
             archive_dir = Path(config.staging.archive_dir)
+
+            # Top-of-cycle staging snapshot (see S3 branch for rationale).
+            if not dry_run:
+                samples = []
+                for table_name in SYNC_TABLES:
+                    try:
+                        fs = list_filesystem_files(staging_dir, table_name)
+                        samples.append(
+                            (table_name, len(fs),
+                             sum(Path(f).stat().st_size for f in fs if Path(f).exists()))
+                        )
+                    except Exception as e:
+                        print(f"[ingest] WARNING: staging sample failed for {table_name}: {e}")
+                try:
+                    record_staging_sample(conn, cycle_started_at, samples)
+                except Exception as e:
+                    print(f"[ingest] WARNING: failed to record staging sample: {e}")
 
             # Process each table
             for table_name in SYNC_TABLES:
