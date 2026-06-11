@@ -52,7 +52,10 @@ SYNC_TABLES = [
     ARTIFACT_CHUNKS_TABLE_NAME,
 ]
 TYPES = ["int", "float", "text"]
-INGEST_BATCH_SIZE = 50
+# Larger batches amortize fixed per-batch overhead (temp-table build, type-split
+# INSERTs, per-file count, DuckLake snapshot) now that reads are cheap, and keep the
+# read threads saturated. RAM is ample (200 small files ~2MB; 200 checkpoint ~200MB).
+INGEST_BATCH_SIZE = 200
 # Staging reads from S3 are latency-bound on small files (~0.4s round-trip each);
 # a probe showed ~3x more files/s at 16-way vs the 8-core default. RAM is ample, so
 # oversubscribe threads to keep more concurrent GETs in flight.
@@ -915,18 +918,31 @@ def ingest_all_from_config(config, dry_run: bool = False):
             # (independent of the sequential drain) and sees arrivals sampled
             # pre-drain. A listing failure is logged and that table falls back to a
             # fresh list in the loop. Never let sampling break ingestion.
-            staged_cache: dict[str, list] = {}
-            samples = []
-            for table_name in SYNC_TABLES:
+            #
+            # Listing is done concurrently across tables: each table's pagination is
+            # inherently sequential (continuation tokens), so the wall time is the
+            # slowest single table rather than the sum over all of them.
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _list_table(table_name):
                 try:
                     s = list_s3_files_with_sizes(
                         s3_client, config.staging.bucket,
                         f"{config.staging.prefix}/{table_name}",
                     )
+                    return table_name, s, None
+                except Exception as e:
+                    return table_name, None, e
+
+            staged_cache: dict[str, list] = {}
+            samples = []
+            with ThreadPoolExecutor(max_workers=len(SYNC_TABLES)) as ex:
+                for table_name, s, e in ex.map(_list_table, SYNC_TABLES):
+                    if e is not None:
+                        print(f"[ingest] WARNING: staging sample/list failed for {table_name}: {e}")
+                        continue
                     staged_cache[table_name] = s
                     samples.append((table_name, len(s), sum(sz for _, sz in s)))
-                except Exception as e:
-                    print(f"[ingest] WARNING: staging sample/list failed for {table_name}: {e}")
             if not dry_run:
                 try:
                     record_staging_sample(conn, cycle_started_at, samples)
