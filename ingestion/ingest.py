@@ -60,6 +60,11 @@ INGEST_BATCH_SIZE = 200
 # a probe showed ~3x more files/s at 16-way vs the 8-core default. RAM is ample, so
 # oversubscribe threads to keep more concurrent GETs in flight.
 S3_READ_THREADS = 16
+# Archiving (staging->archive copy + delete) is server-side and latency-bound, so it
+# scales with concurrency the same way reads do. Default boto3 pool is 10, so the
+# client pool below must be at least this large or workers just queue on connections.
+ARCHIVE_COPY_WORKERS = 32
+S3_CLIENT_POOL = 64
 _SCHEMA_ENSURED = False
 
 # Observability tables (written into the lake so dashboards can monitor ingestion).
@@ -87,7 +92,10 @@ def get_s3_client(s3_key: str, s3_secret: str, s3_endpoint: str, s3_url_style: s
         aws_access_key_id=s3_key,
         aws_secret_access_key=s3_secret,
         endpoint_url=s3_endpoint,
-        config=Config(s3={"addressing_style": addressing}),
+        config=Config(
+            s3={"addressing_style": addressing},
+            max_pool_connections=S3_CLIENT_POOL,
+        ),
     )
 
 
@@ -776,24 +784,24 @@ def archive_processed_files(
             Key=dest,
         )
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=ARCHIVE_COPY_WORKERS) as pool:
         futures = {pool.submit(copy_one, m): m for m in moves}
         done = 0
         for future in as_completed(futures):
             future.result()  # raise on error
             done += 1
-            if done % 100 == 0 or done == len(moves):
+            if done % 1000 == 0 or done == len(moves):
                 print(f"[archive]   Copied {done}/{len(moves)} files")
 
-    # Batch delete originals
+    # Batch delete originals (S3 DeleteObjects allows up to 1000 keys per call)
     source_keys = [src for src, _ in moves]
-    for i in range(0, len(source_keys), 100):
-        batch = source_keys[i : i + 100]
+    for i in range(0, len(source_keys), 1000):
+        batch = source_keys[i : i + 1000]
         s3_client.delete_objects(
             Bucket=bucket,
             Delete={"Objects": [{"Key": k} for k in batch]},
         )
-        print(f"[archive]   Deleted batch {i // 100 + 1}: {len(batch)} files")
+        print(f"[archive]   Deleted batch {i // 1000 + 1}: {len(batch)} files")
 
     print(f"[archive] Archived {len(moves)} files")
     return len(moves)
