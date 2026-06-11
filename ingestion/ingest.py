@@ -53,6 +53,10 @@ SYNC_TABLES = [
 ]
 TYPES = ["int", "float", "text"]
 INGEST_BATCH_SIZE = 50
+# Staging reads from S3 are latency-bound on small files (~0.4s round-trip each);
+# a probe showed ~3x more files/s at 16-way vs the 8-core default. RAM is ample, so
+# oversubscribe threads to keep more concurrent GETs in flight.
+S3_READ_THREADS = 16
 _SCHEMA_ENSURED = False
 
 # Observability tables (written into the lake so dashboards can monitor ingestion).
@@ -612,6 +616,13 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
     """Ingest a batch of parquet files for a single table. Returns total rows."""
     pq = _pq_src(batch)
 
+    # Read the batch from S3 exactly ONCE into a local temp table, then run every
+    # type-split insert and the per-file count against local memory. Previously each
+    # file was re-fetched from (throttled) S3 2-4x: 3 type INSERTs + 1 COUNT for the
+    # split tables. RAM is ample, so this is a pure win on the bottleneck.
+    src = "_batch"
+    conn.execute(f"CREATE OR REPLACE TEMP TABLE {src} AS SELECT * FROM {pq}")
+
     if table_name in [MODEL_PARAMETER, TRAIN_STEP_METRIC, CHECKPOINT_SAMPLE_METRIC]:
         for type_name in TYPES:
             value_col = f"value_{type_name}"
@@ -623,7 +634,7 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
                     INSERT INTO {target_table} BY NAME
                     SELECT model_id, run_id, timestamp, name,
                            {value_col} as value
-                    FROM {pq}
+                    FROM {src}
                     WHERE type = '{type_name}' AND {value_col} IS NOT NULL
                     """
                 )
@@ -633,7 +644,7 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
                     INSERT INTO {target_table} BY NAME
                     SELECT model_id, run_id, timestamp, name, step,
                            {value_col} as value
-                    FROM {pq}
+                    FROM {src}
                     WHERE type = '{type_name}' AND {value_col} IS NOT NULL
                     """
                 )
@@ -647,7 +658,7 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
                            sample_ids,
                            {mean_col} as mean,
                            {vps_col} as value_per_sample
-                    FROM {pq}
+                    FROM {src}
                     WHERE type = '{type_name}' AND {mean_col} IS NOT NULL
                     """
                 )
@@ -655,13 +666,13 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
         conn.execute(
             f"""
             INSERT INTO {table_name} BY NAME
-            SELECT * EXCLUDE (filename) FROM {pq}
+            SELECT * EXCLUDE (filename) FROM {src}
             """
         )
 
-    # Get per-file row counts and bulk-insert into ingestion_state
+    # Per-file row counts from the local copy (no extra S3 read)
     per_file_counts = dict(
-        conn.execute(f"SELECT filename, COUNT(*) FROM {pq} GROUP BY filename").fetchall()
+        conn.execute(f"SELECT filename, COUNT(*) FROM {src} GROUP BY filename").fetchall()
     )
     rows = [(f, per_file_counts.get(f, 0)) for f in batch]
     values = ", ".join(f"('{f}', now(), {count})" for f, count in rows)
@@ -832,6 +843,10 @@ def ingest_all_from_config(config, dry_run: bool = False):
         conn = duckdb.connect(str(config.central.db_path))
     else:
         raise ValueError(f"Unknown central database type: {config.central.type}")
+
+    # Oversubscribe threads: staging reads are S3-latency-bound, so more concurrent
+    # GETs beat the per-core default (see S3_READ_THREADS).
+    conn.execute(f"SET threads = {S3_READ_THREADS}")
 
     # Ensure schema exists (once per process, not every ingestion cycle)
     global _SCHEMA_ENSURED
