@@ -894,21 +894,25 @@ def ingest_all_from_config(config, dry_run: bool = False):
             # Get S3 client for file operations (list/move)
             s3_client = get_s3_client(s3.key, s3.secret, s3.endpoint, s3.url_style)
 
-            # Top-of-cycle staging snapshot: record every table's current depth
-            # before any ingest, so a dashboard knows each table's target up front
+            # Top-of-cycle staging snapshot + list cache. List every table once
+            # here, reuse the result for ingestion below (no second listing), and
+            # record the depth so a dashboard knows each table's target up front
             # (independent of the sequential drain) and sees arrivals sampled
-            # pre-drain. Never let sampling break ingestion.
+            # pre-drain. A listing failure is logged and that table falls back to a
+            # fresh list in the loop. Never let sampling break ingestion.
+            staged_cache: dict[str, list] = {}
+            samples = []
+            for table_name in SYNC_TABLES:
+                try:
+                    s = list_s3_files_with_sizes(
+                        s3_client, config.staging.bucket,
+                        f"{config.staging.prefix}/{table_name}",
+                    )
+                    staged_cache[table_name] = s
+                    samples.append((table_name, len(s), sum(sz for _, sz in s)))
+                except Exception as e:
+                    print(f"[ingest] WARNING: staging sample/list failed for {table_name}: {e}")
             if not dry_run:
-                samples = []
-                for table_name in SYNC_TABLES:
-                    try:
-                        s = list_s3_files_with_sizes(
-                            s3_client, config.staging.bucket,
-                            f"{config.staging.prefix}/{table_name}",
-                        )
-                        samples.append((table_name, len(s), sum(sz for _, sz in s)))
-                    except Exception as e:
-                        print(f"[ingest] WARNING: staging sample failed for {table_name}: {e}")
                 try:
                     record_staging_sample(conn, cycle_started_at, samples)
                 except Exception as e:
@@ -922,10 +926,14 @@ def ingest_all_from_config(config, dry_run: bool = False):
                 files_processed = rows_ingested = files_archived = 0
                 err = None
                 try:
-                    # List files (with sizes) in S3
-                    staged = list_s3_files_with_sizes(
-                        s3_client, config.staging.bucket, table_prefix
-                    )
+                    # Reuse the cycle-start listing; fall back to a fresh list only
+                    # if the up-front list failed for this table.
+                    if table_name in staged_cache:
+                        staged = staged_cache[table_name]
+                    else:
+                        staged = list_s3_files_with_sizes(
+                            s3_client, config.staging.bucket, table_prefix
+                        )
                     s3_files = [p for p, _ in staged]
                     staging_file_count = len(s3_files)
                     staging_bytes = sum(sz for _, sz in staged)
