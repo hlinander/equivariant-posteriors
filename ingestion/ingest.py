@@ -52,10 +52,23 @@ SYNC_TABLES = [
     ARTIFACT_CHUNKS_TABLE_NAME,
 ]
 TYPES = ["int", "float", "text"]
-# Larger batches amortize fixed per-batch overhead (temp-table build, type-split
-# INSERTs, per-file count, DuckLake snapshot) now that reads are cheap, and keep the
-# read threads saturated. RAM is ample (200 small files ~2MB; 200 checkpoint ~200MB).
-INGEST_BATCH_SIZE = 200
+# Batches are sized dynamically by total parquet bytes, not a fixed file count, so a
+# table of tiny files packs many per batch while a table of large files (checkpoints)
+# takes few — bounding both read volume and the blast radius of a slow GET. Safe
+# limits clamp the result: never more than INGEST_BATCH_MAX_FILES, never fewer than 1
+# (a single oversized file still goes alone). Larger batches amortize fixed per-batch
+# overhead (temp-table build, type-split INSERTs, per-file count, DuckLake snapshot).
+INGEST_BATCH_MAX_FILES = 200
+# Target parquet volume per batch. ~64 MB keeps a batch's read under ~15s even at the
+# throttled ~5 MB/s, well inside the S3 HTTP timeout; small-file tables hit the file
+# cap long before this. RAM is ample.
+INGEST_BATCH_TARGET_BYTES = 64 * 1024 * 1024
+# When a batch read fails (e.g. a transient throttle timeout on one file), bisect and
+# retry the halves so one slow file can't abort a whole batch; a single file that
+# keeps failing is retried a few times, then surfaced as a table_error.
+INGEST_BATCH_RETRIES = 3
+# Back-compat alias (still accepted as the per-table max-files cap).
+INGEST_BATCH_SIZE = INGEST_BATCH_MAX_FILES
 # Staging reads from S3 are latency-bound on small files (~0.4s round-trip each);
 # a probe showed ~3x more files/s at 16-way vs the 8-core default. RAM is ample, so
 # oversubscribe threads to keep more concurrent GETs in flight.
@@ -679,6 +692,61 @@ def _ingest_batch(conn, table_name: str, batch: list[str]) -> int:
     return sum(count for _, count in rows)
 
 
+def _plan_batches(
+    files: list[str],
+    sizes: dict[str, int] | None,
+    target_bytes: int = INGEST_BATCH_TARGET_BYTES,
+    max_files: int = INGEST_BATCH_MAX_FILES,
+) -> list[list[str]]:
+    """Greedy byte-budget batching with safe limits.
+
+    Walks files in order, accumulating into a batch until adding the next file would
+    exceed target_bytes (the batch already holding >=1 file) or the batch reaches
+    max_files. A file larger than target_bytes still goes alone. With no size info,
+    degrades to fixed max_files chunks.
+    """
+    batches: list[list[str]] = []
+    cur: list[str] = []
+    cur_bytes = 0
+    for f in files:
+        sz = sizes.get(f, 0) if sizes else 0
+        if cur and (len(cur) >= max_files or cur_bytes + sz > target_bytes):
+            batches.append(cur)
+            cur, cur_bytes = [], 0
+        cur.append(f)
+        cur_bytes += sz
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _ingest_batch_resilient(
+    conn, table_name: str, batch: list[str], retries: int = INGEST_BATCH_RETRIES
+) -> int:
+    """Ingest a batch; on read failure, bisect and retry so one slow/bad file can't
+    abort the whole batch. A single file is retried a few times (transient throttle
+    timeouts) before re-raising — by then its batch-mates have already been ingested
+    via the other half of the split, so progress is maximal."""
+    try:
+        return _ingest_batch(conn, table_name, batch)
+    except Exception as e:
+        if len(batch) > 1:
+            mid = len(batch) // 2
+            print(f"[ingest]   batch of {len(batch)} failed ({e}); bisecting {mid}/{len(batch) - mid}")
+            return (
+                _ingest_batch_resilient(conn, table_name, batch[:mid], retries)
+                + _ingest_batch_resilient(conn, table_name, batch[mid:], retries)
+            )
+        for attempt in range(1, retries + 1):
+            time.sleep(min(2 ** attempt, 10))
+            try:
+                return _ingest_batch(conn, table_name, batch)
+            except Exception as e2:
+                e = e2
+                print(f"[ingest]   retry {attempt}/{retries} for {batch[0]} failed: {e}")
+        raise
+
+
 def ingest_table(
     conn,
     table_name: str,
@@ -688,6 +756,7 @@ def ingest_table(
     batch_size: int = INGEST_BATCH_SIZE,
     cycle_started_at=None,
     write_progress: bool = False,
+    file_sizes: dict[str, int] | None = None,
 ) -> tuple[int, int]:
     """
     Ingest a single unified table, splitting by type.
@@ -712,15 +781,16 @@ def ingest_table(
     emit = write_progress and cycle_started_at is not None
     total_rows = 0
     total_to_process = len(files_to_process)
+    # Plan batches by byte budget (clamped to batch_size files) so large-file tables
+    # take small batches and small-file tables take large ones.
+    batches = _plan_batches(files_to_process, file_sizes, max_files=batch_size)
     if emit:
         record_events(conn, [{
             "event_type": "table_start", "cycle_started_at": cycle_started_at,
             "table_name": table_name, "total_files": total_to_process,
         }])
-    for i in range(0, total_to_process, batch_size):
-        batch = files_to_process[i : i + batch_size]
-        batch_index = i // batch_size + 1
-        print(f"[ingest]   Batch {batch_index}: {len(batch)} files")
+    for batch_index, batch in enumerate(batches, start=1):
+        print(f"[ingest]   Batch {batch_index}/{len(batches)}: {len(batch)} files")
         # Heartbeat the batch before reading it, so a dashboard sees in-flight work
         # even while a slow batch is still being fetched from S3.
         if emit:
@@ -729,7 +799,7 @@ def ingest_table(
                 "table_name": table_name, "seq": batch_index, "file_count": len(batch),
                 "total_files": total_to_process, "files": batch,
             }])
-        total_rows += _ingest_batch(conn, table_name, batch)
+        total_rows += _ingest_batch_resilient(conn, table_name, batch)
 
     if emit:
         record_events(conn, [{
@@ -984,12 +1054,14 @@ def ingest_all_from_config(config, dry_run: bool = False):
                             s3_client, config.staging.bucket, table_prefix
                         )
                     s3_files = [p for p, _ in staged]
+                    s3_sizes = {p: sz for p, sz in staged}
                     print(f"[ingest] Found {len(s3_files)} files for {table_name}")
 
                     # Ingest
                     files_processed, rows_ingested = ingest_table(
                         conn, table_name, s3_files, processed_files, dry_run,
                         cycle_started_at=cycle_started_at, write_progress=not dry_run,
+                        file_sizes=s3_sizes,
                     )
                     total_files += files_processed
 
@@ -1044,12 +1116,16 @@ def ingest_all_from_config(config, dry_run: bool = False):
                 try:
                     # List files in staging directory
                     fs_files = list_filesystem_files(staging_dir, table_name)
+                    fs_sizes = {
+                        f: Path(f).stat().st_size for f in fs_files if Path(f).exists()
+                    }
                     print(f"[ingest] Found {len(fs_files)} files for {table_name}")
 
                     # Ingest (DuckDB's read_parquet works with filesystem paths)
                     files_processed, rows_ingested = ingest_table(
                         conn, table_name, fs_files, processed_files, dry_run,
                         cycle_started_at=cycle_started_at, write_progress=not dry_run,
+                        file_sizes=fs_sizes,
                     )
                     total_files += files_processed
 
