@@ -12,6 +12,7 @@ from lib.datasets.commonsense_qa import DataCommonsenseQaConfig, DataCommonsense
 from experiments.weather.data import DataHP, DataHPConfig
 from lib.datasets.sparse_parity import DataSparseParityConfig, DataSparseParity
 from lib.datasets.finite_field_det import DataFiniteFieldDetConfig, DataFiniteFieldDet
+from lib.datasets.real_det import DataRealDetConfig, DataRealDet
 
 # from experiments.lora_ensembles.configs import NLPDatasetConfig
 # from experiments.lora_ensembles.configs import NLPDataset
@@ -32,3 +33,4 @@ def register_datasets(factory):
     factory.register(DataHPConfig, DataHP)
     factory.register(DataSparseParityConfig, DataSparseParity)
     factory.register(DataFiniteFieldDetConfig, DataFiniteFieldDet)
+    factory.register(DataRealDetConfig, DataRealDet)
