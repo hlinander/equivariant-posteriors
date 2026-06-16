@@ -24,11 +24,24 @@ def _make_train_run(
     seq=False,
     optimizer=torch.optim.AdamW,
     gradient_clipping=None,
+    z_loss=False,
 ):
     loss = torch.nn.CrossEntropyLoss()
 
     def ce_loss(output, batch):
         return loss(output["logits"], batch["target"])
+
+    def ce_z_loss(output, batch):
+        # z-loss penalizes the log-partition magnitude (logsumexp), capping
+        # logit growth at the source instead of letting cross-entropy margin
+        # maximization migrate scale into the un-decayed LayerNorm gains.
+        # lambda=1e-4 is the PaLM/T5 default. Distinct __name__ from ce_loss,
+        # so this is a distinct run identity (see lib.stable_hash.json_default).
+        logits = output["logits"]
+        z = torch.logsumexp(logits, dim=-1)
+        return loss(logits, batch["target"]) + 1e-4 * (z**2).mean()
+
+    loss_fn = ce_z_loss if z_loss else ce_loss
 
     train_eval = create_classification_metrics(None, p)
     train_eval.log_gradient_norm = True
@@ -47,7 +60,7 @@ def _make_train_run(
         model_config=model_config,
         train_data_config=train_data,
         val_data_config=val_data,
-        loss=ce_loss,
+        loss=loss_fn,
         optimizer=OptimizerConfig(
             optimizer=optimizer,
             kwargs=dict(lr=lr, weight_decay=weight_decay),
@@ -142,6 +155,37 @@ def create_transformer_encoder_stable_config(
         seq=True,
         optimizer=adamw_no_decay_norm_bias,
         gradient_clipping=1.0,
+    )
+
+
+def create_transformer_encoder_zloss_config(
+    embed_d, num_layers, num_heads, n, p, frac, weight_decay, lr, ensemble_id
+):
+    """Stable TransformerEncoder plus z-loss. Identical to
+    create_transformer_encoder_stable_config except for the logit-norm penalty,
+    to test whether capping logit growth tames the post-grok val-accuracy
+    collapses without losing the stable arm's fast convergence.
+    """
+    model_config = TransformerEncoderConfig(
+        embed_d=embed_d,
+        mlp_dim=embed_d * 4,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        softmax=True,
+        activation="relu",
+    )
+    return _make_train_run(
+        model_config,
+        n,
+        p,
+        frac,
+        weight_decay,
+        lr,
+        ensemble_id,
+        seq=True,
+        optimizer=adamw_no_decay_norm_bias,
+        gradient_clipping=1.0,
+        z_loss=True,
     )
 
 
@@ -286,6 +330,27 @@ def p13_transformer_encoder_stable_configs():
     """
     return get_config_grid(
         create_transformer_encoder_stable_config,
+        dict(
+            embed_d=[64],
+            num_layers=[2, 4],
+            num_heads=[4],
+            n=[2],
+            p=[13],
+            frac=[0.9, 0.7, 0.5, 0.3],
+            weight_decay=[1.0, 0.3, 0.1],
+            lr=[1e-3],
+            ensemble_id=[0],
+        ),
+    )
+
+
+def p13_transformer_encoder_zloss_configs():
+    """p13_transformer_encoder_stable_configs grid plus z-loss, to compare
+    post-grok stability and parameter-norm growth against the no-penalty
+    stable arm on the identical grid.
+    """
+    return get_config_grid(
+        create_transformer_encoder_zloss_config,
         dict(
             embed_d=[64],
             num_layers=[2, 4],
