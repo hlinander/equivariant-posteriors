@@ -57,7 +57,7 @@ def create_config(
     lr=2e-4 ,
     embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
     drop_rate=0.0,
-    depths=[2, 6, 6, 2],
+    depths=[4, 12, 12, 4],#[2, 6, 6, 2],
     ):
     """Create a training config for a specific climate model and seed.
 
@@ -81,7 +81,7 @@ def create_config(
         return loss(output["logits_output"], batch["target"])
 
     # Each seed gets a different train/val split and model initialisation
-    random_seed  = ensemble_id + 1
+    random_seed  = 1 #prev ensemble_id + 1
     val_fraction = 0.1
     seq_len      = 12
     seq_to_seq   = True
@@ -140,7 +140,7 @@ def create_config(
         ),
         batch_size=batch_size,
         ensemble_id=ensemble_id,
-        _version=10,
+        _version=13, # prev 10
     )
 
     train_eval = TrainEval(
@@ -157,7 +157,7 @@ def create_config(
         epochs=epoch,
         save_nth_epoch=1,
         keep_epoch_checkpoints=True,
-        keep_nth_epoch_checkpoints=10,
+        keep_nth_epoch_checkpoints=20,
         validate_nth_epoch=5,
         visualize_terminal=False,
     )
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0").strip()
     variant_idx = int(task_id) if task_id else 0
 
-    N_SEEDS = int(os.environ.get("N_SEEDS", "10"))
+    N_SEEDS = int(os.environ.get("N_SEEDS", "5"))
     climate_model_idx = int(
         os.environ.get("CLIMATE_MODEL_IDX", str(variant_idx // N_SEEDS))
     )
@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
     print("Starting distributed training...")
     config = create_config(
-        ensemble_id=seed_idx, epoch=400, climate_model_idx=climate_model_idx
+        ensemble_id=seed_idx, epoch=250, climate_model_idx=climate_model_idx
     )
     request_train_run(config)
     distributed_train([config])

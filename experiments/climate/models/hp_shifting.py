@@ -59,19 +59,23 @@ class NestRollShift:
             slice(0, -self.window_size_hp),
             slice(-self.window_size_hp, -self.window_size_hp // 2),
             slice(-self.window_size_hp // 2, None),
-            # slice(-self.window_size_hp//2, -1),
         )
-        d_slices = (
-            slice(0, -2),
-            slice(-2, None),
-            slice(-2, None),
-        )
-        # JG: In this loop, the three different subwindows A, B, ... from Figure 4 are given
-        # different numbers 0,1,3
-        cnt = 0
-        for d_slice, hp_slice in zip(d_slices, hp_slices):
-            img_mask[d_slice, hp_slice] = cnt
-            cnt += 1
+        if self.window_size_d >= D:
+            # No temporal shift — entire temporal range is one region.
+            # Only spatial boundaries need masking.
+            for cnt, hp_slice in enumerate(hp_slices):
+                img_mask[:, hp_slice] = cnt
+        else:
+            _d_shift = self.window_size_d // 2
+            d_slices = (
+                slice(0, -_d_shift),
+                slice(-_d_shift, None),
+                slice(-_d_shift, None),
+            )
+            cnt = 0
+            for d_slice, hp_slice in zip(d_slices, hp_slices):
+                img_mask[d_slice, hp_slice] = cnt
+                cnt += 1
 
         attn_mask = get_attn_mask_from_mask(
             img_mask, self.window_size, window_partition
@@ -79,15 +83,17 @@ class NestRollShift:
         return attn_mask
 
     def shift(self, x):
-        # breakpoint()
+        D = x.shape[1]
+        d_shift = 0 if self.window_size_d >= D else -self.window_size_d // 2
         return torch.roll(
-            x, shifts=[-self.window_size_d // 2, -self.window_size_hp // 2], dims=[1, 2]
+            x, shifts=[d_shift, -self.window_size_hp // 2], dims=[1, 2]
         )
 
     def shift_back(self, x):
-        # return torch.roll(x, shifts=self.shift_size, dims=2)
+        D = x.shape[1]
+        d_shift = 0 if self.window_size_d >= D else self.window_size_d // 2
         return torch.roll(
-            x, shifts=[self.window_size_d // 2, self.window_size_hp // 2], dims=[1, 2]
+            x, shifts=[d_shift, self.window_size_hp // 2], dims=[1, 2]
         )
 
 
@@ -410,7 +416,7 @@ class RingShift:
         # NOTE: Added following lines to get to work D=1 CASE
         # Double check everything works as intended
         if D > 1:
-            assert mask[-1, 0] != mask[-2, 0]
+            assert mask[-self.shift_size_d, 0] != mask[-(self.shift_size_d + 1), 0]
             assert mask[-1, -self.shift_size_hp - 1] != mask[-1, -1]
         # ----------------------
         for d_idx in range(D):

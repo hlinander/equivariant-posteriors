@@ -43,6 +43,7 @@ from experiments.climate.data.climateset_data_hp import ClimatesetHPConfig, Clim
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig, SwinHPClimateset
 from experiments.climate.models.GRU_wrapper import GRUTemporalWrapperConfig, GRUTemporalWrapper
 from experiments.climate.models.climate_pear_temporal_atn import SwinHPClimatesetTemporalAtnConfig, SwinHPClimatesetTemporalAtn
+from experiments.climate.models.climate_pear_temporal_atn_causal import SwinHPClimatesetTemporalAtnCausalConfig, SwinHPClimatesetTemporalAtnCausal
 from experiments.climate.evaluation.metrics import rmse_climate_hp
 from experiments.climate.data.climateset_data_hp import load_training_stats_from_config
 
@@ -59,6 +60,7 @@ def evaluate_climate(create_config, epoch, variant_idx=0):
     mf.register(SwinHPClimatesetSeqConfig, SwinHPClimatesetSeq)
     mf.register(GRUTemporalWrapperConfig, GRUTemporalWrapper)
     mf.register(SwinHPClimatesetTemporalAtnConfig, SwinHPClimatesetTemporalAtn)
+    mf.register(SwinHPClimatesetTemporalAtnCausalConfig, SwinHPClimatesetTemporalAtnCausal)
     print(f"[eval] Evaluating variant {variant_idx}, epoch {epoch}")
     train_run = create_config(ensemble_id=variant_idx)
     train_run.epochs = epoch

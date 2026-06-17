@@ -1,19 +1,18 @@
-#!/usr/bin/env python
 """
-Multi-seed training config for SwinHP on the ClimateSet HEALPix dataset.
+Multi-seed training config for SwinHP with alternative Conv weight initialisation.
 
-Based on train_climate_baseline.py but separates the random seed (ensemble_id)
-from the climate model index (climate_model_idx) so the same architecture
-can be trained with multiple seeds for statistical comparisons.
-
-Usage:
-    # Single climate model, 3 seeds (SLURM array 0-2):
-    N_SEEDS=3 CLIMATE_MODEL_IDX=12 python run_slurm_sweep.py \
-        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
+Uses SwinHPClimatesetInitAltConfig (distinct from SwinHPClimatesetConfig) so that
+runs get a different hash and do not share checkpoints with the standard config.
+The only behavioural difference is that SwinHPClimatesetFixed applies trunc_normal_
+to Conv/ConvTranspose1d layers instead of PyTorch's default Kaiming init.
 """
 
 import os
 import torch
+from dataclasses import dataclass, field
+from typing import List, Optional, Literal
+
+import torch.nn as nn
 
 from lib.train_dataclasses import TrainConfig, TrainRun, OptimizerConfig, ComputeConfig
 from lib.train_dataclasses import TrainEval
@@ -27,7 +26,8 @@ from experiments.climate.data.climateset_data_hp import ClimatesetHPConfig
 from experiments.climate.data.climateset_data_hp import ClimatesetDataHP
 from experiments.climate.data.climateset_data_hp import get_fire_type
 from experiments.climate.models.swin_hp_climateset import SwinHPClimatesetConfig
-from experiments.climate.models.swin_hp_climateset import SwinHPClimateset
+from experiments.climate.models.swin_hp_climateset_fixed import SwinHPClimatesetFixed
+from lib.serialize_human import serialize_human as _serialize_human
 
 NSIDE = 32
 CLIMATE_MODELS = [
@@ -49,27 +49,50 @@ CLIMATE_MODELS = [
 ]
 
 
+@dataclass
+class SwinHPClimatesetInitAltConfig:
+    """Identical fields to SwinHPClimatesetConfig; distinct class for unique run hashes."""
+    base_pix: int = 12
+    nside: int = 64
+    patch_size: int = 16
+    window_size: int = 36
+    shift_size: int = 2
+    shift_strategy: Literal["nest_roll", "nest_grid_shift", "ring_shift"] = "nest_roll"
+    rel_pos_bias: Optional[Literal["flat"]] = None
+    patch_embed_norm_layer: Optional[Literal[nn.LayerNorm]] = None
+    depths: List[int] = field(default_factory=lambda: [2, 6, 6, 2])
+    num_heads: List[int] = field(default_factory=lambda: [6, 12, 12, 6])
+    embed_dims: List[int] = field(default_factory=lambda: [192, 384, 384, 192])
+    mlp_ratio: float = 4.0
+    qkv_bias: bool = True
+    qk_scale: Optional[float] = None
+    use_cos_attn: bool = False
+    drop_rate: float = 0.0
+    attn_drop_rate: float = 0.0
+    drop_path_rate: float = 0.1
+    norm_layer: Literal[nn.LayerNorm] = nn.LayerNorm
+    use_v2_norm_placement: bool = False
+    ape: bool = False
+    patch_norm: bool = True
+    use_checkpoint: bool = False
+    dev_mode: bool = False
+    pad_fix: bool = True
+
+    def serialize_human(self):
+        return _serialize_human(self.__dict__)
+
+
 def create_config(
     ensemble_id,
-    epoch=250, # previous was 200, find previous runs
+    epoch=250,
     batch_size=12,
     climate_model_idx=0,
-    lr=2e-4 ,
+    lr=2e-4,
     embed_dims=[192 // 4, 384 // 4, 384 // 4, 192 // 4],
     drop_rate=0.0,
-    depths=[4, 12, 12, 4], #[2, 6, 6, 2],
+    depths=[4, 12, 12, 4],
     output_vars=None,
-    ):
-    """Create a training config for a specific climate model and seed.
-
-    Parameters
-    ----------
-    ensemble_id : int
-        Random seed index (0, 1, 2, ...).  Controls weight initialisation only
-        (via TrainConfig.ensemble_id).  The data split is fixed (random_seed=1).
-    climate_model_idx : int
-        Index into CLIMATE_MODELS selecting which GCM to train on.
-    """
+):
     model_name, ensemble = CLIMATE_MODELS[climate_model_idx]
     print(f"climate_model={model_name}, ensemble={ensemble}, seed={ensemble_id}")
 
@@ -78,7 +101,6 @@ def create_config(
     def loss_fn(output, batch):
         return mse(output["logits_output"], batch["target"])
 
-    # Seed only affects weight initialisation; data split is fixed.
     random_seed  = 1
     val_fraction = 0.1
     seq_len      = 1
@@ -102,7 +124,7 @@ def create_config(
 
     train_config = TrainConfig(
         extra=dict(loss_variant="full"),
-        model_config=SwinHPClimatesetConfig(
+        model_config=SwinHPClimatesetInitAltConfig(
             base_pix=12,
             nside=NSIDE,
             dev_mode=False,
@@ -161,34 +183,3 @@ def create_config(
         visualize_terminal=False,
     )
     return train_run
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    task_id = os.environ.get("SLURM_ARRAY_TASK_ID", "0").strip()
-    variant_idx = int(task_id) if task_id else 0
-
-    N_SEEDS = int(os.environ.get("N_SEEDS", "10"))
-    climate_model_idx = int(
-        os.environ.get("CLIMATE_MODEL_IDX", str(variant_idx // N_SEEDS))
-    )
-    seed_idx = variant_idx % N_SEEDS
-
-    print(f"SLURM_ARRAY_TASK_ID={variant_idx}, "
-          f"climate_model_idx={climate_model_idx}, seed_idx={seed_idx}")
-
-    data_factory.get_factory()
-    data_factory.register_dataset(ClimatesetHPConfig, ClimatesetDataHP)
-
-    mf = model_factory.get_factory()
-    mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
-
-    print("Starting distributed training...")
-    config = create_config(
-        ensemble_id=seed_idx, epoch=250, climate_model_idx=climate_model_idx
-    )
-    request_train_run(config)
-    distributed_train([config])

@@ -1,29 +1,30 @@
 """
-Sweep file for training SwinHP with multiple seeds on a single climate model.
+Sweep file for training SwinHPClimatesetFixed (alt Conv init) with multiple seeds
+across all climate models.
 
 Usage:
-    # 3 seeds on NorESM2-LM (climate model index 12):
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py \
-        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
+    # 5 seeds x 15 models (75 jobs):
+    python run_slurm_sweep.py \
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep_fixed.py
 
     # Dry run to inspect the batch script:
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py --dry-run \
-        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
+    python run_slurm_sweep.py --dry-run \
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep_fixed.py
 
     # Run locally (sequential, no SLURM):
-    CLIMATE_MODEL_IDX=12 N_SEEDS=3 python run_slurm_sweep.py --run-local \
-        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep.py
+    python run_slurm_sweep.py --run-local \
+        experiments/climate/persisted_configs/train_climate_pear_multiseed_sweep_fixed.py
 """
 
 import os
 from lib.generic_ablation import get_config_grid
 
-from experiments.climate.persisted_configs.train_climate_pear_multiseed import (
+from experiments.climate.persisted_configs.train_climate_pear_multiseed_initalt import (
     create_config,
     ClimatesetHPConfig,
     ClimatesetDataHP,
-    SwinHPClimatesetConfig,
-    SwinHPClimateset,
+    SwinHPClimatesetInitAltConfig,
+    SwinHPClimatesetFixed,
 )
 from lib.train_distributed import request_train_run
 from lib.distributed_trainer import distributed_train
@@ -53,11 +54,10 @@ def run(config):
     data_factory.get_factory()
     data_factory.register_dataset(ClimatesetHPConfig, ClimatesetDataHP)
     mf = model_factory.get_factory()
-    mf.register(SwinHPClimatesetConfig, SwinHPClimateset)
+    mf.register(SwinHPClimatesetInitAltConfig, SwinHPClimatesetFixed)
 
     train_run = create_config(
         ensemble_id=seed, epoch=N_EPOCHS, climate_model_idx=climate_model_idx,
     )
     request_train_run(train_run)
     distributed_train([train_run])
-

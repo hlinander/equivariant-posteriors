@@ -28,7 +28,7 @@ from lib.distributed_trainer import distributed_train
 import lib.data_factory as data_factory
 import lib.model_factory as model_factory
 
-N_SEEDS = int(os.environ.get("N_SEEDS", "5"))
+N_SEEDS = int(os.environ.get("N_SEEDS", "8"))
 CLIMATE_MODEL_START = int(os.environ.get("CLIMATE_MODEL_IDX", "0"))
 NUM_VARIANTS = int(os.environ.get("NUM_VARIANTS", "15"))
 MAX_EPOCH = 400
