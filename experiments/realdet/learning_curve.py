@@ -113,17 +113,20 @@ def create_learning_curve_config(n, n_train, width, depth, lr, weight_decay, see
 
 
 def learning_curve_configs():
-    """MLP learning curves: N in {2,3,4,5} x geometric n_train x 3 seeds."""
+    """MLP learning curves: N in {2,3,4,5} x 5-point geometric n_train x 2 seeds
+    (40 configs). A slim first pass — enough to fit E(n) per N and read off the
+    n*(N) scaling; widen n_train / seeds afterward where the fit is noisy.
+    """
     return get_config_grid(
         create_learning_curve_config,
         dict(
             n=[2, 3, 4, 5],
-            n_train=[125, 250, 500, 1000, 2000, 4000, 8000, 16000, 32000],
+            n_train=[250, 1000, 4000, 16000, 32000],
             width=[512],
             depth=[3],
             lr=[1e-3],
             weight_decay=[1e-2],
-            seed=[0, 1, 2],
+            seed=[0, 1],
         ),
     )
 
