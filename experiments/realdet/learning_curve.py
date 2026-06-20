@@ -22,6 +22,7 @@ from lib.models.mlp import MLPConfig
 from lib.datasets.real_det import DataRealDetConfig
 from lib.generic_ablation import get_config_grid
 from lib.distributed_trainer import distributed_train
+from experiments.realdet.jacobian_metric import compute_realdet_jacobian_metrics
 
 
 def sign_logabs_loss(output, batch):
@@ -95,6 +96,7 @@ def _make_train_run(n, n_train, width, depth, lr, weight_decay, seed, n_val, epo
         keep_epoch_checkpoints=True,
         keep_nth_epoch_checkpoints=100,
         visualize_interval_s=5,
+        post_validate_hook=compute_realdet_jacobian_metrics,
     )
 
 
