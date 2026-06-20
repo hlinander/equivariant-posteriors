@@ -134,7 +134,10 @@ def learning_curve_configs():
 
 
 def smoke_configs():
-    """Tiny set to validate the pipeline end to end."""
+    """Tiny set to validate the pipeline end to end. Bump the seed to force a
+    fresh hash when validating TrainRun-level changes (e.g. post_validate_hook),
+    which don't change the config hash so existing configs would just resume.
+    """
     return get_config_grid(
         create_learning_curve_config,
         dict(
@@ -144,7 +147,7 @@ def smoke_configs():
             depth=[3],
             lr=[1e-3],
             weight_decay=[1e-2],
-            seed=[0],
+            seed=[7],
         ),
     )
 
