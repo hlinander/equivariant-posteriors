@@ -133,6 +133,28 @@ def learning_curve_configs():
     )
 
 
+def learning_curve_extended_configs():
+    """Extended MLP learning curves to resolve the high-N data-scaling law and
+    carry the Jacobian metrics from epoch 1: N in {3,4,5,6,7} x 6-point
+    geometric n_train (4k..128k) x 2 seeds (60 configs). Drops the trivial N=2
+    and low n_train (already characterized by the slim sweep); pushes the top
+    end so each N's R^2>=0.9 crossing is bracketed and N=6,7 reveal where it
+    finally steepens.
+    """
+    return get_config_grid(
+        create_learning_curve_config,
+        dict(
+            n=[3, 4, 5, 6, 7],
+            n_train=[4000, 8000, 16000, 32000, 64000, 128000],
+            width=[512],
+            depth=[3],
+            lr=[1e-3],
+            weight_decay=[1e-2],
+            seed=[0, 1],
+        ),
+    )
+
+
 def smoke_configs():
     """Tiny set to validate the pipeline end to end. Bump the seed to force a
     fresh hash when validating TrainRun-level changes (e.g. post_validate_hook),
