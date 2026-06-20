@@ -54,7 +54,11 @@ def _metric_list():
     ]
 
 
-def _make_train_run(n, n_train, width, depth, lr, weight_decay, seed, n_val, epochs):
+def _make_train_run(
+    n, n_train, width, depth, lr, weight_decay, seed, n_val, epochs,
+    version=1, validate_nth_epoch=5, save_nth_epoch=100,
+    keep_nth_epoch_checkpoints=100,
+):
     train_eval = TrainEval(
         train_metrics=_metric_list(),
         validation_metrics=_metric_list(),
@@ -82,7 +86,7 @@ def _make_train_run(n, n_train, width, depth, lr, weight_decay, seed, n_val, epo
         ),
         batch_size=min(1024, n_train),
         ensemble_id=seed,
-        _version=1,
+        _version=version,
     )
 
     return TrainRun(
@@ -91,10 +95,10 @@ def _make_train_run(n, n_train, width, depth, lr, weight_decay, seed, n_val, epo
         train_config=train_config,
         train_eval=train_eval,
         epochs=epochs,
-        save_nth_epoch=100,
-        validate_nth_epoch=5,
+        save_nth_epoch=save_nth_epoch,
+        validate_nth_epoch=validate_nth_epoch,
         keep_epoch_checkpoints=True,
-        keep_nth_epoch_checkpoints=100,
+        keep_nth_epoch_checkpoints=keep_nth_epoch_checkpoints,
         visualize_interval_s=5,
         post_validate_hook=compute_realdet_jacobian_metrics,
     )
@@ -143,6 +147,45 @@ def learning_curve_extended_configs():
     """
     return get_config_grid(
         create_learning_curve_config,
+        dict(
+            n=[3, 4, 5, 6, 7],
+            n_train=[4000, 8000, 16000, 32000, 64000, 128000],
+            width=[512],
+            depth=[3],
+            lr=[1e-3],
+            weight_decay=[1e-2],
+            seed=[0, 1],
+        ),
+    )
+
+
+def create_learning_curve_v2_config(
+    n, n_train, width, depth, lr, weight_decay, seed, target_steps=30000
+):
+    """Fixed-step-budget config: every run gets ~target_steps optimizer steps
+    regardless of n_train, so the learning curve measures data efficiency at
+    matched optimization (not the fixed-epoch budget, which under-trained small
+    n_train). _version=2 gives fresh hashes vs the fixed-epoch sweep.
+    """
+    batch_size = min(1024, n_train)
+    steps_per_epoch = max(1, -(-n_train // batch_size))  # ceil
+    epochs = max(1, round(target_steps / steps_per_epoch))
+    validate_nth_epoch = max(1, epochs // 50)  # ~50 validations
+    save_nth_epoch = max(1, epochs // 10)  # ~10 checkpoints
+    return _make_train_run(
+        n=n, n_train=n_train, width=width, depth=depth, lr=lr,
+        weight_decay=weight_decay, seed=seed, n_val=20000, epochs=epochs,
+        version=2, validate_nth_epoch=validate_nth_epoch,
+        save_nth_epoch=save_nth_epoch, keep_nth_epoch_checkpoints=save_nth_epoch,
+    )
+
+
+def learning_curve_v2_configs():
+    """Fixed-step (~30k) rerun of the extended grid: N in {3..7} x 6-point
+    n_train x 2 seeds (60 configs), for clean converged n*(N) estimates.
+    """
+    return get_config_grid(
+        create_learning_curve_v2_config,
         dict(
             n=[3, 4, 5, 6, 7],
             n_train=[4000, 8000, 16000, 32000, 64000, 128000],
