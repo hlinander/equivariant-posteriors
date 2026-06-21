@@ -38,6 +38,10 @@ def _run_for_split(model, state, dataset, split, seed):
 
 
 def compute_operator_diagnostics(model, train_run, state, device_id):
+    # Free rollout is autoregressive (expensive); run it every ~25 epochs and
+    # near the end, not every validation.
+    if not (state.epoch % 25 == 0 or state.epoch >= train_run.epochs - 5):
+        return
     was_training = model.training
     model.eval()
     seed = state.epoch * 10007 + train_run.train_config.ensemble_id
