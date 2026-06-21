@@ -35,7 +35,7 @@ def _metric_list():
 def _make_train_run(
     n, n_train, hidden, depth, lr, weight_decay, seed, lam, epochs,
     input_features="raw", multiplier_param="linear", teacher_mode="off",
-    pivot="none", refine_steps=0,
+    pivot="none", refine_steps=0, step_arch="mlp",
 ):
     # Closure so the loss hashes by __name__ (module-path-independent); lam is
     # captured, so keep it fixed across the sweep to avoid hash collisions.
@@ -68,7 +68,7 @@ def _make_train_run(
         model_config=EliminationRolloutConfig(
             hidden=hidden, depth=depth, input_features=input_features,
             multiplier_param=multiplier_param, teacher_mode=teacher_mode,
-            pivot=pivot, refine_steps=refine_steps,
+            pivot=pivot, refine_steps=refine_steps, step_arch=step_arch,
         ),
         train_data_config=train_data,
         val_data_config=val_data,
@@ -100,13 +100,14 @@ def _make_train_run(
 
 def create_elim_config(
     n, hidden, depth, lr, weight_decay, seed, input_features,
-    multiplier_param, teacher_mode, pivot, refine_steps=0,
+    multiplier_param, teacher_mode, pivot, refine_steps=0, step_arch="mlp",
 ):
     return _make_train_run(
         n=n, n_train=100000, hidden=hidden, depth=depth, lr=lr,
         weight_decay=weight_decay, seed=seed, lam=1.0, epochs=200,
         input_features=input_features, multiplier_param=multiplier_param,
         teacher_mode=teacher_mode, pivot=pivot, refine_steps=refine_steps,
+        step_arch=step_arch,
     )
 
 
@@ -184,12 +185,33 @@ def refine_configs():
     return cfgs
 
 
+def arch_configs():
+    """Stage 5: row-token transformer step vs MLP step. Fixed winners (partial
+    pivot, log output, anneal teacher, both input, one refine sweep); the test
+    is whether attention's clean entry/row selection drops mult_loss below the
+    MLP's ~0.19 N=4 floor and lets refinement contract. N in {3,4,5}, 2 seeds."""
+    cfgs = []
+    for n in (3, 4, 5):
+        base = n * (n - 1) // 2
+        for arch in ("mlp", "transformer"):
+            for seed in (0, 1):
+                cfgs.append(
+                    lambda n=n, base=base, arch=arch, seed=seed: create_elim_config(
+                        n=n, hidden=256, depth=2, lr=1e-3, weight_decay=0.0, seed=seed,
+                        input_features="both", multiplier_param="log",
+                        teacher_mode="anneal", pivot="partial", refine_steps=base,
+                        step_arch=arch,
+                    )
+                )
+    return cfgs
+
+
 def smoke_configs():
     return [
         lambda: create_elim_config(
             n=3, hidden=128, depth=2, lr=1e-3, weight_decay=0.0, seed=0,
             input_features="both", multiplier_param="log", teacher_mode="anneal",
-            pivot="partial", refine_steps=3,
+            pivot="partial", refine_steps=3, step_arch="transformer",
         )
     ]
 
