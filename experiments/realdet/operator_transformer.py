@@ -82,10 +82,24 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=10000
 
 
 def create_det_config(n, hidden, depth, num_heads, lr, seed, n_train=100000,
-                      endstate=False, op_anneal_steps=0):
+                      endstate=False, op_anneal_steps=0, epochs=200):
     return _make_train_run(
         n=n, hidden=hidden, depth=depth, num_heads=num_heads, lr=lr, seed=seed,
-        epochs=200, n_train=n_train, endstate=endstate, op_anneal_steps=op_anneal_steps,
+        epochs=epochs, n_train=n_train, endstate=endstate,
+        op_anneal_steps=op_anneal_steps,
+    )
+
+
+def n8_huge_configs():
+    """N=8 with 10x more data (2M) than n8_configs -- does even more data shrink
+    the longer-rollout drift residual? Fewer epochs (50) since each is 10x the
+    steps; single seed (it's a big run)."""
+    return get_config_grid(
+        create_det_config,
+        dict(
+            n=[8], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0],
+            n_train=[2000000], epochs=[50],
+        ),
     )
 
 
