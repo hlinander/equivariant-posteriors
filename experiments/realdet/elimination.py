@@ -227,6 +227,26 @@ def transformer_probe_configs():
     return cfgs
 
 
+def transformer_confirm_configs():
+    """Stage 5c: does the now-trainable transformer step (lr=1e-4 + final norm)
+    break the N>=4 wall the MLP couldn't -- i.e. does mult_loss drop below the
+    contraction threshold so refinement contracts? N in {4,5}, 2 seeds, partial
+    pivot + log + anneal + both + one refine sweep."""
+    cfgs = []
+    for n in (4, 5):
+        base = n * (n - 1) // 2
+        for seed in (0, 1):
+            cfgs.append(
+                lambda n=n, base=base, seed=seed: create_elim_config(
+                    n=n, hidden=256, depth=2, lr=1e-4, weight_decay=0.0, seed=seed,
+                    input_features="both", multiplier_param="log",
+                    teacher_mode="anneal", pivot="partial", refine_steps=base,
+                    step_arch="transformer",
+                )
+            )
+    return cfgs
+
+
 def smoke_configs():
     return [
         lambda: create_elim_config(
