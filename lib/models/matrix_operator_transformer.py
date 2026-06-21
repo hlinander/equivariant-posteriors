@@ -131,6 +131,31 @@ class MatrixOperatorTransformer(torch.nn.Module):
         )
 
     @torch.no_grad()
+    def free_rollout_trace(self, a, n_steps):
+        """Force exactly n_steps operators (ignore STOP). Per step records mean
+        stop-probability, mean operator magnitude ||M-I||, and running log|det|
+        -- for the test-time-compute study (does extra compute help? when does
+        it want to halt? does it identity-pad past the natural stop?)."""
+        n = self.n
+        B = a.shape[0]
+        eye = torch.eye(n, device=a.device)
+        states = [a]
+        cur = a
+        stop_probs, op_norms, logdets = [], [], []
+        for _ in range(n_steps):
+            emb = self.matrix_embed(torch.stack(states, dim=1).reshape(B, len(states), self.nn2))
+            toks = torch.cat([self.task_embed.expand(B, 1, -1), emb], dim=1)
+            last = self._run_transformer(toks)[:, -1, :]
+            stop_probs.append(torch.sigmoid(self.stop_head(last).squeeze(-1)).mean().item())
+            M = self.op_head(last).reshape(B, n, n)
+            op_norms.append((M - eye).norm(dim=(1, 2)).mean().item())
+            cur = M @ cur
+            states.append(cur)
+            diag = cur.diagonal(dim1=1, dim2=2)
+            logdets.append(torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1))
+        return stop_probs, op_norms, logdets
+
+    @torch.no_grad()
     def free_rollout(self, a, max_ops=None, stop_thresh=0.5):
         n = self.n
         if max_ops is None:
