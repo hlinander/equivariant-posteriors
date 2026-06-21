@@ -25,7 +25,7 @@ def stop_loss(output, batch):
     return output["stop_loss"]
 
 
-def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
+def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=100000):
     def op_total_loss(output, batch):
         return output["op_loss"].mean() + output["stop_loss"].mean()
 
@@ -37,8 +37,8 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
         log_sample_ids=False,
         diagnostics_interval=100,
     )
-    train_data = DataRealDetMatrixConfig(n=n, n_train=100000, seed=seed)
-    val_data = DataRealDetMatrixConfig(n=n, n_train=100000, seed=seed, validation=True)
+    train_data = DataRealDetMatrixConfig(n=n, n_train=n_train, seed=seed)
+    val_data = DataRealDetMatrixConfig(n=n, n_train=n_train, seed=seed, validation=True)
     train_config = TrainConfig(
         model_config=MatrixOperatorTransformerConfig(
             hidden=hidden, depth=depth, num_heads=num_heads, slack=4
@@ -69,10 +69,10 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
     )
 
 
-def create_det_config(n, hidden, depth, num_heads, lr, seed):
+def create_det_config(n, hidden, depth, num_heads, lr, seed, n_train=100000):
     return _make_train_run(
         n=n, hidden=hidden, depth=depth, num_heads=num_heads, lr=lr, seed=seed,
-        epochs=200,
+        epochs=200, n_train=n_train,
     )
 
 
@@ -83,6 +83,18 @@ def det_configs():
     return get_config_grid(
         create_det_config,
         dict(n=[3, 4, 5], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0, 1]),
+    )
+
+
+def data_scaling_configs():
+    """Data-efficiency study for the operator transformer at N=4,5: does more
+    data lower op_loss (hence less free-rollout drift / logdet_mae)?"""
+    return get_config_grid(
+        create_det_config,
+        dict(
+            n=[4, 5], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0],
+            n_train=[25000, 50000, 100000, 200000],
+        ),
     )
 
 

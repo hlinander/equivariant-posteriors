@@ -139,6 +139,24 @@ class MatrixOperatorTransformer(torch.nn.Module):
             predictions=logdet.detach().unsqueeze(-1),
         )
 
+    def rollout_logdet(self, a, n_steps):
+        """Grad-enabled free rollout returning only log|det| (B,), for the
+        Jacobian / FTLE study (d log|det| / dA vs Jacobi's A^{-T}). Fixed n_steps
+        (no STOP), fully differentiable (operators predicted as matrices)."""
+        states = [a]
+        cur = a
+        for _ in range(n_steps):
+            emb = self.matrix_embed(
+                torch.stack(states, dim=1).reshape(a.shape[0], len(states), self.nn2)
+            )
+            toks = torch.cat([self.task_embed.expand(a.shape[0], 1, -1), emb], dim=1)
+            last = self._run_transformer(toks)[:, -1, :]
+            M = self.op_head(last).reshape(a.shape[0], self.n, self.n)
+            cur = M @ cur
+            states.append(cur)
+        diag = cur.diagonal(dim1=1, dim2=2)
+        return torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)
+
     @torch.no_grad()
     def free_rollout_trace(self, a, n_steps):
         """Force exactly n_steps operators (ignore STOP). Per step records mean
