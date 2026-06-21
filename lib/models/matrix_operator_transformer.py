@@ -2,17 +2,17 @@
 
 Tokens are full matrices. The sequence is [TASK] [A_0] [A_1] ... [A_m], where
 each A_t is the matrix state after t predicted operators. At each state position
-a causal transformer predicts the NEXT operator as a delta from identity
-(M = I + Delta, applied A <- M A) plus a discrete STOP decision; identity
-(Delta = 0) is the natural no-op, so over-generating is harmless.
+a causal transformer predicts the NEXT operator as a **full matrix** M (applied
+A <- M A) plus a discrete STOP. Every operation is just an operator matrix --
+permutations (row swaps), eliminations, identity (no-op) are all the same kind
+of object, predicted uniformly. The head is initialized to output ~identity so
+the default action is a no-op (trainability without an I+Delta restriction).
 
-This is the general substrate (single-task DET first): determinant = transform A
-to upper-triangular by a sequence of elementary operators, read Sum log|diag|.
-The operator family here is the elimination delta (sparse), supervised
-teacher-forced against ground-truth Gaussian-elimination operators; the head
-predicts a full n x n delta, so it can equally emit dense operators. Trained as
-a parallel teacher-forced causal sequence model (no per-step re-encoding / deep
-BPTT, unlike the unrolled elimination rollout) -- the scaling fix.
+Single-task DET: reduce A to upper-triangular by a sequence of operators, read
+Sum log|diag|. The teacher is partial-pivoting Gaussian elimination, whose
+operators (permutation P_k, column-elimination E_k) are full matrices with
+bounded entries (|multiplier| <= 1). Trained as a parallel teacher-forced causal
+sequence model (no per-step re-encoding / deep BPTT).
 """
 import torch
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ class MatrixOperatorTransformerConfig:
     depth: int = 4
     num_heads: int = 8
     eps: float = 1e-6
-    max_ops: int = 0  # 0 -> n*(n-1)//2 (fixed elimination length)
+    max_ops: int = 0  # 0 -> 2*(n-1) (permutation + elimination per column)
 
     def serialize_human(self):
         return self.__dict__
@@ -40,7 +40,7 @@ class MatrixOperatorTransformer(torch.nn.Module):
         self.nn2 = self.n * self.n
         self.matrix_embed = torch.nn.Linear(self.nn2, H)
         self.task_embed = torch.nn.Parameter(torch.zeros(1, 1, H))
-        self.max_ops = config.max_ops or (self.n * (self.n - 1) // 2)
+        self.max_ops = config.max_ops or (2 * (self.n - 1))
         self.pos = torch.nn.Parameter(torch.zeros(1, self.max_ops + 2, H))
         torch.nn.init.normal_(self.task_embed, std=0.02)
         torch.nn.init.normal_(self.pos, std=0.02)
@@ -52,73 +52,86 @@ class MatrixOperatorTransformer(torch.nn.Module):
             enc, num_layers=config.depth, norm=torch.nn.LayerNorm(H),
             enable_nested_tensor=False,
         )
-        self.delta_head = torch.nn.Linear(H, self.nn2)
+        # operator head: predict a full n x n operator matrix, initialized to ~I
+        self.op_head = torch.nn.Linear(H, self.nn2)
+        torch.nn.init.zeros_(self.op_head.weight)
+        self.op_head.bias.data = torch.eye(self.n).reshape(-1).clone()
         self.stop_head = torch.nn.Linear(H, 1)
 
     def _teacher_sequence(self, a):
-        """Ground-truth elimination: states A_0..A_m and operator deltas
-        Delta_1..Delta_m (each I+Delta = elementary row op). Fixed column order."""
+        """Partial-pivoting GE as full-matrix operators. Per column k: a
+        permutation P_k (swap largest-|.| pivot up; identity if none) then a
+        column-elimination E_k. Returns states A_0..A_m and operators M_1..M_m
+        (each (B,n,n)); |elimination multipliers| <= 1."""
         n = self.n
+        B = a.shape[0]
+        bidx = torch.arange(B, device=a.device)
+        eye = torch.eye(n, device=a.device).unsqueeze(0).expand(B, -1, -1)
         states = [a]
-        deltas = []
+        ops = []
         cur = a
         for k in range(n - 1):
-            for i in range(k + 1, n):
-                c = cur[:, i, k] / cur[:, k, k]  # (B,)
-                delta = torch.zeros_like(cur)
-                delta[:, i, k] = -c  # operator M = I + delta (single off-diag)
-                cur = cur + delta @ cur  # apply M A
-                states.append(cur)
-                deltas.append(delta)
-        return states, deltas
+            # permutation operator (partial pivot)
+            p = cur[:, k:, k].abs().argmax(dim=1) + k  # (B,)
+            P = eye.clone()
+            # swap rows k and p of the identity, per sample
+            rows = torch.arange(n, device=a.device).unsqueeze(0).expand(B, -1).clone()
+            rows[bidx, k] = p
+            rows[bidx, p] = k
+            P = eye[bidx][:, :, :]  # (B,n,n) identity
+            P = torch.gather(P, 1, rows.unsqueeze(-1).expand(-1, -1, n))
+            cur = P @ cur
+            states.append(cur)
+            ops.append(P)
+            # column-elimination operator
+            E = eye.clone()
+            c = cur[:, k + 1 :, k] / cur[:, k, k].unsqueeze(1)  # (B, n-k-1)
+            E[bidx.unsqueeze(1), torch.arange(k + 1, n, device=a.device).unsqueeze(0), k] = -c
+            cur = E @ cur
+            states.append(cur)
+            ops.append(E)
+        return states, ops
 
     def _run_transformer(self, toks):
         L = toks.shape[1]
-        mask = torch.triu(
-            torch.ones(L, L, device=toks.device, dtype=torch.bool), diagonal=1
-        )
+        mask = torch.triu(torch.ones(L, L, device=toks.device, dtype=torch.bool), diagonal=1)
         return self.transformer(toks + self.pos[:, :L], mask=mask, is_causal=True)
 
     def forward(self, batch):
         a = batch["input"]
         B = a.shape[0]
         n = self.n
-        states, deltas = self._teacher_sequence(a)  # m+1 states, m deltas
-        m = len(deltas)
-        state_emb = self.matrix_embed(
-            torch.stack(states, dim=1).reshape(B, m + 1, self.nn2)
-        )  # (B, m+1, H)
+        states, ops = self._teacher_sequence(a)
+        m = len(ops)
+        state_emb = self.matrix_embed(torch.stack(states, dim=1).reshape(B, m + 1, self.nn2))
         toks = torch.cat([self.task_embed.expand(B, 1, -1), state_emb], dim=1)
-        h = self._run_transformer(toks)  # (B, m+2, H)
-        state_h = h[:, 1:, :]  # aligned with A_0..A_m  -> (B, m+1, H)
+        h = self._run_transformer(toks)
+        state_h = h[:, 1:, :]  # aligned with A_0..A_m
 
-        delta_pred = self.delta_head(state_h).reshape(B, m + 1, n, n)
-        stop_logit = self.stop_head(state_h).squeeze(-1)  # (B, m+1)
+        op_pred = self.op_head(state_h).reshape(B, m + 1, n, n)
+        stop_logit = self.stop_head(state_h).squeeze(-1)
 
-        delta_tgt = torch.stack(deltas, dim=1)  # (B, m, n, n)
-        # smooth-L1 (robust to heavy-tailed multipliers from small no-pivot pivots)
-        delta_loss = torch.nn.functional.smooth_l1_loss(
-            delta_pred[:, :m], delta_tgt, reduction="none"
+        op_tgt = torch.stack(ops, dim=1)  # (B, m, n, n)
+        op_loss = torch.nn.functional.smooth_l1_loss(
+            op_pred[:, :m], op_tgt, reduction="none"
         ).sum(dim=(2, 3)).mean(dim=1)  # (B,)
         stop_tgt = torch.zeros(B, m + 1, device=a.device)
         stop_tgt[:, m] = 1.0
         stop_loss = torch.nn.functional.binary_cross_entropy_with_logits(
             stop_logit, stop_tgt, reduction="none"
-        ).mean(dim=1)  # (B,)
+        ).mean(dim=1)
 
         diag = states[-1].diagonal(dim1=1, dim2=2)
-        logdet = torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)  # teacher
+        logdet = torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)
         return dict(
             logits=logdet.unsqueeze(-1),
-            delta_loss=delta_loss,
+            op_loss=op_loss,
             stop_loss=stop_loss,
             predictions=logdet.detach().unsqueeze(-1),
         )
 
     @torch.no_grad()
     def free_rollout(self, a, max_ops=None, stop_thresh=0.5):
-        """Autoregressive: predict delta, apply M=I+delta, append state, until
-        STOP or max_ops. Returns (logdet, n_ops, final_state)."""
         n = self.n
         if max_ops is None:
             max_ops = self.max_ops
@@ -131,11 +144,11 @@ class MatrixOperatorTransformer(torch.nn.Module):
             emb = self.matrix_embed(torch.stack(states, dim=1).reshape(B, len(states), self.nn2))
             toks = torch.cat([self.task_embed.expand(B, 1, -1), emb], dim=1)
             h = self._run_transformer(toks)
-            last = h[:, -1, :]  # prediction at the most recent state
+            last = h[:, -1, :]
             stop = torch.sigmoid(self.stop_head(last).squeeze(-1)) > stop_thresh
-            delta = self.delta_head(last).reshape(B, n, n)
+            M = self.op_head(last).reshape(B, n, n)
             step = alive & (~stop)
-            cur = torch.where(step.view(B, 1, 1), cur + delta @ cur, cur)
+            cur = torch.where(step.view(B, 1, 1), M @ cur, cur)
             n_ops = n_ops + step.float()
             alive = alive & (~stop)
             states.append(cur)

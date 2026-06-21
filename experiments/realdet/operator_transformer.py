@@ -17,8 +17,8 @@ from lib.distributed_trainer import distributed_train
 from experiments.realdet.operator_metric import compute_operator_diagnostics
 
 
-def delta_loss(output, batch):
-    return output["delta_loss"]
+def op_loss(output, batch):
+    return output["op_loss"]
 
 
 def stop_loss(output, batch):
@@ -26,12 +26,12 @@ def stop_loss(output, batch):
 
 
 def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
-    def op_loss(output, batch):
-        return output["delta_loss"].mean() + output["stop_loss"].mean()
+    def op_total_loss(output, batch):
+        return output["op_loss"].mean() + output["stop_loss"].mean()
 
     train_eval = TrainEval(
-        train_metrics=[lambda: Metric(delta_loss), lambda: Metric(stop_loss)],
-        validation_metrics=[lambda: Metric(delta_loss), lambda: Metric(stop_loss)],
+        train_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss)],
+        validation_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss)],
         log_gradient_norm=True,
         log_parameter_norm=True,
         log_sample_ids=False,
@@ -45,14 +45,14 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
         ),
         train_data_config=train_data,
         val_data_config=val_data,
-        loss=op_loss,
+        loss=op_total_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW, kwargs=dict(lr=lr, weight_decay=0.0)
         ),
         batch_size=512,
         gradient_clipping=1.0,
         ensemble_id=seed,
-        _version=1,
+        _version=2,  # full-operator (vs I+Delta) redesign -> fresh hashes
     )
     return TrainRun(
         project="real_det_operator",
@@ -77,10 +77,12 @@ def create_det_config(n, hidden, depth, num_heads, lr, seed):
 
 
 def det_configs():
-    """Single-task DET, N=3, transformer recipe (lr=1e-4), a small depth sweep."""
+    """Single-task DET via full-operator prediction (pivoted teacher), N in
+    {3,4,5} -- the scaling test: does the parallel causal sequence model break
+    the N>=4 wall the unrolled rollout couldn't?"""
     return get_config_grid(
         create_det_config,
-        dict(n=[3], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0, 1]),
+        dict(n=[3, 4, 5], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0, 1]),
     )
 
 
