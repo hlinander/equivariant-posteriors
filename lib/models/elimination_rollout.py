@@ -187,6 +187,41 @@ class EliminationRollout(torch.nn.Module):
         lower_tri_sq = torch.tril(a, diagonal=-1).pow(2).sum(dim=(1, 2))
         return logdet, lower_tri_sq, a, resid, mult_loss, pivot_loss
 
+    @torch.no_grad()
+    def trace_rollout(self, a):
+        """Single-example (batch=1) step-by-step trace for inspection. Free
+        rollout (model's own pivots/multipliers). Returns a dict with the
+        initial matrix, an ordered list of step records, the final matrix, and
+        the predicted log|det| readout."""
+        assert a.shape[0] == 1
+        n = self.n
+        steps = []
+        initial = a.clone()
+        for k in range(n - 1):
+            if self.config.pivot != "none":
+                target_p = int(a[:, k:, k].abs().argmax(dim=1).item()) + k
+                if self.config.pivot == "learned":
+                    p = int(self._pivot_scores(a, k, self._featurize(a)).argmax(dim=1).item())
+                else:
+                    p = target_p
+                if p != k:
+                    a = self._swap_rows(a, k, a.new_tensor([p], dtype=torch.long))
+                steps.append(dict(type="pivot", k=k, p=p, target_p=target_p,
+                                  matrix=a[0].clone()))
+            for i in range(k + 1, n):
+                feats = self._featurize(a)
+                c_oracle = float((a[:, i, k] / a[:, k, k]).item())
+                c_model = float(self._multiplier(a, i, k, feats).item())
+                upd = torch.zeros_like(a)
+                upd[:, i, :] = -c_model * a[:, k, :]
+                a = a + upd
+                steps.append(dict(type="elim", k=k, i=i, c_model=c_model,
+                                  c_oracle=c_oracle, resid=float(a[:, i, k].abs().item()),
+                                  matrix=a[0].clone()))
+        diag = a.diagonal(dim1=1, dim2=2)
+        pred = float(torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1).item())
+        return dict(initial=initial[0], steps=steps, final=a[0], pred_logdet=pred)
+
     def forward(self, batch):
         a = batch["input"]
         tr = self._teacher_ratio()
