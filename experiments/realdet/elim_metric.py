@@ -56,14 +56,10 @@ def _run_for_split(model, state, dataset, split, seed):
         emit("pivot_loss", float(pivot_loss))  # pivot CE vs partial-pivot argmax
     if resid_m:
         emit("resid_final", resid_m[-1].item())
-
-    # Test-time-compute scaling curve: free-rollout logdet MAE vs number of
-    # greedy residual-refinement steps R. R=0 is the base pass (no refinement).
-    base = (model.n * (model.n - 1)) // 2
-    for mult in (0, 1, 2, 4, 8):
-        r = base * mult
-        ld_r, _, _, _, _, _ = model.rollout(a, refine_steps=r)
-        emit(f"logdet_mae_r{mult}x", (ld_r - target).abs().mean().item())
+    # The test-time-compute scaling curve (logdet_mae vs refinement R) is
+    # computed post-hoc on the final checkpoint (scaling_curve.py) rather than
+    # in-training -- the in-hook R-sweep was far too expensive for the
+    # per-step-re-encoding transformer step.
 
 
 def compute_elim_diagnostics(model, train_run, state, device_id):
