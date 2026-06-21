@@ -28,6 +28,17 @@ class EliminationRolloutConfig:
     # bad at division -- so "log" feeds log|M| + sign(M), "both" adds raw M too
     # (raw is still needed: the row update is arithmetic on raw entries).
     input_features: str = "raw"  # "raw" | "log" | "both"
+    # Output parametrization of the multiplier. "log": head -> (log|c|, sign),
+    # c = sign*exp(log|c|), so the ratio A[i,k]/A[k,k] is a subtraction at the
+    # head (linear) regardless of how summed the current entries are -- the
+    # division fix that log *input* alone can't give past the first column.
+    multiplier_param: str = "linear"  # "linear" | "log"
+    # Teacher forcing of the applied multiplier during training: "off" (free),
+    # "on" (always apply the oracle c), "anneal" (1->0 over teacher_anneal_steps,
+    # scheduled sampling). Per-step supervision against the oracle is applied
+    # regardless; teacher forcing only changes which c drives the next state.
+    teacher_mode: str = "off"  # "off" | "on" | "anneal"
+    teacher_anneal_steps: int = 10000
 
     def serialize_human(self):
         return self.__dict__
@@ -48,7 +59,9 @@ class EliminationRollout(torch.nn.Module):
         for _ in range(config.depth - 1):
             layers.append(torch.nn.Linear(config.hidden, config.hidden))
         self.layers = torch.nn.ModuleList(layers)
-        self.head = torch.nn.Linear(config.hidden, 1)
+        out_dim = 2 if config.multiplier_param == "log" else 1
+        self.head = torch.nn.Linear(config.hidden, out_dim)
+        self.register_buffer("train_steps", torch.zeros((), dtype=torch.long))
 
     def _multiplier(self, a, i, k):
         b = a.shape[0]
@@ -67,33 +80,71 @@ class EliminationRollout(torch.nn.Module):
         x = torch.cat(feats + [oi, ok], dim=1)
         for layer in self.layers:
             x = self.activation(layer(x))
-        return self.head(x).squeeze(-1)
+        out = self.head(x)
+        if self.config.multiplier_param == "log":
+            u = out[:, 0].clamp(-15.0, 15.0)  # log|c|
+            s = out[:, 1]  # sign logit
+            return torch.exp(u) * torch.tanh(s)
+        return out.squeeze(-1)
 
-    def rollout(self, a, oracle=False, collect_resid=False):
-        """Returns (logdet, lower_tri_sq, final_matrix, per_step_residual)."""
+    def _teacher_ratio(self):
+        if not self.training:
+            return 0.0
+        mode = self.config.teacher_mode
+        if mode == "on":
+            return 1.0
+        if mode == "anneal":
+            t = float(self.train_steps.item())
+            return max(0.0, 1.0 - t / max(1, self.config.teacher_anneal_steps))
+        return 0.0
+
+    def rollout(self, a, oracle=False, teacher_ratio=0.0, collect_resid=False):
+        """Returns (logdet, lower_tri_sq, final_matrix, per_step_residual,
+        multiplier_loss). multiplier_loss is the per-step smooth-L1 between the
+        model multiplier and the oracle c=A[i,k]/A[k,k] on the current state."""
         n = self.n
         resid = []
+        mult_loss = a.new_zeros(())
+        n_steps = 0
         for k in range(n - 1):
             for i in range(k + 1, n):
+                c_oracle = a[:, i, k] / a[:, k, k]
                 if oracle:
-                    c = a[:, i, k] / a[:, k, k]
+                    c_used = c_oracle
                 else:
-                    c = self._multiplier(a, i, k)
+                    c_model = self._multiplier(a, i, k)
+                    mult_loss = mult_loss + torch.nn.functional.smooth_l1_loss(
+                        c_model, c_oracle.detach()
+                    )
+                    n_steps += 1
+                    if teacher_ratio >= 1.0:
+                        c_used = c_oracle.detach()
+                    elif teacher_ratio > 0.0:
+                        mask = (torch.rand_like(c_model) < teacher_ratio).float()
+                        c_used = mask * c_oracle.detach() + (1.0 - mask) * c_model
+                    else:
+                        c_used = c_model
                 upd = torch.zeros_like(a)
-                upd[:, i, :] = -c.unsqueeze(1) * a[:, k, :]
+                upd[:, i, :] = -c_used.unsqueeze(1) * a[:, k, :]
                 a = a + upd
                 if collect_resid:
                     resid.append(a[:, i, k].abs().mean())
+        if n_steps > 0:
+            mult_loss = mult_loss / n_steps
         diag = a.diagonal(dim1=1, dim2=2)
         logdet = torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)
         lower_tri_sq = torch.tril(a, diagonal=-1).pow(2).sum(dim=(1, 2))
-        return logdet, lower_tri_sq, a, resid
+        return logdet, lower_tri_sq, a, resid, mult_loss
 
     def forward(self, batch):
         a = batch["input"]
-        logdet, lower_tri_sq, _, _ = self.rollout(a)
+        tr = self._teacher_ratio()
+        logdet, lower_tri_sq, _, _, mult_loss = self.rollout(a, teacher_ratio=tr)
+        if self.training:
+            self.train_steps += 1
         return dict(
             logits=logdet.unsqueeze(-1),
             lower_tri_sq=lower_tri_sq,
+            mult_loss=mult_loss,
             predictions=logdet.detach().unsqueeze(-1),
         )

@@ -34,7 +34,7 @@ def _metric_list():
 
 def _make_train_run(
     n, n_train, hidden, depth, lr, weight_decay, seed, lam, epochs,
-    input_features="raw",
+    input_features="raw", multiplier_param="linear", teacher_mode="off",
 ):
     # Closure so the loss hashes by __name__ (module-path-independent); lam is
     # captured, so keep it fixed across the sweep to avoid hash collisions.
@@ -43,7 +43,11 @@ def _make_train_run(
         tgt = batch["target"].squeeze(-1)
         readout = (pred - tgt).abs().mean()
         triangularize = output["lower_tri_sq"].mean()
-        return readout + lam * triangularize
+        # per-step multiplier supervision against the oracle (the division fix
+        # is verified by this term going to ~0); dominant signal under teacher
+        # forcing, where the readout is exact regardless of the model.
+        step = output["mult_loss"]
+        return readout + lam * triangularize + step
 
     train_eval = TrainEval(
         train_metrics=_metric_list(),
@@ -58,7 +62,8 @@ def _make_train_run(
 
     train_config = TrainConfig(
         model_config=EliminationRolloutConfig(
-            hidden=hidden, depth=depth, input_features=input_features
+            hidden=hidden, depth=depth, input_features=input_features,
+            multiplier_param=multiplier_param, teacher_mode=teacher_mode,
         ),
         train_data_config=train_data,
         val_data_config=val_data,
@@ -88,28 +93,45 @@ def _make_train_run(
     )
 
 
-def create_elim_config(n, hidden, depth, lr, weight_decay, seed, input_features):
+def create_elim_config(
+    n, hidden, depth, lr, weight_decay, seed, input_features,
+    multiplier_param, teacher_mode,
+):
     return _make_train_run(
         n=n, n_train=100000, hidden=hidden, depth=depth, lr=lr,
         weight_decay=weight_decay, seed=seed, lam=1.0, epochs=200,
-        input_features=input_features,
+        input_features=input_features, multiplier_param=multiplier_param,
+        teacher_mode=teacher_mode,
     )
 
 
 def elimination_configs():
-    """Stage 1 feasibility/stability across small N, comparing input
-    featurizations: raw vs log|M|+sign vs both (the multiplier is a ratio, so
-    log -> subtraction should ease the division)."""
+    """Stage 1: input featurization x multiplier output param, free rollout."""
     return get_config_grid(
         create_elim_config,
         dict(
             n=[2, 3, 4],
-            hidden=[256],
-            depth=[2],
-            lr=[1e-3],
-            weight_decay=[0.0],
-            seed=[0, 1],
+            hidden=[256], depth=[2], lr=[1e-3], weight_decay=[0.0], seed=[0, 1],
             input_features=["raw", "log", "both"],
+            multiplier_param=["linear"],
+            teacher_mode=["off"],
+        ),
+    )
+
+
+def teacher_configs():
+    """Stage 2: the division fix (log-output) + teacher forcing / scheduled
+    sampling. Compares linear vs log output head under teacher_mode on/anneal,
+    fixed input_features=both. Per-step mult_loss -> ~0 means division solved;
+    free-rollout (eval) logdet_mae/lower_rms then isolate drift."""
+    return get_config_grid(
+        create_elim_config,
+        dict(
+            n=[2, 3, 4],
+            hidden=[256], depth=[2], lr=[1e-3], weight_decay=[0.0], seed=[0, 1],
+            input_features=["both"],
+            multiplier_param=["linear", "log"],
+            teacher_mode=["on", "anneal"],
         ),
     )
 
@@ -119,7 +141,8 @@ def smoke_configs():
         create_elim_config,
         dict(
             n=[2, 3], hidden=[128], depth=[2], lr=[1e-3], weight_decay=[0.0],
-            seed=[0], input_features=["both"],
+            seed=[0], input_features=["both"], multiplier_param=["log"],
+            teacher_mode=["anneal"],
         ),
     )
 

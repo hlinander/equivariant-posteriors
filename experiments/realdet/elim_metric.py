@@ -37,8 +37,10 @@ def _run_for_split(model, state, dataset, split, seed):
     a = dataset.xs[idx].to(device)
     target = dataset.ys[idx].to(device).squeeze(-1)
 
-    logdet_m, _, final_m, resid_m = model.rollout(a, oracle=False, collect_resid=True)
-    logdet_o, _, _, _ = model.rollout(a, oracle=True)
+    logdet_m, _, final_m, resid_m, mult_loss = model.rollout(
+        a, oracle=False, collect_resid=True
+    )
+    logdet_o, _, _, _, _ = model.rollout(a, oracle=True)
     _, logdet_final = torch.linalg.slogdet(final_m)
 
     def emit(name, value):
@@ -49,6 +51,7 @@ def _run_for_split(model, state, dataset, split, seed):
 
     emit("det_conservation", (logdet_final - target).abs().mean().item())
     emit("oracle_logdet_mae", (logdet_o - target).abs().mean().item())
+    emit("mult_loss", float(mult_loss))  # per-step multiplier error (free rollout)
     if resid_m:
         emit("resid_final", resid_m[-1].item())
 
