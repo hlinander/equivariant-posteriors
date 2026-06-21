@@ -11,6 +11,10 @@ from lib.models.mlp import MLP, MLPConfig
 from lib.models.mlp_proj import MLPProjClass, MLPProjClassConfig
 from lib.models.grok_mlp import GrokMLP, GrokMLPConfig
 from lib.models.elimination_rollout import EliminationRollout, EliminationRolloutConfig
+from lib.models.matrix_operator_transformer import (
+    MatrixOperatorTransformer,
+    MatrixOperatorTransformerConfig,
+)
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
@@ -61,6 +65,7 @@ class _ModelFactory:
         self.register(MLPProjClassConfig, MLPProjClass)
         self.register(GrokMLPConfig, GrokMLP)
         self.register(EliminationRolloutConfig, EliminationRollout)
+        self.register(MatrixOperatorTransformerConfig, MatrixOperatorTransformer)
         self.register(ResnetConfig, Resnet)
         self.register(SwinTinyConfig, SwinTiny)
         self.register(LLaMA2GenerativeConfig, LLaMA2Generative)
