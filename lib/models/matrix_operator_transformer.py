@@ -25,7 +25,9 @@ class MatrixOperatorTransformerConfig:
     depth: int = 4
     num_heads: int = 8
     eps: float = 1e-6
-    max_ops: int = 0  # 0 -> 2*(n-1) (permutation + elimination per column)
+    max_ops: int = 0  # 0 -> 2*(n-1) + slack
+    slack: int = 0  # extra identity-operator slots past the elimination, so STOP
+    # actually halts (not the max_ops cap) and "think more" = emit identities
 
     def serialize_human(self):
         return self.__dict__
@@ -40,7 +42,8 @@ class MatrixOperatorTransformer(torch.nn.Module):
         self.nn2 = self.n * self.n
         self.matrix_embed = torch.nn.Linear(self.nn2, H)
         self.task_embed = torch.nn.Parameter(torch.zeros(1, 1, H))
-        self.max_ops = config.max_ops or (2 * (self.n - 1))
+        self.true_ops = 2 * (self.n - 1)
+        self.max_ops = config.max_ops or (self.true_ops + config.slack)
         self.pos = torch.nn.Parameter(torch.zeros(1, self.max_ops + 2, H))
         torch.nn.init.normal_(self.task_embed, std=0.02)
         torch.nn.init.normal_(self.pos, std=0.02)
@@ -90,6 +93,10 @@ class MatrixOperatorTransformer(torch.nn.Module):
             cur = E @ cur
             states.append(cur)
             ops.append(E)
+        # identity-operator padding past the elimination (think-more = no-op)
+        for _ in range(self.config.slack):
+            ops.append(eye[bidx])
+            states.append(cur)
         return states, ops
 
     def _run_transformer(self, toks):
@@ -111,12 +118,14 @@ class MatrixOperatorTransformer(torch.nn.Module):
         op_pred = self.op_head(state_h).reshape(B, m + 1, n, n)
         stop_logit = self.stop_head(state_h).squeeze(-1)
 
-        op_tgt = torch.stack(ops, dim=1)  # (B, m, n, n)
+        op_tgt = torch.stack(ops, dim=1)  # (B, m, n, n); ops past true_ops are I
         op_loss = torch.nn.functional.smooth_l1_loss(
             op_pred[:, :m], op_tgt, reduction="none"
         ).sum(dim=(2, 3)).mean(dim=1)  # (B,)
+        # STOP once the elimination is done (state index >= true_ops), so STOP
+        # halting is learned and identity-padding fills any forced extra steps.
         stop_tgt = torch.zeros(B, m + 1, device=a.device)
-        stop_tgt[:, m] = 1.0
+        stop_tgt[:, self.true_ops :] = 1.0
         stop_loss = torch.nn.functional.binary_cross_entropy_with_logits(
             stop_logit, stop_tgt, reduction="none"
         ).mean(dim=1)

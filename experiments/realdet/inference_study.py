@@ -56,7 +56,9 @@ def main():
         a = val.xs[: args.n_eval]
         tgt = val.ys[: args.n_eval].squeeze(-1)
 
-        n_steps = true_ops + args.extra
+        # model has only max_ops positional slots (= true_ops here), so we can't
+        # force past the natural length without retraining with slack.
+        n_steps = min(true_ops + args.extra, m.max_ops)
         stop_probs, op_norms, logdets = m.free_rollout_trace(a, n_steps)
         mae = [float((ld - tgt).abs().mean()) for ld in logdets]
 

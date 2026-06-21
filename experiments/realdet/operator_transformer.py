@@ -41,7 +41,7 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs):
     val_data = DataRealDetMatrixConfig(n=n, n_train=100000, seed=seed, validation=True)
     train_config = TrainConfig(
         model_config=MatrixOperatorTransformerConfig(
-            hidden=hidden, depth=depth, num_heads=num_heads
+            hidden=hidden, depth=depth, num_heads=num_heads, slack=4
         ),
         train_data_config=train_data,
         val_data_config=val_data,
