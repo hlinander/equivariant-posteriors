@@ -113,6 +113,19 @@ def det_configs():
     )
 
 
+def n8_configs():
+    """Teacher-forced operator transformer at N=8 -- elusive for direct
+    regression (the MLP's A^{-T} sensitivity collapses by N=5). 14 elimination
+    ops; 200k data to absorb the longer-rollout drift. 2 seeds."""
+    return get_config_grid(
+        create_det_config,
+        dict(
+            n=[8], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0, 1],
+            n_train=[200000],
+        ),
+    )
+
+
 def data_scaling_configs():
     """Data-efficiency study for the operator transformer at N=4,5: does more
     data lower op_loss (hence less free-rollout drift / logdet_mae)?"""
