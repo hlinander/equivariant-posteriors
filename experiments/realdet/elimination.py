@@ -206,10 +206,31 @@ def arch_configs():
     return cfgs
 
 
+def transformer_probe_configs():
+    """Stage 5b: can the transformer step train at all? It was flat at init with
+    the MLP recipe (lr=1e-3, no warmup) -- unrolling the encoder over the rollout
+    makes it effectively deep, the classic needs-warmup regime. Probe lower LR x
+    shallower depth (depth=1 halves the per-step unroll), now with a final
+    LayerNorm added. N=3 (where the MLP reaches mult_loss 0.048); target: match
+    that. Fixed partial pivot + log + anneal + both + one refine sweep."""
+    cfgs = []
+    for lr in (3e-4, 1e-4):
+        for depth in (1, 2):
+            cfgs.append(
+                lambda lr=lr, depth=depth: create_elim_config(
+                    n=3, hidden=256, depth=depth, lr=lr, weight_decay=0.0, seed=0,
+                    input_features="both", multiplier_param="log",
+                    teacher_mode="anneal", pivot="partial", refine_steps=3,
+                    step_arch="transformer",
+                )
+            )
+    return cfgs
+
+
 def smoke_configs():
     return [
         lambda: create_elim_config(
-            n=3, hidden=128, depth=2, lr=1e-3, weight_decay=0.0, seed=0,
+            n=3, hidden=128, depth=2, lr=3e-4, weight_decay=0.0, seed=0,
             input_features="both", multiplier_param="log", teacher_mode="anneal",
             pivot="partial", refine_steps=3, step_arch="transformer",
         )

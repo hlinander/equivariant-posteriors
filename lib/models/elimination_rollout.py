@@ -80,7 +80,9 @@ class EliminationRollout(torch.nn.Module):
                 activation=config.activation, batch_first=True, norm_first=True,
             )
             self.encoder = torch.nn.TransformerEncoder(
-                enc_layer, num_layers=config.depth, enable_nested_tensor=False
+                enc_layer, num_layers=config.depth,
+                norm=torch.nn.LayerNorm(config.hidden),  # final norm (pre-LN stack)
+                enable_nested_tensor=False,
             )
             self.mult_head = torch.nn.Sequential(
                 torch.nn.Linear(2 * config.hidden, config.hidden),
