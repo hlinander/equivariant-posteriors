@@ -35,6 +35,7 @@ def _metric_list():
 def _make_train_run(
     n, n_train, hidden, depth, lr, weight_decay, seed, lam, epochs,
     input_features="raw", multiplier_param="linear", teacher_mode="off",
+    pivot="none",
 ):
     # Closure so the loss hashes by __name__ (module-path-independent); lam is
     # captured, so keep it fixed across the sweep to avoid hash collisions.
@@ -47,7 +48,10 @@ def _make_train_run(
         # is verified by this term going to ~0); dominant signal under teacher
         # forcing, where the readout is exact regardless of the model.
         step = output["mult_loss"]
-        return readout + lam * triangularize + step
+        # pivot classification supervision vs partial-pivot argmax (0 unless
+        # pivot="learned").
+        pivot_sup = output["pivot_loss"]
+        return readout + lam * triangularize + step + pivot_sup
 
     train_eval = TrainEval(
         train_metrics=_metric_list(),
@@ -64,6 +68,7 @@ def _make_train_run(
         model_config=EliminationRolloutConfig(
             hidden=hidden, depth=depth, input_features=input_features,
             multiplier_param=multiplier_param, teacher_mode=teacher_mode,
+            pivot=pivot,
         ),
         train_data_config=train_data,
         val_data_config=val_data,
@@ -95,13 +100,13 @@ def _make_train_run(
 
 def create_elim_config(
     n, hidden, depth, lr, weight_decay, seed, input_features,
-    multiplier_param, teacher_mode,
+    multiplier_param, teacher_mode, pivot,
 ):
     return _make_train_run(
         n=n, n_train=100000, hidden=hidden, depth=depth, lr=lr,
         weight_decay=weight_decay, seed=seed, lam=1.0, epochs=200,
         input_features=input_features, multiplier_param=multiplier_param,
-        teacher_mode=teacher_mode,
+        teacher_mode=teacher_mode, pivot=pivot,
     )
 
 
@@ -115,6 +120,7 @@ def elimination_configs():
             input_features=["raw", "log", "both"],
             multiplier_param=["linear"],
             teacher_mode=["off"],
+            pivot=["none"],
         ),
     )
 
@@ -132,6 +138,28 @@ def teacher_configs():
             input_features=["both"],
             multiplier_param=["linear", "log"],
             teacher_mode=["on", "anneal"],
+            pivot=["none"],
+        ),
+    )
+
+
+def pivoting_configs():
+    """Stage 3: pivoting. Fixed winners (log output, anneal teacher, both
+    input); compare pivot none/partial/learned across N up to 5. Partial
+    pivoting bounds |c|<=1 (fixes the heavy-tailed multiplier targets that grew
+    with N); learned pivoting is the discrete strategy, supervised vs the
+    partial-pivot argmax (pivot_loss). Question: does pivoting finally bring
+    free-rollout logdet_mae to oracle level at N>=3, and does the learned pivot
+    match partial?"""
+    return get_config_grid(
+        create_elim_config,
+        dict(
+            n=[3, 4, 5],
+            hidden=[256], depth=[2], lr=[1e-3], weight_decay=[0.0], seed=[0, 1],
+            input_features=["both"],
+            multiplier_param=["log"],
+            teacher_mode=["anneal"],
+            pivot=["none", "partial", "learned"],
         ),
     )
 
@@ -140,9 +168,9 @@ def smoke_configs():
     return get_config_grid(
         create_elim_config,
         dict(
-            n=[2, 3], hidden=[128], depth=[2], lr=[1e-3], weight_decay=[0.0],
+            n=[3], hidden=[128], depth=[2], lr=[1e-3], weight_decay=[0.0],
             seed=[0], input_features=["both"], multiplier_param=["log"],
-            teacher_mode=["anneal"],
+            teacher_mode=["anneal"], pivot=["learned"],
         ),
     )
 
