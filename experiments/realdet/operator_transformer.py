@@ -25,13 +25,24 @@ def stop_loss(output, batch):
     return output["stop_loss"]
 
 
-def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=100000):
-    def op_total_loss(output, batch):
-        return output["op_loss"].mean() + output["stop_loss"].mean()
+def tri_loss(output, batch):
+    return output["tri_loss"]
+
+
+def read_loss(output, batch):
+    return output["read_loss"]
+
+
+def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=100000,
+                    endstate=False, op_anneal_steps=0):
+    def model_loss(output, batch):
+        return output["loss"].mean()  # model-combined (op_w*op + stop + tri + read)
 
     train_eval = TrainEval(
-        train_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss)],
-        validation_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss)],
+        train_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss),
+                       lambda: Metric(tri_loss), lambda: Metric(read_loss)],
+        validation_metrics=[lambda: Metric(op_loss), lambda: Metric(stop_loss),
+                            lambda: Metric(tri_loss), lambda: Metric(read_loss)],
         log_gradient_norm=True,
         log_parameter_norm=True,
         log_sample_ids=False,
@@ -41,11 +52,12 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=10000
     val_data = DataRealDetMatrixConfig(n=n, n_train=n_train, seed=seed, validation=True)
     train_config = TrainConfig(
         model_config=MatrixOperatorTransformerConfig(
-            hidden=hidden, depth=depth, num_heads=num_heads, slack=4
+            hidden=hidden, depth=depth, num_heads=num_heads, slack=4,
+            endstate=endstate, op_anneal_steps=op_anneal_steps,
         ),
         train_data_config=train_data,
         val_data_config=val_data,
-        loss=op_total_loss,
+        loss=model_loss,
         optimizer=OptimizerConfig(
             optimizer=torch.optim.AdamW, kwargs=dict(lr=lr, weight_decay=0.0)
         ),
@@ -69,10 +81,25 @@ def _make_train_run(n, hidden, depth, num_heads, lr, seed, epochs, n_train=10000
     )
 
 
-def create_det_config(n, hidden, depth, num_heads, lr, seed, n_train=100000):
+def create_det_config(n, hidden, depth, num_heads, lr, seed, n_train=100000,
+                      endstate=False, op_anneal_steps=0):
     return _make_train_run(
         n=n, hidden=hidden, depth=depth, num_heads=num_heads, lr=lr, seed=seed,
-        epochs=200, n_train=n_train,
+        epochs=200, n_train=n_train, endstate=endstate, op_anneal_steps=op_anneal_steps,
+    )
+
+
+def emergent_configs():
+    """Emergent thinking: soften per-step operator supervision (op_loss anneals
+    1->0) while learning operators from an end-state objective (triangularize +
+    match log|det|) on the model's OWN free rollout. Does the model retain/
+    discover the row operations as imitation vanishes? N=3, 2 seeds."""
+    return get_config_grid(
+        create_det_config,
+        dict(
+            n=[3], hidden=[256], depth=[4], num_heads=[8], lr=[1e-4], seed=[0, 1],
+            endstate=[True], op_anneal_steps=[15000],
+        ),
     )
 
 

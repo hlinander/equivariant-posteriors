@@ -28,6 +28,14 @@ class MatrixOperatorTransformerConfig:
     max_ops: int = 0  # 0 -> 2*(n-1) + slack
     slack: int = 0  # extra identity-operator slots past the elimination, so STOP
     # actually halts (not the max_ops cap) and "think more" = emit identities
+    # Emergent mode: soften per-step operator supervision (op_loss) and learn
+    # the operators from an end-state objective on the model's OWN free rollout
+    # (triangularize + match the log|det| readout). op_loss weight anneals
+    # 1 -> 0 over op_anneal_steps; if it holds, the model internalized the ops.
+    endstate: bool = False
+    op_anneal_steps: int = 0
+    tri_weight: float = 1.0
+    read_weight: float = 1.0
 
     def serialize_human(self):
         return self.__dict__
@@ -60,6 +68,7 @@ class MatrixOperatorTransformer(torch.nn.Module):
         torch.nn.init.zeros_(self.op_head.weight)
         self.op_head.bias.data = torch.eye(self.n).reshape(-1).clone()
         self.stop_head = torch.nn.Linear(H, 1)
+        self.register_buffer("train_steps", torch.zeros((), dtype=torch.long))
 
     def _teacher_sequence(self, a):
         """Partial-pivoting GE as full-matrix operators. Per column k: a
@@ -132,12 +141,49 @@ class MatrixOperatorTransformer(torch.nn.Module):
 
         diag = states[-1].diagonal(dim1=1, dim2=2)
         logdet = torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)
+
+        op_w = 1.0
+        if self.config.op_anneal_steps > 0 and self.training:
+            op_w = max(0.0, 1.0 - float(self.train_steps.item()) / self.config.op_anneal_steps)
+        combined = op_w * op_loss + stop_loss
+        tri_loss = a.new_zeros(B)
+        read_loss = a.new_zeros(B)
+        if self.config.endstate:
+            final = self._diff_rollout_final(a, self.true_ops)
+            tri_loss = torch.tril(final, diagonal=-1).pow(2).sum(dim=(1, 2))
+            df = final.diagonal(dim1=1, dim2=2)
+            logdet_free = torch.log(df.abs().clamp_min(self.config.eps)).sum(dim=1)
+            _, logdet_true = torch.linalg.slogdet(a)
+            read_loss = (logdet_free - logdet_true).abs()
+            combined = combined + self.config.tri_weight * tri_loss + self.config.read_weight * read_loss
+
+        if self.training:
+            self.train_steps += 1
         return dict(
             logits=logdet.unsqueeze(-1),
+            loss=combined,
             op_loss=op_loss,
             stop_loss=stop_loss,
+            tri_loss=tri_loss,
+            read_loss=read_loss,
             predictions=logdet.detach().unsqueeze(-1),
         )
+
+    def _diff_rollout_final(self, a, n_steps):
+        """Grad-enabled free rollout (model's own operators) returning the final
+        matrix state -- for the emergent end-state objective."""
+        states = [a]
+        cur = a
+        for _ in range(n_steps):
+            emb = self.matrix_embed(
+                torch.stack(states, dim=1).reshape(a.shape[0], len(states), self.nn2)
+            )
+            toks = torch.cat([self.task_embed.expand(a.shape[0], 1, -1), emb], dim=1)
+            last = self._run_transformer(toks)[:, -1, :]
+            M = self.op_head(last).reshape(a.shape[0], self.n, self.n)
+            cur = M @ cur
+            states.append(cur)
+        return cur
 
     def rollout_logdet(self, a, n_steps):
         """Grad-enabled free rollout returning only log|det| (B,), for the
