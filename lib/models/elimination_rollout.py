@@ -34,6 +34,12 @@ class EliminationRolloutConfig:
     teacher_mode: str = "off"  # "off" | "on" | "anneal"
     teacher_anneal_steps: int = 10000
     pivot: str = "none"  # "none" | "partial" (oracle argmax) | "learned"
+    # Greedy residual refinement: after the base pass, take this many extra
+    # steps, each eliminating the current largest strict-lower entry. Every step
+    # is det-preserving, so more steps only chip away residual (test-time
+    # compute). config value is used at training time; rollout(refine_steps=R)
+    # overrides it for the eval R-sweep.
+    refine_steps: int = 0
 
     def serialize_human(self):
         return self.__dict__
@@ -87,10 +93,7 @@ class EliminationRollout(torch.nn.Module):
         o[:, idx] = 1.0
         return o
 
-    def _multiplier(self, a, i, k, feats):
-        b = a.shape[0]
-        oi = self._onehot(b, i, a.device, a.dtype)
-        ok = self._onehot(b, k, a.device, a.dtype)
+    def _multiplier_from_onehot(self, feats, oi, ok):
         x = torch.cat([feats, oi, ok], dim=1)
         for layer in self.layers:
             x = self.activation(layer(x))
@@ -99,6 +102,44 @@ class EliminationRollout(torch.nn.Module):
             u = out[:, 0].clamp(-15.0, 15.0)
             return torch.exp(u) * torch.tanh(out[:, 1])
         return out.squeeze(-1)
+
+    def _multiplier(self, a, i, k, feats):
+        b = a.shape[0]
+        return self._multiplier_from_onehot(
+            feats, self._onehot(b, i, a.device, a.dtype),
+            self._onehot(b, k, a.device, a.dtype),
+        )
+
+    def _multiplier_idx(self, a, i_idx, k_idx, feats):
+        """Per-sample multiplier for index tensors i_idx, k_idx (shape (B,))."""
+        oi = torch.nn.functional.one_hot(i_idx, self.n).to(a.dtype)
+        ok = torch.nn.functional.one_hot(k_idx, self.n).to(a.dtype)
+        return self._multiplier_from_onehot(feats, oi, ok)
+
+    def _refine_step(self, a, oracle):
+        """One greedy step: eliminate the current largest strict-lower entry
+        (per sample). Returns (new_a, step_mult_loss_or_None)."""
+        b, n, _ = a.shape
+        bidx = torch.arange(b, device=a.device)
+        # restrict argmax to strict-lower positions (i>k); others -> -1 so a
+        # near-triangular matrix can't select the diagonal (which would self-
+        # eliminate to 0/0).
+        valid = torch.tril(torch.ones(n, n, device=a.device), diagonal=-1).reshape(1, n * n).bool()
+        lower = torch.tril(a, diagonal=-1).abs().reshape(b, n * n).masked_fill(~valid, -1.0)
+        flat = lower.argmax(dim=1)
+        i_idx = flat // n
+        k_idx = flat % n
+        c_oracle = a[bidx, i_idx, k_idx] / a[bidx, k_idx, k_idx]
+        step_loss = None
+        if oracle:
+            c = c_oracle
+        else:
+            c = self._multiplier_idx(a, i_idx, k_idx, self._featurize(a))
+            step_loss = torch.nn.functional.smooth_l1_loss(c, c_oracle.detach())
+        delta = -c.unsqueeze(1) * a[bidx, k_idx, :]  # (B, n) pivot rows per sample
+        upd = torch.zeros_like(a)
+        upd[bidx, i_idx, :] = delta
+        return a + upd, step_loss
 
     def _pivot_scores(self, a, k, feats):
         b = a.shape[0]
@@ -133,9 +174,12 @@ class EliminationRollout(torch.nn.Module):
             return max(0.0, 1.0 - t / max(1, self.config.teacher_anneal_steps))
         return 0.0
 
-    def rollout(self, a, oracle=False, teacher_ratio=0.0, collect_resid=False):
+    def rollout(self, a, oracle=False, teacher_ratio=0.0, collect_resid=False,
+                refine_steps=None):
         """Returns (logdet, lower_tri_sq, final, resid, mult_loss, pivot_loss)."""
         n = self.n
+        if refine_steps is None:
+            refine_steps = self.config.refine_steps
         resid = []
         mult_loss = a.new_zeros(())
         pivot_loss = a.new_zeros(())
@@ -178,6 +222,13 @@ class EliminationRollout(torch.nn.Module):
                 a = a + upd
                 if collect_resid:
                     resid.append(a[:, i, k].abs().mean())
+        for _ in range(refine_steps):
+            a, step_loss = self._refine_step(a, oracle)
+            if step_loss is not None:
+                mult_loss = mult_loss + step_loss
+                n_steps += 1
+            if collect_resid:
+                resid.append(torch.tril(a, diagonal=-1).abs().amax(dim=(1, 2)).mean())
         if n_steps > 0:
             mult_loss = mult_loss / n_steps
         if n_piv > 0:
@@ -188,13 +239,15 @@ class EliminationRollout(torch.nn.Module):
         return logdet, lower_tri_sq, a, resid, mult_loss, pivot_loss
 
     @torch.no_grad()
-    def trace_rollout(self, a):
+    def trace_rollout(self, a, refine_steps=None):
         """Single-example (batch=1) step-by-step trace for inspection. Free
         rollout (model's own pivots/multipliers). Returns a dict with the
         initial matrix, an ordered list of step records, the final matrix, and
         the predicted log|det| readout."""
         assert a.shape[0] == 1
         n = self.n
+        if refine_steps is None:
+            refine_steps = self.config.refine_steps
         steps = []
         initial = a.clone()
         for k in range(n - 1):
@@ -218,6 +271,22 @@ class EliminationRollout(torch.nn.Module):
                 steps.append(dict(type="elim", k=k, i=i, c_model=c_model,
                                   c_oracle=c_oracle, resid=float(a[:, i, k].abs().item()),
                                   matrix=a[0].clone()))
+        valid = torch.tril(torch.ones(n, n, device=a.device), diagonal=-1).reshape(1, n * n).bool()
+        for _ in range(refine_steps):
+            lower = torch.tril(a, diagonal=-1).abs().reshape(1, n * n).masked_fill(~valid, -1.0)
+            flat = int(lower.argmax(dim=1).item())
+            i, k = flat // n, flat % n
+            c_oracle = float((a[:, i, k] / a[:, k, k]).item())
+            c_model = float(self._multiplier_idx(
+                a, a.new_tensor([i], dtype=torch.long),
+                a.new_tensor([k], dtype=torch.long), self._featurize(a)).item())
+            before = float(a[:, i, k].abs().item())
+            a, _ = self._refine_step(a, oracle=False)
+            steps.append(dict(type="refine", k=k, i=i, c_model=c_model,
+                              c_oracle=c_oracle, resid_before=before,
+                              resid=float(a[:, i, k].abs().item()),
+                              lower_rms=float(torch.tril(a, diagonal=-1).pow(2).sum().sqrt().item()),
+                              matrix=a[0].clone()))
         diag = a.diagonal(dim1=1, dim2=2)
         pred = float(torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1).item())
         return dict(initial=initial[0], steps=steps, final=a[0], pred_logdet=pred)

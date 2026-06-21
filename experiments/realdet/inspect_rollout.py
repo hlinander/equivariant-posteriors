@@ -71,6 +71,9 @@ def main():
     ap.add_argument("--examples", type=int, default=3)
     ap.add_argument("--full-matrices", action="store_true",
                     help="print the matrix after every op, not just per-column")
+    ap.add_argument("--refine", type=int, default=None,
+                    help="number of greedy residual-refinement steps to trace "
+                         "(default: the model's trained refine_steps)")
     args = ap.parse_args()
 
     cands = _candidates()
@@ -114,8 +117,8 @@ def main():
         a = val.xs[e : e + 1]
         true_ld = float(torch.linalg.slogdet(a)[1].item())
         _, _, _, _, _, _ = model.rollout(a, oracle=True)  # warm (no-op)
-        oracle_ld = float(model.rollout(a, oracle=True)[0].item())
-        tr_out = model.trace_rollout(a)
+        oracle_ld = float(model.rollout(a, oracle=True, refine_steps=0)[0].item())
+        tr_out = model.trace_rollout(a, refine_steps=args.refine)
 
         print(f"================ Example {e + 1} (N={dc.n}) ================")
         print("starting matrix A:")
@@ -133,6 +136,15 @@ def main():
                 else:
                     print(f"  pivot: swap row {s['k']} <-> row {s['p']} "
                           f"(partial={s['target_p']}) {ok}")
+            elif s["type"] == "refine":
+                if cur_col != "refine":
+                    cur_col = "refine"
+                    print("-- refinement (greedy largest residual) --")
+                print(f"  row{s['i']} -= {s['c_model']:+.4f} * row{s['k']}   "
+                      f"(oracle {s['c_oracle']:+.4f}, resid {s['resid_before']:.2e}"
+                      f"->{s['resid']:.2e}, lower_rms {s['lower_rms']:.3e})")
+                if args.full_matrices:
+                    print(_fmt_matrix(s["matrix"], indent="        "))
             else:
                 if s["k"] != cur_col:
                     cur_col = s["k"]

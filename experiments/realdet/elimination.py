@@ -35,7 +35,7 @@ def _metric_list():
 def _make_train_run(
     n, n_train, hidden, depth, lr, weight_decay, seed, lam, epochs,
     input_features="raw", multiplier_param="linear", teacher_mode="off",
-    pivot="none",
+    pivot="none", refine_steps=0,
 ):
     # Closure so the loss hashes by __name__ (module-path-independent); lam is
     # captured, so keep it fixed across the sweep to avoid hash collisions.
@@ -68,7 +68,7 @@ def _make_train_run(
         model_config=EliminationRolloutConfig(
             hidden=hidden, depth=depth, input_features=input_features,
             multiplier_param=multiplier_param, teacher_mode=teacher_mode,
-            pivot=pivot,
+            pivot=pivot, refine_steps=refine_steps,
         ),
         train_data_config=train_data,
         val_data_config=val_data,
@@ -100,13 +100,13 @@ def _make_train_run(
 
 def create_elim_config(
     n, hidden, depth, lr, weight_decay, seed, input_features,
-    multiplier_param, teacher_mode, pivot,
+    multiplier_param, teacher_mode, pivot, refine_steps=0,
 ):
     return _make_train_run(
         n=n, n_train=100000, hidden=hidden, depth=depth, lr=lr,
         weight_decay=weight_decay, seed=seed, lam=1.0, epochs=200,
         input_features=input_features, multiplier_param=multiplier_param,
-        teacher_mode=teacher_mode, pivot=pivot,
+        teacher_mode=teacher_mode, pivot=pivot, refine_steps=refine_steps,
     )
 
 
@@ -164,15 +164,34 @@ def pivoting_configs():
     )
 
 
+def refine_configs():
+    """Stage 4: greedy residual refinement (test-time compute). Train with one
+    extra sweep of refinement (refine_steps = base = n(n-1)/2); the hook logs
+    free-rollout logdet_mae across an eval R-grid {0,1,2,4,8}x base, the
+    inference-compute scaling curve. Fixed winners: partial pivot, log output,
+    anneal teacher, both input."""
+    cfgs = []
+    for n in (3, 4, 5):
+        base = n * (n - 1) // 2
+        for seed in (0, 1):
+            cfgs.append(
+                lambda n=n, seed=seed, base=base: create_elim_config(
+                    n=n, hidden=256, depth=2, lr=1e-3, weight_decay=0.0, seed=seed,
+                    input_features="both", multiplier_param="log",
+                    teacher_mode="anneal", pivot="partial", refine_steps=base,
+                )
+            )
+    return cfgs
+
+
 def smoke_configs():
-    return get_config_grid(
-        create_elim_config,
-        dict(
-            n=[3], hidden=[128], depth=[2], lr=[1e-3], weight_decay=[0.0],
-            seed=[0], input_features=["both"], multiplier_param=["log"],
-            teacher_mode=["anneal"], pivot=["learned"],
-        ),
-    )
+    return [
+        lambda: create_elim_config(
+            n=3, hidden=128, depth=2, lr=1e-3, weight_decay=0.0, seed=0,
+            input_features="both", multiplier_param="log", teacher_mode="anneal",
+            pivot="partial", refine_steps=3,
+        )
+    ]
 
 
 def create_configs():
