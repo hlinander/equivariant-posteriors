@@ -15,6 +15,7 @@ from lib.datasets.finite_field_det import DataFiniteFieldDetConfig, DataFiniteFi
 from lib.datasets.real_det import DataRealDetConfig, DataRealDet
 from lib.datasets.real_det_matrix import DataRealDetMatrixConfig, DataRealDetMatrix
 from lib.datasets.real_det_multi import DataRealDetMultiConfig, DataRealDetMulti
+from lib.datasets.icl_operator import DataICLOperatorConfig, DataICLOperator
 
 # from experiments.lora_ensembles.configs import NLPDatasetConfig
 # from experiments.lora_ensembles.configs import NLPDataset
@@ -38,3 +39,4 @@ def register_datasets(factory):
     factory.register(DataRealDetConfig, DataRealDet)
     factory.register(DataRealDetMatrixConfig, DataRealDetMatrix)
     factory.register(DataRealDetMultiConfig, DataRealDetMulti)
+    factory.register(DataICLOperatorConfig, DataICLOperator)

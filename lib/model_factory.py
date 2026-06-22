@@ -19,6 +19,10 @@ from lib.models.matrix_operator_multi import (
     MatrixOperatorMulti,
     MatrixOperatorMultiConfig,
 )
+from lib.models.operator_algebra_transformer import (
+    OperatorAlgebraTransformer,
+    OperatorAlgebraConfig,
+)
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
@@ -71,6 +75,7 @@ class _ModelFactory:
         self.register(EliminationRolloutConfig, EliminationRollout)
         self.register(MatrixOperatorTransformerConfig, MatrixOperatorTransformer)
         self.register(MatrixOperatorMultiConfig, MatrixOperatorMulti)
+        self.register(OperatorAlgebraConfig, OperatorAlgebraTransformer)
         self.register(ResnetConfig, Resnet)
         self.register(SwinTinyConfig, SwinTiny)
         self.register(LLaMA2GenerativeConfig, LLaMA2Generative)
