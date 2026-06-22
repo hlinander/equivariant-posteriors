@@ -15,6 +15,10 @@ from lib.models.matrix_operator_transformer import (
     MatrixOperatorTransformer,
     MatrixOperatorTransformerConfig,
 )
+from lib.models.matrix_operator_multi import (
+    MatrixOperatorMulti,
+    MatrixOperatorMultiConfig,
+)
 from lib.models.resnet import Resnet, ResnetConfig
 from lib.models.swin_transformer_v2 import SwinTiny, SwinTinyConfig
 
@@ -66,6 +70,7 @@ class _ModelFactory:
         self.register(GrokMLPConfig, GrokMLP)
         self.register(EliminationRolloutConfig, EliminationRollout)
         self.register(MatrixOperatorTransformerConfig, MatrixOperatorTransformer)
+        self.register(MatrixOperatorMultiConfig, MatrixOperatorMulti)
         self.register(ResnetConfig, Resnet)
         self.register(SwinTinyConfig, SwinTiny)
         self.register(LLaMA2GenerativeConfig, LLaMA2Generative)
