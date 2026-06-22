@@ -204,6 +204,39 @@ class MatrixOperatorTransformer(torch.nn.Module):
         return torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1)
 
     @torch.no_grad()
+    def trace_rollout(self, a):
+        """Single-example (batch=1) free rollout for inspection. Returns the
+        initial matrix, per-step records (operator M, ||M-I||, stop_prob, the
+        new state, its strict-lower residual norm), the final state, and the
+        predicted log|det|. Halts on STOP (or max_ops)."""
+        assert a.shape[0] == 1
+        n = self.n
+        states = [a]
+        cur = a
+        initial = a.clone()
+        steps = []
+        for t in range(self.max_ops):
+            emb = self.matrix_embed(torch.stack(states, dim=1).reshape(1, len(states), self.nn2))
+            toks = torch.cat([self.task_embed.expand(1, 1, -1), emb], dim=1)
+            last = self._run_transformer(toks)[:, -1, :]
+            stop_prob = torch.sigmoid(self.stop_head(last).squeeze(-1)).item()
+            M = self.op_head(last).reshape(1, n, n)
+            op_norm = (M[0] - torch.eye(n, device=a.device)).norm().item()
+            if stop_prob > 0.5:
+                steps.append(dict(stopped=True, stop_prob=stop_prob, op_norm=op_norm))
+                break
+            cur = M @ cur
+            states.append(cur)
+            steps.append(dict(
+                stopped=False, stop_prob=stop_prob, op_norm=op_norm, M=M[0].clone(),
+                matrix=cur[0].clone(),
+                lower_resid=float(torch.tril(cur[0], diagonal=-1).norm()),
+            ))
+        diag = cur.diagonal(dim1=1, dim2=2)
+        pred = float(torch.log(diag.abs().clamp_min(self.config.eps)).sum(dim=1))
+        return dict(initial=initial[0], steps=steps, final=cur[0], pred_logdet=pred)
+
+    @torch.no_grad()
     def free_rollout_trace(self, a, n_steps):
         """Force exactly n_steps operators (ignore STOP). Per step records mean
         stop-probability, mean operator magnitude ||M-I||, and running log|det|
