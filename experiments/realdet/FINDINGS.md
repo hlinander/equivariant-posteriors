@@ -117,6 +117,50 @@ credit-assignment wall, mirroring why LLMs need structure to learn to reason).
 
 ---
 
+## 4. Operator-algebra transformer: shared token space (`real_det_operator_multi`, `real_det_icl`)
+
+Generalized the substrate to **one causal sequence model over a shared token
+space** (task / matrix / vector / operator tokens, shared transformer + op/stop
+heads); each algorithm is a "sentence". All pure teacher forcing.
+
+**Multitask DET + INV (one model).** A per-task token routes between DET
+(reduce-to-triangular, read `Σlog|diag|`) and INV (Gauss-Jordan reduce-to-
+identity; composed operators = `A^{-1}`). One model does both, halting at the
+correct *different* op counts (6 vs 12):
+
+| task | metric | value (single-task ref) |
+|---|---|---|
+| DET | logdet_mae | 0.23 (0.19) |
+| INV | inv_relerr (median) | 0.12 |
+
+Minor DET interference (0.23 vs 0.19); inverse recovered to ~12% median relative
+error. (Mean reconstruction blows up on near-singular A — Gauss-Jordan scale ops
+amplify tiny pivots — so the *median* is the honest number.)
+
+**In-context operator learning `[ICL]` — ICL *and* test-time compute.** Per
+sequence a latent operator `W` (function-class spectrum); context `(x_i, W x_i)`;
+the model emits **rank-1 SVD-component partial operators** that sum to the
+inferred `W`, applied to the query. Two independent axes, both confirmed:
+
+| spectrum | ICL err vs k (1→8) | err vs #ops T | final | avg_ops |
+|---|---|---|---|---|
+| lowrank (rank 2) | 1.26 → 0.25 | 0.76→**0.25** @T=2 | 0.25 | **1.99** |
+| powerlaw | 1.06 → 0.06 | 0.59→…→0.06 @T=4 | 0.06 | 4.00 |
+| full | 1.85 → 0.43 | 1.44→…→0.43 | 0.43 | 3.97 |
+
+- **In-context learning**: error falls monotonically with #context examples k
+  (the model infers `W` from examples, no weight updates).
+- **Test-time-compute scaling**: error falls with each partial operator and
+  plateaus at the effective rank (Eckart–Young — provable monotonicity).
+- **Difficulty-adaptive halting** (the standout): `avg_ops` = **2 for lowrank vs
+  4 for powerlaw/full** — the learned STOP spends fewer operators on easier
+  (low-rank) problems and more on harder ones, entirely on its own.
+
+This is the LLM mirror: pure next-token (next-operator) teacher forcing, and
+in-context learning + adaptive test-time compute *emerge* at inference.
+
+---
+
 ## Headline takeaways
 
 1. Over ℝ with the (sign, log|det|) target, **predicting the value of det is
@@ -128,9 +172,16 @@ credit-assignment wall, mirroring why LLMs need structure to learn to reason).
    matching the true function gracefully up to **N=8**, where regression fails —
    provided operators are **supervised** (teacher-forced); the parallel-causal-LM
    formulation is what made it scale.
-4. The model has the right **inference-time properties** (correct halting, safe
-   overthinking) but the task is fixed-compute, so it shows no test-time scaling.
-5. **Emergent discovery from outcome reward fails** here — the remaining open
+4. For the *determinant* sentence the model has the right inference-time
+   properties (correct halting, safe overthinking) but the task is fixed-compute,
+   so it shows no test-time scaling. The `[ICL]` sentence *does*: composable
+   rank-1 partial operators give a genuine compute-scaling curve **and**
+   difficulty-adaptive halting (fewer ops on low-rank `W`).
+5. **One shared token space spans deterministic algorithms (det, inverse) and
+   in-context learning** — `[DET]`/`[INV]`/`[ICL]` as sentences in one model.
+   In-context learning + adaptive compute emerge from pure teacher forcing (the
+   LLM mirror).
+6. **Emergent discovery from outcome reward fails** here — the remaining open
    problem, and the natural bridge to RL / partial-supervision approaches.
 
 ## Tooling
@@ -138,14 +189,16 @@ credit-assignment wall, mirroring why LLMs need structure to learn to reason).
 - `ftle_study.py` — `jac_cos`/relerr vs Jacobi `A^{-T}`.
 - `inference_study.py` — compute-vs-accuracy, halting, identity-padding.
 - `scaling_curve.py` — post-hoc refinement R-sweep (elimination model).
-- `operator_rollout_design.md` — the general-substrate design notes.
+- `operator_rollout_design.md` — general-substrate design notes; `IDEAS.md` — open ideas.
 
 ## Open directions
 - Cross-N generalization (train N≤4, test N=6,7) — needs size-agnostic
   (entry-token / relative-position, permutation-equivariant) encoding.
-- True test-time compute scaling — refinement *operators* in the slack region,
-  or variable-length algorithms.
+- More sentences — `[SOLVE Ax=b]`, `[QR]`, `[EIG]` — sharing the operator vocab.
 - Emergent operators — partial-anneal / up-weighted readout / RL on the
-  verifiable det reward.
-- Multitask "sentences" — `[INV]` (target=identity → composed op = A⁻¹), `[SOLVE]`,
-  etc., sharing the operator vocabulary (operator-algebra calculator).
+  verifiable reward (the one regime that failed; the hard open problem).
+- See `IDEAS.md`: transformer depth scaling, second-order optimizer / plasticity,
+  and new-task acquisition (LoRA vs full finetune vs in-context).
+
+*Done:* `[INV]` multitask, `[ICL]` in-context operator learning with test-time
+compute (this revision).
