@@ -159,6 +159,27 @@ inferred `W`, applied to the query. Two independent axes, both confirmed:
 This is the LLM mirror: pure next-token (next-operator) teacher forcing, and
 in-context learning + adaptive test-time compute *emerge* at inference.
 
+**Data-scale study (`icl_data_scaling`).** `n_train` 25k→400k (distinct latent
+`W`'s) × all three spectra, seed 0. Final in-context query error (full k=8):
+
+| spectrum | 25k | 50k | 100k | 200k | 400k | avg_ops |
+|---|---|---|---|---|---|---|
+| powerlaw | 0.179 | 0.157 | 0.103 | 0.054 | **0.038** | 4.0 |
+| full | 0.491 | 0.528 | 0.530 | 0.427 | **0.351** | ~4.0 |
+| lowrank | 0.351 | 0.295 | 0.263 | 0.243 | **0.230** | 2.0 |
+
+- **powerlaw scales cleanly and steeply** — 4.7× error drop for 16× data,
+  roughly monotone; the compute-adaptive spectrum is the most data-responsive.
+- **lowrank scales gently** (0.351→0.230) — already easy (rank-2, 2 ops), so
+  data mostly polishes it.
+- **full is the data-hungry case** — flat ~0.50 to 100k, only breaks downward at
+  200k/400k (0.43→0.35), **no plateau yet at 400k**. A full-rank `W` over ℝ needs
+  all 4 rank-1 components inferred from context; below ~200k distinct `W`'s the
+  model can't separate the function from noise.
+- **Difficulty-adaptive halting is data-invariant**: `avg_ops` ≈ 2 (lowrank) vs
+  ≈ 4 (powerlaw/full) across the whole range — the learned STOP is set by
+  effective rank (the teacher), not by how much data trained it.
+
 ---
 
 ## Headline takeaways
@@ -201,4 +222,4 @@ in-context learning + adaptive test-time compute *emerge* at inference.
   and new-task acquisition (LoRA vs full finetune vs in-context).
 
 *Done:* `[INV]` multitask, `[ICL]` in-context operator learning with test-time
-compute (this revision).
+compute, `[ICL]` data-scale study (25k→400k × 3 spectra) (this revision).
