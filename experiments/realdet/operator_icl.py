@@ -66,6 +66,19 @@ def icl_configs():
     )
 
 
+def data_scaling_configs():
+    """Data-efficiency of the [ICL] sentence across function classes: does more
+    training data (more distinct latent W's) lower the in-context query error and
+    sharpen difficulty-adaptive halting? n_train 25k->400k, all three spectra,
+    seed 0 (same model/optim as icl_configs)."""
+    return get_config_grid(
+        create_icl_config,
+        dict(n=[4], k=[8], spectrum=["powerlaw", "full", "lowrank"], hidden=[256],
+             depth=[4], num_heads=[8], lr=[1e-4], seed=[0],
+             n_train=[25000, 50000, 100000, 200000, 400000]),
+    )
+
+
 def smoke_configs():
     return get_config_grid(
         create_icl_config,
