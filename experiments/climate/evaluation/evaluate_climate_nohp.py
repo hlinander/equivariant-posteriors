@@ -22,12 +22,12 @@ from lib.export import export_all
 from experiments.climate.data.climateset_data_no_hp import ClimatesetConfig, ClimatesetData
 from experiments.climate.data.climateset_data_no_hp import load_training_stats_from_config
 
-from experiments.climate.adapted_climateset_baselines.adapted_models.unet import UNetConfig, UNet
-from experiments.climate.adapted_climateset_baselines.adapted_models.cnn_lstm import (
+from experiments.climate.adapted_climateset_baselines.unet import UNetConfig, UNet
+from experiments.climate.adapted_climateset_baselines.cnn_lstm import (
     CNNLSTMConfig,
     CNNLSTM_ClimateBench,
 )
-from experiments.climate.adapted_climateset_baselines.adapted_models.climax.climax_module import (
+from experiments.climate.adapted_climateset_baselines.climax.climax_module import (
     ClimaXConfig,
     ClimaX,
 )
