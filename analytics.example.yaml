@@ -1,0 +1,19 @@
+# Analytics S3 staging credentials — TEMPLATE.
+#
+# Real credentials live OUTSIDE the repository so they can never be committed:
+#
+#   mkdir -p ~/.config/equivariant-posteriors
+#   cp analytics.example.yaml ~/.config/equivariant-posteriors/analytics.yaml
+#   $EDITOR ~/.config/equivariant-posteriors/analytics.yaml   # paste your values
+#
+# Override the location with the ANALYTICS_CREDENTIALS_FILE environment variable.
+
+s3:
+  key: REPLACE_ME            # your S3 access key id
+  secret: REPLACE_ME         # your S3 secret access key
+  endpoint: https://...      # e.g. https://s3.amazonaws.com or http://localhost:9000
+  bucket: metrics-staging    # staging bucket to upload analytics into
+  region: us-east-1          # optional (default: us-east-1)
+  url_style: path            # optional: path | vhost  (default: path)
+  # prefix: staging          # optional (default: staging)
+  # archive_prefix: archive  # optional (default: archive)

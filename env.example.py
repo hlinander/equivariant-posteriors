@@ -64,46 +64,41 @@ def get_analytics_config() -> AnalyticsConfig:
     )
 
     # -------------------------------------------------------------------------
-    # Option 2: S3 Staging + Local DB (for testing S3)
+    # Option 2: S3 Staging + Local DB (upload analytics / test S3)
     # -------------------------------------------------------------------------
-    # s3 = S3Config(
-    #     key="your-access-key",
-    #     secret="your-secret-key",
-    #     region="us-east-1",
-    #     endpoint="https://s3.amazonaws.com",
-    # )
+    # Credentials are read from ~/.config/equivariant-posteriors/analytics.yaml
+    # (outside the repo, so they can never be committed). Copy the template:
+    #
+    #     mkdir -p ~/.config/equivariant-posteriors
+    #     cp analytics.example.yaml ~/.config/equivariant-posteriors/analytics.yaml
+    #     $EDITOR ~/.config/equivariant-posteriors/analytics.yaml
+    #
+    # See the "Analytics credentials" section of the README for details.
+    #
+    # from lib.analytics_credentials import load_staging_s3
     # return AnalyticsConfig(
-    #     staging=StagingS3(
-    #         s3=s3,
-    #         bucket="metrics-staging",
-    #         prefix="staging",
-    #         archive_prefix="archive",
-    #     ),
+    #     staging=load_staging_s3(),
     #     central=CentralDuckDB(
     #         db_path=LOCAL_DIR / "analytics.db",
     #     ),
     # )
 
     # -------------------------------------------------------------------------
-    # Option 3: S3 Staging + DuckLake (production)
+    # Option 3: S3 Staging + DuckLake (central ingest — operator only)
     # -------------------------------------------------------------------------
-    # s3 = S3Config(
-    #     key="your-access-key",
-    #     secret="your-secret-key",
-    #     region="us-east-1",
-    #     endpoint="https://s3.amazonaws.com",
-    # )
+    # The same home-folder credentials feed both the staging upload and the
+    # DuckLake S3 data backend. The Postgres metadata password is an operator
+    # secret managed outside this repo.
+    #
+    # from lib.analytics_credentials import load_staging_s3, s3_config
     # return AnalyticsConfig(
-    #     staging=StagingS3(
-    #         s3=s3,
-    #         bucket="metrics-staging",
-    #     ),
+    #     staging=load_staging_s3(),
     #     central=CentralDuckLake(
     #         postgres=PostgresConfig(
     #             host="postgres.example.com",
     #             password="your-password",
     #         ),
-    #         s3=s3,
+    #         s3=s3_config(),
     #         data_path="s3://ducklake-data",
     #     ),
     #     export_interval_seconds=300,

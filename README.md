@@ -22,44 +22,32 @@ uv run run.py --mode cpu experiments/mnist/dense.py
 
 On first run, `env.py` is auto-created with defaults. All data is stored under `.local/` (add to `.gitignore`).
 
-### Secrets (SOPS + age)
+### Analytics credentials
 
-The analytics pipeline (S3 staging credentials) reads its secrets from a
-SOPS-encrypted file at the repo root. Only leaf values are ciphertext —
-diffs stay reviewable.
+To upload analytics to S3 staging you need your own S3 credentials. 
 
 ```
-.sops.yaml             # recipient list (age public keys)
-secrets.example.yaml   # plaintext template (committed)
-secrets.enc.yaml       # encrypted, committed
-secrets.yaml           # plaintext, gitignored — only exists transiently
-lib/secrets.py         # tiny `sops -d` loader, cached per process
+~/.config/equivariant-posteriors/analytics.yaml   # your credentials (out of tree)
+analytics.example.yaml                            # committed template
 ```
 
-Bootstrap (once per machine):
+Setup (once):
 
 ```bash
-# 1. install sops + age
-#    macOS:  brew install sops age
-#    linux:  download static binaries from each project's GitHub releases
-mkdir -p ~/.config/sops/age
-age-keygen -o ~/.config/sops/age/keys.txt
-grep "public key" ~/.config/sops/age/keys.txt        # copy this line
-
-# 2. paste the age1... public key into .sops.yaml under `age:`
-# 3. encrypt your secrets
-cp secrets.example.yaml secrets.yaml
-$EDITOR secrets.yaml                                 # paste real values
-sops -e secrets.yaml > secrets.enc.yaml
-rm secrets.yaml
+mkdir -p ~/.config/equivariant-posteriors
+cp analytics.example.yaml ~/.config/equivariant-posteriors/analytics.yaml
+$EDITOR ~/.config/equivariant-posteriors/analytics.yaml   # paste your key/secret + endpoint/bucket
 ```
 
-Day-to-day: `sops secrets.enc.yaml` decrypts into `$EDITOR` and re-encrypts on
-save. Anything that imports `env.py` will pick up the new values on next start.
+Then enable S3 staging in your `env.py` (uncomment Option 2 in `env.example.py`),
+which loads the file via `lib/analytics_credentials.py`:
 
-Adding a teammate: append their age public key to `.sops.yaml`, then
-`sops updatekeys secrets.enc.yaml` to re-wrap the data key for the new
-recipient.
+```python
+from lib.analytics_credentials import load_staging_s3
+staging = load_staging_s3()
+```
+
+Override the file location with `ANALYTICS_CREDENTIALS_FILE` if needed (e.g. CI).
 
 ### SLURM
 

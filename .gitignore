@@ -6,9 +6,6 @@ __pycache__/
 .local/
 env.py
 
-# Plaintext secrets — the encrypted form (secrets.enc.yaml) IS committed.
-secrets.yaml
-
 # Scratch folder for old/unused files
 .scratch/
 
