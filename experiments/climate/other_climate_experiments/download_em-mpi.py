@@ -2,5 +2,5 @@ from huggingface_hub import snapshot_download # Requires pip install huggingface
 
 snapshot_download(repo_id='blutjens/em-mpi',
   repo_type='dataset', 
-  local_dir='/proj/heal_pangu/users/x_tagty/em-mpi', # Local path to data 
+  local_dir='XXX', # Local path to data 
 )

@@ -11,7 +11,7 @@ import os
 import tarfile
 import urllib.request
 
-DEST_DIR = "/proj/heal_pangu/users/x_tagty/climatebench"
+DEST_DIR = "XXX"
 ZENODO_BASE = "https://zenodo.org/record/7064308/files"
 FILES = ["train_val.tar.gz", "test.tar.gz"]
 
