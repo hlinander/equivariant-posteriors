@@ -24,7 +24,7 @@ distributed_training_requests/
 # Slurm
 slurm_log/
 slurm_tmp/
-
+slurm/logs/
 # Nix
 result
 
@@ -35,3 +35,5 @@ rust/vis/target/
 *.npy
 *.sif
 .Rhistory
+.virtual_documents/
+.ipynb_checkpoints/

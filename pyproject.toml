@@ -19,7 +19,6 @@ dependencies = [
     "filelock>=3.17.0",
     "gitpython>=3.1.44",
     "healpix>=2024.2",
-    "healpy>=1.18.1",
     "ipdb>=0.13.13",
     "ipython>=8.32.0",
     "jupyter>=1.1.1",
@@ -48,6 +47,9 @@ dependencies = [
     "torch-geometric>=2.7.0",
     "cfgrib>=0.9.15.1",
     "seaborn-image>=0.10.0",
+    "segmentation-models-pytorch>=0.5.0",
+    "dask>=2026.3.0",
+    "healpy>=1.19.0",
 ]
 
 [project.optional-dependencies]
