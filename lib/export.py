@@ -55,10 +55,10 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
             cursor=cursor,
         )
 
-    elif config.is_duckfeed():
-        from lib.export_duckfeed import finish_duckfeed_export
+    elif config.is_feed():
+        from lib.export_feed import finish_feed_export
 
-        reference = finish_duckfeed_export(
+        reference = finish_feed_export(
             train_run=train_run,
             target=config.staging,
             cursor=cursor,
@@ -124,10 +124,10 @@ def start_periodic_export(
             interval_seconds=interval_seconds,
         )
 
-    elif config.is_duckfeed():
-        from lib.export_duckfeed import export_periodic_duckfeed
+    elif config.is_feed():
+        from lib.export_feed import export_periodic_feed
 
-        return export_periodic_duckfeed(
+        return export_periodic_feed(
             train_run=train_run,
             target=config.staging,
             interval_seconds=interval_seconds,

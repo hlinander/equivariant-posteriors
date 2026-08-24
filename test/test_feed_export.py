@@ -5,8 +5,8 @@ import sys
 import pytest
 
 import lib.render_duck as duck
-from lib.analytics_config import DuckfeedTarget
-from lib.export_duckfeed import DuckfeedExportError, DuckfeedExporter
+from lib.analytics_config import FeedTarget
+from lib.export_feed import FeedExportError, FeedExporter
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import create_train_run
@@ -117,9 +117,9 @@ def test_exports_local_tables_and_advances_dedicated_cursors():
     duck.insert_checkpoint(model_id, 1, None)
 
     run = _FakeRun()
-    exporter = DuckfeedExporter(
+    exporter = FeedExporter(
         train_run,
-        DuckfeedTarget(project="org/project", chunk_size=2),
+        FeedTarget(project="org/project", chunk_size=2),
         duck.CONN.cursor(),
         run=run,
     )
@@ -127,7 +127,7 @@ def test_exports_local_tables_and_advances_dedicated_cursors():
     assert exporter.export_pending() == 6
     names = [event["schema_name"] for event in run.client.events]
     assert "model_parameters" in names
-    assert names.count("duckfeed_metric") == 3
+    assert names.count("metric") == 3
     assert "epoch_metrics" in names
     assert "evaluation_samples" in names
     assert "train_steps" in names
@@ -136,7 +136,7 @@ def test_exports_local_tables_and_advances_dedicated_cursors():
     metric = next(
         event
         for event in run.client.events
-        if event["schema_name"] == "duckfeed_metric"
+        if event["schema_name"] == "metric"
         and event["data"]["kind"] == "metric"
     )
     assert metric["data"]["model_id"] == model_id
@@ -155,16 +155,16 @@ def test_exports_local_tables_and_advances_dedicated_cursors():
     sync_keys = {
         row[0]
         for row in duck.CONN.execute(
-            "SELECT table_name FROM sync_state WHERE table_name LIKE 'duckfeed:%'"
+            "SELECT table_name FROM sync_state WHERE table_name LIKE 'feed:%'"
         ).fetchall()
     }
     assert sync_keys == {
-        "duckfeed:model_parameter",
-        "duckfeed:train_step_metric",
-        "duckfeed:train_epoch_metric",
-        "duckfeed:checkpoint_sample_metric",
-        "duckfeed:train_steps",
-        "duckfeed:checkpoints",
+        "feed:model_parameter",
+        "feed:train_step_metric",
+        "feed:train_epoch_metric",
+        "feed:checkpoint_sample_metric",
+        "feed:train_steps",
+        "feed:checkpoints",
     }
 
     event_count = len(run.client.events)
@@ -181,19 +181,19 @@ def test_timeout_reuses_pending_events_instead_of_reemitting_rows():
             _Report(delivered=1),
         ]
     )
-    exporter = DuckfeedExporter(
+    exporter = FeedExporter(
         train_run,
-        DuckfeedTarget(project="org/project"),
+        FeedTarget(project="org/project"),
         duck.CONN.cursor(),
         run=run,
     )
 
-    with pytest.raises(DuckfeedExportError, match="original wire identities"):
+    with pytest.raises(FeedExportError, match="original wire identities"):
         exporter.export_pending()
     assert len(run.client.events) == 1
     assert (
         duck.CONN.execute(
-            "SELECT COUNT(*) FROM sync_state WHERE table_name = 'duckfeed:train_step_metric'"
+            "SELECT COUNT(*) FROM sync_state WHERE table_name = 'feed:train_step_metric'"
         ).fetchone()[0]
         == 0
     )
@@ -202,7 +202,7 @@ def test_timeout_reuses_pending_events_instead_of_reemitting_rows():
     assert len(run.client.events) == 1
     assert (
         duck.CONN.execute(
-            "SELECT COUNT(*) FROM sync_state WHERE table_name = 'duckfeed:train_step_metric'"
+            "SELECT COUNT(*) FROM sync_state WHERE table_name = 'feed:train_step_metric'"
         ).fetchone()[0]
         == 1
     )
@@ -224,9 +224,9 @@ def test_chunk_boundary_keeps_all_rows_with_the_same_timestamp():
     )
 
     run = _FakeRun()
-    exporter = DuckfeedExporter(
+    exporter = FeedExporter(
         train_run,
-        DuckfeedTarget(project="org/project", chunk_size=2),
+        FeedTarget(project="org/project", chunk_size=2),
         duck.CONN.cursor(),
         run=run,
     )

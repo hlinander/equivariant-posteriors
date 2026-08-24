@@ -1,7 +1,7 @@
-"""Recurring export of local EQP analytics through Duckfeed.
+"""Recurring export of local EQP analytics through Feed.
 
 The local DuckDB remains the training process's recorder and checkpoint source.
-This module owns one Duckfeed session per EQP run, streams rows added since its
+This module owns one Feed session per EQP run, streams rows added since its
 own sync cursor, and advances that cursor only after an acknowledged flush.
 """
 
@@ -12,12 +12,12 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from lib.analytics_config import DuckfeedTarget
+from lib.analytics_config import FeedTarget
 from lib.log import log, log_next_in
 from lib.train_dataclasses import TrainRun
 
 
-class DuckfeedExportError(RuntimeError):
+class FeedExportError(RuntimeError):
     """The exporter could not establish acknowledged delivery."""
 
 
@@ -35,13 +35,13 @@ class _PendingExport:
     row_count: int = 0
 
 
-class DuckfeedExporter:
-    """Stateful bridge between one local EQP run and one Duckfeed session."""
+class FeedExporter:
+    """Stateful bridge between one local EQP run and one Feed session."""
 
     def __init__(
         self,
         train_run: TrainRun,
-        target: DuckfeedTarget,
+        target: FeedTarget,
         cursor,
         *,
         run=None,
@@ -50,7 +50,7 @@ class DuckfeedExporter:
         self.train_run = train_run
         self.target = target
         if target.chunk_size <= 0:
-            raise ValueError("DuckfeedTarget.chunk_size must be positive")
+            raise ValueError("FeedTarget.chunk_size must be positive")
         self.cursor = cursor
         self.cursor.execute("USE local")
         self.model_id = self._resolve_model_id()
@@ -66,7 +66,7 @@ class DuckfeedExporter:
 
     @property
     def reference(self) -> str:
-        return f"duckfeed://{self.target.project}/{self.run.id}"
+        return f"feed://{self.target.project}/{self.run.id}"
 
     def export_pending(self, *, finish: bool = False, cursor=None) -> int:
         """Publish new rows and acknowledge them before advancing sync cursors."""
@@ -77,7 +77,7 @@ class DuckfeedExporter:
             if self._closed:
                 return 0
             if self._failure is not None:
-                raise DuckfeedExportError(self._failure)
+                raise FeedExportError(self._failure)
 
             delivered_rows = self._settle_pending()
             cutoff = time.time()
@@ -93,8 +93,8 @@ class DuckfeedExporter:
             if finish:
                 report = self.run.finish(self.target.flush_timeout_seconds)
                 if not report.successful:
-                    raise DuckfeedExportError(
-                        _report_error("Duckfeed final flush failed", report)
+                    raise FeedExportError(
+                        _report_error("Feed final flush failed", report)
                     )
                 self._closed = True
 
@@ -105,18 +105,18 @@ class DuckfeedExporter:
             return 0
         report = self.run.flush(self.target.flush_timeout_seconds)
         if not report.complete:
-            raise DuckfeedExportError(
+            raise FeedExportError(
                 _report_error(
-                    "Duckfeed flush timed out; events remain pending with their "
+                    "Feed flush timed out; events remain pending with their "
                     "original wire identities",
                     report,
                 )
             )
         if not report.successful:
             self._failure = _report_error(
-                "Duckfeed permanently dropped an export batch", report
+                "Feed permanently dropped an export batch", report
             )
-            raise DuckfeedExportError(self._failure)
+            raise FeedExportError(self._failure)
 
         pending = self._pending
         self.cursor.execute(
@@ -134,14 +134,14 @@ class DuckfeedExporter:
     def _flush_without_cursor(self) -> None:
         report = self.run.flush(self.target.flush_timeout_seconds)
         if not report.complete:
-            raise DuckfeedExportError(
-                _report_error("Duckfeed metadata flush timed out", report)
+            raise FeedExportError(
+                _report_error("Feed metadata flush timed out", report)
             )
         if not report.successful:
             self._failure = _report_error(
-                "Duckfeed permanently dropped run metadata", report
+                "Feed permanently dropped run metadata", report
             )
-            raise DuckfeedExportError(self._failure)
+            raise FeedExportError(self._failure)
 
     def _emit_table(self, spec: _TableSpec, cutoff: float) -> int:
         delivered_rows = 0
@@ -162,7 +162,7 @@ class DuckfeedExporter:
             except Exception as error:
                 if self._pending.row_count > 0:
                     self._failure = (
-                        "Duckfeed export stopped after a partial enqueue; the local "
+                        "Feed export stopped after a partial enqueue; the local "
                         f"cursor was retained: {error}"
                     )
                 raise
@@ -324,7 +324,7 @@ class DuckfeedExporter:
             )
             return
 
-        raise DuckfeedExportError(f"Unsupported Duckfeed export table: {table_name}")
+        raise FeedExportError(f"Unsupported Feed export table: {table_name}")
 
     def _emit_metric(
         self,
@@ -337,7 +337,7 @@ class DuckfeedExporter:
         row: dict,
     ) -> None:
         self._emit_fields(
-            "duckfeed_metric",
+            "metric",
             "evaluation" if kind in {"evaluation", "epoch"} else "train",
             lambda builder: (
                 builder.add_string("metric", metric)
@@ -366,7 +366,7 @@ class DuckfeedExporter:
         )
 
     def _emit_fields(self, schema_name: str, channel: str, build_fields) -> None:
-        from duckfeed import EventBuilder
+        from feed import EventBuilder
 
         fields = build_fields(EventBuilder()).build()
         accepted = self.run.client.emit_on_wait(
@@ -376,8 +376,8 @@ class DuckfeedExporter:
             self.target.enqueue_timeout_seconds,
         )
         if not accepted:
-            raise DuckfeedExportError(
-                f"Duckfeed did not accept {schema_name!r} within "
+            raise FeedExportError(
+                f"Feed did not accept {schema_name!r} within "
                 f"{self.target.enqueue_timeout_seconds}s"
             )
 
@@ -398,7 +398,7 @@ class DuckfeedExporter:
         return float(checkpoint_result[0]) if checkpoint_result is not None else 0.0
 
     def _sync_key(self, table_name: str) -> str:
-        return f"duckfeed:{table_name}"
+        return f"feed:{table_name}"
 
     def _resolve_model_id(self) -> int:
         row = self.cursor.execute(
@@ -406,7 +406,7 @@ class DuckfeedExporter:
             (self.train_run.run_id,),
         ).fetchone()
         if row is None:
-            raise DuckfeedExportError(
+            raise FeedExportError(
                 f"No local run metadata found for run_id={self.train_run.run_id}"
             )
         return int(row[0])
@@ -414,11 +414,11 @@ class DuckfeedExporter:
     def _create_run(self, run_factory: Optional[Callable[..., object]]):
         if run_factory is None:
             try:
-                from duckfeed import init as run_factory
+                from feed import init as run_factory
             except ImportError as error:
-                raise DuckfeedExportError(
-                    "DuckfeedTarget requires duckfeed-python; install the EQP "
-                    "duckfeed optional dependency"
+                raise FeedExportError(
+                    "FeedTarget requires feed-python; install the EQP "
+                    "feed optional dependency"
                 ) from error
 
         serialized = self.train_run.serialize_human()
@@ -467,25 +467,25 @@ class DuckfeedExporter:
         ]
 
 
-_EXPORTERS: dict[int, DuckfeedExporter] = {}
+_EXPORTERS: dict[int, FeedExporter] = {}
 _EXPORTERS_LOCK = threading.Lock()
 
 
-def get_duckfeed_exporter(
-    train_run: TrainRun, target: DuckfeedTarget, cursor
-) -> DuckfeedExporter:
+def get_feed_exporter(
+    train_run: TrainRun, target: FeedTarget, cursor
+) -> FeedExporter:
     with _EXPORTERS_LOCK:
         exporter = _EXPORTERS.get(train_run.run_id)
         if exporter is None or exporter.closed:
-            exporter = DuckfeedExporter(train_run, target, cursor)
+            exporter = FeedExporter(train_run, target, cursor)
             _EXPORTERS[train_run.run_id] = exporter
         return exporter
 
 
-def finish_duckfeed_export(
-    train_run: TrainRun, target: DuckfeedTarget, cursor
+def finish_feed_export(
+    train_run: TrainRun, target: FeedTarget, cursor
 ) -> Optional[str]:
-    exporter = get_duckfeed_exporter(train_run, target, cursor)
+    exporter = get_feed_exporter(train_run, target, cursor)
     count = exporter.export_pending(finish=True, cursor=cursor)
     with _EXPORTERS_LOCK:
         _EXPORTERS.pop(train_run.run_id, None)
@@ -493,9 +493,9 @@ def finish_duckfeed_export(
     return exporter.reference
 
 
-def export_periodic_duckfeed(
+def export_periodic_feed(
     train_run: TrainRun,
-    target: DuckfeedTarget,
+    target: FeedTarget,
     interval_seconds: float,
 ):
     import lib.render_duck as duck
@@ -505,7 +505,7 @@ def export_periodic_duckfeed(
             log("export", "Error: DuckDB connection not initialized")
             return
         cursor = duck.CONN.cursor()
-        exporter = get_duckfeed_exporter(train_run, target, cursor)
+        exporter = get_feed_exporter(train_run, target, cursor)
 
         while not exporter.closed:
             try:
@@ -513,11 +513,11 @@ def export_periodic_duckfeed(
                 if count:
                     log_next_in(
                         "export",
-                        f"Delivered {count} analytics rows to Duckfeed",
+                        f"Delivered {count} analytics rows to Feed",
                         interval_seconds,
                     )
             except Exception as error:
-                log("export", f"Duckfeed export pending: {error}")
+                log("export", f"Feed export pending: {error}")
 
             try:
                 _flush_checkpoint_analytics(train_run, cursor)

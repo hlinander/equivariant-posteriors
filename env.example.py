@@ -11,7 +11,7 @@ from lib.analytics_config import (
     PostgresConfig,
     StagingS3,
     StagingFilesystem,
-    DuckfeedTarget,
+    FeedTarget,
     CentralDuckDB,
     CentralDuckLake,
 )
@@ -107,15 +107,15 @@ def get_analytics_config() -> AnalyticsConfig:
     # )
 
     # -------------------------------------------------------------------------
-    # Option 4: Duckfeed (low-latency project-scoped ingest)
+    # Option 4: Feed (low-latency project-scoped ingest)
     # -------------------------------------------------------------------------
-    # Authenticate once on the login node with `duckfeed login`; shared HPC home
+    # Authenticate once on the login node with `feed login`; shared HPC home
     # directories make the same credentials available to submitted jobs.
     # return AnalyticsConfig(
-    #     staging=DuckfeedTarget(
+    #     staging=FeedTarget(
     #         project="organization/project",
-    #         server_url="https://duckfeed.example.test",
+    #         server_url="https://feed.example.test",
     #     ),
-    #     central=CentralDuckDB(),  # Unused by training clients in Duckfeed mode.
+    #     central=CentralDuckDB(),  # Unused by training clients in Feed mode.
     #     export_interval_seconds=2,
     # )

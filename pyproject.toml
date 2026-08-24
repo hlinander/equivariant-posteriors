@@ -59,12 +59,12 @@ graphcast = [
 test = [
     "moto[server]>=5.0.0",
 ]
-duckfeed = [
-    "duckfeed",
+feed = [
+    "feed-python",
 ]
 
 [tool.uv.sources]
-duckfeed = { path = "../duckfeed-python", editable = true }
+feed-python = { path = "../feed-python", editable = true }
 
 [[tool.uv.index]]
 name = "pyg-wheels"

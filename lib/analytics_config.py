@@ -70,10 +70,10 @@ class StagingFilesystem:
 
 
 @dataclass
-class DuckfeedTarget:
-    """Publish local analytics to a project-scoped Duckfeed endpoint."""
+class FeedTarget:
+    """Publish local analytics to a project-scoped Feed endpoint."""
 
-    type: Literal["duckfeed"] = "duckfeed"
+    type: Literal["feed"] = "feed"
     project: str = ""
     server_url: Optional[str] = None
     chunk_size: int = 1000
@@ -148,7 +148,7 @@ class AnalyticsConfig:
     )
     """
 
-    staging: StagingS3 | StagingFilesystem | DuckfeedTarget = field(
+    staging: StagingS3 | StagingFilesystem | FeedTarget = field(
         default_factory=lambda: StagingFilesystem()
     )
     central: CentralDuckDB | CentralDuckLake = field(
@@ -170,9 +170,9 @@ class AnalyticsConfig:
         """Check if using filesystem for staging"""
         return self.staging.type == "filesystem"
 
-    def is_duckfeed(self) -> bool:
-        """Check if clients publish through Duckfeed instead of Parquet staging."""
-        return self.staging.type == "duckfeed"
+    def is_feed(self) -> bool:
+        """Check if clients publish through Feed instead of Parquet staging."""
+        return self.staging.type == "feed"
 
     def is_ducklake_central(self) -> bool:
         """Check if central is DuckLake"""
@@ -188,8 +188,8 @@ class AnalyticsConfig:
         elif self.is_filesystem_staging():
             staging_desc = f"Filesystem ({self.staging.staging_dir})"
         else:
-            staging_desc = f"Duckfeed ({self.staging.project})"
-        if self.is_duckfeed():
+            staging_desc = f"Feed ({self.staging.project})"
+        if self.is_feed():
             return f"Analytics: {staging_desc}"
         central_desc = (
             f"DuckLake ({self.central.postgres.host})"
