@@ -6,6 +6,7 @@ This defines the entire flow:
 
 Both export (client) and ingestion (central) use this same config.
 """
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
@@ -20,6 +21,7 @@ class S3Config:
     - Staging area (parquet file export/ingest)
     - DuckLake data path (ducklake storage backend)
     """
+
     key: str = ""  # Access key ID
     secret: str = ""  # Secret access key
     region: str = "us-east-1"
@@ -35,6 +37,7 @@ class S3Config:
 @dataclass
 class PostgresConfig:
     """Postgres connection configuration (for DuckLake metadata)"""
+
     host: str = "localhost"
     port: int = 5432
     user: str = "postgres"
@@ -49,6 +52,7 @@ class PostgresConfig:
 @dataclass
 class StagingS3:
     """Stage parquet files in S3 bucket"""
+
     type: Literal["s3"] = "s3"
     s3: S3Config = field(default_factory=S3Config)
     bucket: str = ""
@@ -59,14 +63,28 @@ class StagingS3:
 @dataclass
 class StagingFilesystem:
     """Stage parquet files on local/shared filesystem"""
+
     type: Literal["filesystem"] = "filesystem"
     staging_dir: Path = field(default_factory=lambda: Path("./staging"))
     archive_dir: Path = field(default_factory=lambda: Path("./archive"))
 
 
 @dataclass
+class DuckfeedTarget:
+    """Publish local analytics to a project-scoped Duckfeed endpoint."""
+
+    type: Literal["duckfeed"] = "duckfeed"
+    project: str = ""
+    server_url: Optional[str] = None
+    chunk_size: int = 1000
+    enqueue_timeout_seconds: float = 30.0
+    flush_timeout_seconds: float = 30.0
+
+
+@dataclass
 class CentralDuckDB:
     """Central database as local DuckDB file"""
+
     type: Literal["duckdb"] = "duckdb"
     db_path: Path = field(default_factory=lambda: Path("./central.db"))
 
@@ -80,6 +98,7 @@ class CentralDuckLake:
     - Postgres: Metadata database
     - S3: Data storage backend
     """
+
     type: Literal["ducklake"] = "ducklake"
     postgres: PostgresConfig = field(default_factory=PostgresConfig)
     s3: S3Config = field(default_factory=S3Config)
@@ -128,7 +147,8 @@ class AnalyticsConfig:
         central=CentralDuckDB(db_path=Path("test.db"))
     )
     """
-    staging: StagingS3 | StagingFilesystem = field(
+
+    staging: StagingS3 | StagingFilesystem | DuckfeedTarget = field(
         default_factory=lambda: StagingFilesystem()
     )
     central: CentralDuckDB | CentralDuckLake = field(
@@ -150,6 +170,10 @@ class AnalyticsConfig:
         """Check if using filesystem for staging"""
         return self.staging.type == "filesystem"
 
+    def is_duckfeed(self) -> bool:
+        """Check if clients publish through Duckfeed instead of Parquet staging."""
+        return self.staging.type == "duckfeed"
+
     def is_ducklake_central(self) -> bool:
         """Check if central is DuckLake"""
         return self.central.type == "ducklake"
@@ -159,12 +183,17 @@ class AnalyticsConfig:
         return self.central.type == "duckdb"
 
     def __str__(self):
-        staging_desc = (
-            f"S3 ({self.staging.bucket})" if self.is_s3_staging()
-            else f"Filesystem ({self.staging.staging_dir})"
-        )
+        if self.is_s3_staging():
+            staging_desc = f"S3 ({self.staging.bucket})"
+        elif self.is_filesystem_staging():
+            staging_desc = f"Filesystem ({self.staging.staging_dir})"
+        else:
+            staging_desc = f"Duckfeed ({self.staging.project})"
+        if self.is_duckfeed():
+            return f"Analytics: {staging_desc}"
         central_desc = (
-            f"DuckLake ({self.central.postgres.host})" if self.is_ducklake_central()
+            f"DuckLake ({self.central.postgres.host})"
+            if self.is_ducklake_central()
             else f"DuckDB ({self.central.db_path})"
         )
         return f"Analytics: {staging_desc} → {central_desc}"
@@ -188,6 +217,7 @@ def analytics_config() -> AnalyticsConfig:
     # Try to load from env.py
     try:
         from env import get_analytics_config
+
         _analytics_config = get_analytics_config()
         print(f"[analytics] Loaded config from env.py: {_analytics_config}")
         return _analytics_config

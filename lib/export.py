@@ -3,7 +3,7 @@ Unified export module using AnalyticsConfig.
 
 Dispatches to either S3 or filesystem staging based on configuration.
 """
-from pathlib import Path
+
 from typing import Optional
 from lib.train_dataclasses import TrainRun
 from lib.analytics_config import analytics_config, AnalyticsConfig
@@ -37,7 +37,6 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
         from lib.export_parquet import flush_all_to_s3
         from lib.export_parquet import ensure_s3_credentials
 
-        s3 = config.staging.s3
         ensure_s3_credentials(cursor)
 
         paths = flush_all_to_s3(
@@ -56,6 +55,16 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
             cursor=cursor,
         )
 
+    elif config.is_duckfeed():
+        from lib.export_duckfeed import finish_duckfeed_export
+
+        reference = finish_duckfeed_export(
+            train_run=train_run,
+            target=config.staging,
+            cursor=cursor,
+        )
+        paths = [reference] if reference is not None else []
+
     else:
         raise ValueError(f"Unknown staging type: {config.staging.type}")
 
@@ -66,7 +75,10 @@ def export_all(train_run: TrainRun, config: Optional[AnalyticsConfig] = None) ->
     checkpoint_path = get_or_create_checkpoint_path(train_run.train_config)
     ckpt_paths = flush_all_to_checkpoint(train_run, checkpoint_path, cursor)
     if ckpt_paths:
-        log("export", f"Also saved {len(ckpt_paths)} parquet files to {checkpoint_path / 'analytics'}")
+        log(
+            "export",
+            f"Also saved {len(ckpt_paths)} parquet files to {checkpoint_path / 'analytics'}",
+        )
 
     return paths
 
@@ -109,6 +121,15 @@ def start_periodic_export(
         return export_periodic_filesystem(
             train_run=train_run,
             staging_dir=config.staging.staging_dir,
+            interval_seconds=interval_seconds,
+        )
+
+    elif config.is_duckfeed():
+        from lib.export_duckfeed import export_periodic_duckfeed
+
+        return export_periodic_duckfeed(
+            train_run=train_run,
+            target=config.staging,
             interval_seconds=interval_seconds,
         )
 

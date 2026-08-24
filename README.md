@@ -49,6 +49,38 @@ staging = load_staging_s3()
 
 Override the file location with `ANALYTICS_CREDENTIALS_FILE` if needed (e.g. CI).
 
+### Duckfeed analytics target
+
+Duckfeed can replace legacy Parquet staging while keeping the local DuckDB and
+checkpoint analytics used for resume and terminal visualization:
+
+```bash
+uv sync --extra duckfeed
+uv run --extra duckfeed duckfeed login
+```
+
+Select the project endpoint in `env.py`:
+
+```python
+from lib.analytics_config import AnalyticsConfig, CentralDuckDB, DuckfeedTarget
+
+def get_analytics_config():
+    return AnalyticsConfig(
+        staging=DuckfeedTarget(
+            project="organization/project",
+            server_url="https://duckfeed.example.test",
+        ),
+        central=CentralDuckDB(),  # Not used by a Duckfeed training client.
+        export_interval_seconds=2,
+    )
+```
+
+The recurring exporter sends timestamp-safe chunks, waits for acknowledged
+Duckfeed delivery, and only then advances its independent local cursors. Run
+configuration appears in `runs`; dynamic parameters in `model_parameters`;
+scalar curves in `metrics`; richer data in `epoch_metrics`,
+`evaluation_samples`, `train_steps`, and `checkpoints`.
+
 ### SLURM
 
 Submit a single experiment to SLURM:

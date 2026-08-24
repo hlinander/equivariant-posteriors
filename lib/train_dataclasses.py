@@ -8,7 +8,6 @@ from typing import Callable
 from typing import Union
 from typing import Set
 from typing import Dict
-from collections import defaultdict
 from pathlib import Path
 
 from lib.metric import Metric, EpochMetricAccumulator
@@ -245,7 +244,7 @@ class TrainRun:
     env: str = field(default_factory=lambda: os.environ.copy())
     slurm_jobid: str = get_slurm_id()
     modules: str = get_modules()
-    run_id: int = random_positive_i64()
+    run_id: int = field(default_factory=random_positive_i64)
 
     def custom_dict(self):
         serialize_dict = copy.deepcopy(self.__dict__)
