@@ -49,6 +49,40 @@ staging = load_staging_s3()
 
 Override the file location with `ANALYTICS_CREDENTIALS_FILE` if needed (e.g. CI).
 
+### Feed analytics target
+
+Feed can replace legacy Parquet staging while keeping the local DuckDB and
+checkpoint analytics used for resume and terminal visualization:
+
+```bash
+uv sync --extra feed
+uv run --extra feed feed login https://eqp.hampe.nu/ingest
+```
+
+Select the project endpoint in `env.py`:
+
+```python
+from lib.analytics_config import AnalyticsConfig, CentralDuckDB, FeedTarget
+
+def get_analytics_config():
+    return AnalyticsConfig(
+        staging=FeedTarget(
+            project="organization/project",
+            server_url="https://eqp.hampe.nu/ingest",
+        ),
+        central=CentralDuckDB(),  # Not used by a Feed training client.
+        export_interval_seconds=2,
+    )
+```
+
+The recurring exporter sends timestamp-safe chunks, waits for acknowledged
+Feed delivery, and only then advances its independent local cursors. Run
+configuration appears in `runs`; dynamic parameters in `model_parameters`;
+scalar curves in `metrics`; richer data in `epoch_metrics`,
+`evaluation_samples`, `train_steps`, and `checkpoints`.
+Heterogeneous values retain their native scalar types in columns such as
+`value_int`, `value_float`, and `value_text`, selected by `value_type`.
+
 ### SLURM
 
 Submit a single experiment to SLURM:

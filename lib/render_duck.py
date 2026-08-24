@@ -3,19 +3,16 @@ from typing import Optional
 import pandas
 import json
 import duckdb
-import os
+import threading
 from typing import List
 from dataclasses import dataclass
-from lib.train_dataclasses import TrainRun, TrainEpochState, TrainConfig
-from lib.paths import (
-    get_or_create_checkpoint_path,
-)
+from lib.train_dataclasses import TrainRun, TrainEpochState
 from lib.random_util import random_positive_i64
 from lib.stable_hash import stable_hash_str
-from lib.compute_env import env
 import time
 
 CONN = None
+CONN_LOCK = threading.RLock()
 LAST_MODEL_ID = None
 LAST_RUN_CONFIG = None
 SCHEMA_ENSURED = False
@@ -224,7 +221,10 @@ def insert_model_parameter(model_id, run_id, name, value):
         INSERT INTO {MODEL_PARAMETER} (model_id, run_id, name, type, value_int, value_float, value_text, timestamp)
         VALUES (?, ?, ?, ?, ?, ?, ?, now())
     """
-    execute(sql_insert_model_parameter, (model_id, run_id, name, type_def.name, value_int, value_float, value_text))
+    execute(
+        sql_insert_model_parameter,
+        (model_id, run_id, name, type_def.name, value_int, value_float, value_text),
+    )
 
 
 def sql_create_table_train_step_metric():
@@ -259,7 +259,19 @@ def insert_train_step_metric(model_id, run_id, name, step, value):
         INSERT INTO {TRAIN_STEP_METRIC} (model_id, run_id, timestamp, name, step, type, value_int, value_float, value_text)
         VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?)
     """
-    execute(sql_insert_train_step_metric, (model_id, run_id, name, step, type_def.name, value_int, value_float, value_text))
+    execute(
+        sql_insert_train_step_metric,
+        (
+            model_id,
+            run_id,
+            name,
+            step,
+            type_def.name,
+            value_int,
+            value_float,
+            value_text,
+        ),
+    )
 
 
 def sql_create_table_train_epoch_metric():
@@ -280,12 +292,39 @@ def sql_create_table_train_epoch_metric():
         )"""
 
 
-def insert_train_epoch_metric(model_id, run_id, epoch, step, name, dataset, dataset_split, mean, min_val, max_val, count):
+def insert_train_epoch_metric(
+    model_id,
+    run_id,
+    epoch,
+    step,
+    name,
+    dataset,
+    dataset_split,
+    mean,
+    min_val,
+    max_val,
+    count,
+):
     sql = f"""
         INSERT INTO {TRAIN_EPOCH_METRIC} (model_id, run_id, timestamp, epoch, step, name, dataset, dataset_split, mean, min, max, count)
         VALUES (?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    execute(sql, (model_id, run_id, epoch, step, name, dataset, dataset_split, mean, min_val, max_val, count))
+    execute(
+        sql,
+        (
+            model_id,
+            run_id,
+            epoch,
+            step,
+            name,
+            dataset,
+            dataset_split,
+            mean,
+            min_val,
+            max_val,
+            count,
+        ),
+    )
 
 
 def ingest_checkpoint_parquets(checkpoint_path, up_to_step):
@@ -406,7 +445,20 @@ def insert_checkpoint_sample_metric(
     """
     execute(
         sql_insert_checkpoint_sample_metric,
-        (model_id, step, name, dataset, sample_ids, type_def.name, mean_int, mean_float, mean_text, value_per_sample_int, value_per_sample_float, value_per_sample_text),
+        (
+            model_id,
+            step,
+            name,
+            dataset,
+            sample_ids,
+            type_def.name,
+            mean_int,
+            mean_float,
+            mean_text,
+            value_per_sample_int,
+            value_per_sample_float,
+            value_per_sample_text,
+        ),
     )
 
 
@@ -552,27 +604,30 @@ def get_checkpoints(model_id: int):
 
 
 def execute(sql, params=None):
-    try:
-        return CONN.execute(sql, params)
-    except Exception as e:
-        # print(sql)
-        raise e
+    with CONN_LOCK:
+        try:
+            return CONN.execute(sql, params)
+        except Exception as e:
+            # print(sql)
+            raise e
 
 
 def execute_many(sql, params=None):
-    try:
-        return CONN.executemany(sql, params)
-    except Exception as e:
-        # print(sql)
-        raise e
+    with CONN_LOCK:
+        try:
+            return CONN.executemany(sql, params)
+        except Exception as e:
+            # print(sql)
+            raise e
 
 
 def execute_and_fetch(sql, params=None):
-    try:
-        return CONN.execute(sql, params).fetchall()
-    except Exception as e:
-        # print(sql)
-        raise e
+    with CONN_LOCK:
+        try:
+            return CONN.execute(sql, params).fetchall()
+        except Exception as e:
+            # print(sql)
+            raise e
 
 
 def sql_create_table_sync_state():
@@ -601,19 +656,20 @@ def ensure_duck(run_run: Optional[TrainRun] = None, in_memory=False):
     global CONN
     global SCHEMA_ENSURED
 
-    db_path = ":memory:"
-    if CONN is None:
-        print("Connecting to duck...")
-        CONN = duckdb.connect()
-        CONN.sql(f"ATTACH '{db_path}' as local")
-        CONN.sql("USE local")
-        CONN.sql("LOAD icu")
-        # CONN = duckdb.connect(db_path)
-        # CONN = duckdb.connect()
-        print("Connected.")
+    with CONN_LOCK:
+        db_path = ":memory:"
+        if CONN is None:
+            print("Connecting to duck...")
+            CONN = duckdb.connect()
+            CONN.sql(f"ATTACH '{db_path}' as local")
+            CONN.sql("USE local")
+            CONN.sql("LOAD icu")
+            # CONN = duckdb.connect(db_path)
+            # CONN = duckdb.connect()
+            print("Connected.")
 
-    if not SCHEMA_ENSURED:
-        _ensure_schema()
+        if not SCHEMA_ENSURED:
+            _ensure_schema()
 
 
 def dict_to_normalized_json(input_dict):
@@ -679,4 +735,5 @@ def start_periodic_export(
         export_thread = start_periodic_export(train_run, interval_seconds=300)
     """
     from lib.export_parquet import export_periodic
+
     return export_periodic(train_run, interval_seconds, s3_bucket)

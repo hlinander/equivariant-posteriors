@@ -11,6 +11,7 @@ from lib.analytics_config import (
     PostgresConfig,
     StagingS3,
     StagingFilesystem,
+    FeedTarget,
     CentralDuckDB,
     CentralDuckLake,
 )
@@ -103,4 +104,19 @@ def get_analytics_config() -> AnalyticsConfig:
     #     ),
     #     export_interval_seconds=300,
     #     ingest_interval_seconds=300,
+    # )
+
+    # -------------------------------------------------------------------------
+    # Option 4: Feed (low-latency project-scoped ingest)
+    # -------------------------------------------------------------------------
+    # Authenticate once with
+    # `feed login https://eqp.hampe.nu/ingest`; credentials in a shared home
+    # directory are available to jobs launched from the same environment.
+    # return AnalyticsConfig(
+    #     staging=FeedTarget(
+    #         project="organization/project",
+    #         server_url="https://eqp.hampe.nu/ingest",
+    #     ),
+    #     central=CentralDuckDB(),  # Unused by training clients in Feed mode.
+    #     export_interval_seconds=2,
     # )
