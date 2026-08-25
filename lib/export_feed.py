@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from lib.analytics_config import FeedTarget
-from lib.log import log, log_next_in
+from lib.log import log, log_error, log_next_in
 from lib.train_dataclasses import TrainRun
 
 
@@ -72,7 +72,8 @@ class FeedExporter:
 
     @property
     def reference(self) -> str:
-        return f"feed://{self.target.project}/{self.run.id}"
+        project = self.target.project or getattr(self.run, "project", "")
+        return f"feed://{project}/{self.run.id}"
 
     def export_pending(self, *, finish: bool = False, cursor=None) -> int:
         """Publish new rows and acknowledge them before advancing sync cursors."""
@@ -465,16 +466,21 @@ class FeedExporter:
             "git_rev": serialized["git_rev"],
             "slurm_jobid": serialized["slurm_jobid"],
         }
-        return run_factory(
-            project=self.target.project,
-            server_url=self.target.server_url,
-            name=f"{self.train_run.project}-{self.model_id}",
-            config=config,
-            tags=["eqp"],
-            group=self.train_run.project,
-            max_retries=0,
-            max_retry_queue_depth=0,
-        )
+        try:
+            return run_factory(
+                project=self.target.project,
+                server_url=self.target.server_url,
+                name=f"{self.train_run.project}-{self.model_id}",
+                config=config,
+                tags=["eqp"],
+                group=self.train_run.project,
+                max_retries=0,
+                max_retry_queue_depth=0,
+            )
+        except Exception as error:
+            message = f"FATAL: Feed analytics initialization failed: {error}"
+            log_error("export", message)
+            raise FeedExportError(message) from error
 
     def _table_specs(self) -> list[_TableSpec]:
         from lib.render_duck import (

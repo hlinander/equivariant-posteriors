@@ -28,10 +28,11 @@ class _Report:
 class _FakeRun:
     id = "fake-session"
 
-    def __init__(self, reports=None):
+    def __init__(self, reports=None, project=None):
         self.events = []
         self.reports = list(reports or [])
         self.finished = False
+        self.project = project
 
     def log_wait(self, stream_name, record, *, timeout):
         self.events.append(
@@ -76,6 +77,54 @@ def _local_run():
 
 def test_train_runs_receive_distinct_default_ids():
     assert create_train_run().run_id != create_train_run().run_id
+
+
+def test_default_feed_project_is_delegated_to_feed_init(local_duck):
+    train_run, _model_id = _local_run()
+    captured = {}
+
+    def init_feed(**kwargs):
+        captured.update(kwargs)
+        return _FakeRun(project="lab/paper")
+
+    exporter = FeedExporter(
+        train_run,
+        FeedTarget(),
+        duck.CONN,
+        run_factory=init_feed,
+    )
+
+    assert captured["project"] is None
+    assert exporter.reference == "feed://lab/paper/fake-session"
+
+
+def test_feed_init_failure_is_logged_loudly(local_duck, monkeypatch):
+    train_run, _model_id = _local_run()
+    logged = []
+    monkeypatch.setattr(
+        "lib.export_feed.log_error", lambda tag, message: logged.append((tag, message))
+    )
+
+    def ambiguous(**_kwargs):
+        raise RuntimeError(
+            "Feed project is ambiguous; run `feed use organization/project`"
+        )
+
+    with pytest.raises(FeedExportError, match="FATAL.*ambiguous"):
+        FeedExporter(
+            train_run,
+            FeedTarget(),
+            duck.CONN,
+            run_factory=ambiguous,
+        )
+
+    assert logged == [
+        (
+            "export",
+            "FATAL: Feed analytics initialization failed: Feed project is "
+            "ambiguous; run `feed use organization/project`",
+        )
+    ]
 
 
 def test_exports_local_tables_and_advances_dedicated_cursors(local_duck):

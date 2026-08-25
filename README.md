@@ -60,7 +60,11 @@ uv sync --extra feed
 uv run --extra feed feed login https://eqp.hampe.nu/ingest
 ```
 
-Select the project endpoint in `env.py`:
+Login automatically selects the project when only one is available. If your
+account can log to several projects, select the default once with
+`uv run --extra feed feed use organization/project`.
+
+Enable Feed in `env.py`:
 
 ```python
 from lib.analytics_config import AnalyticsConfig, CentralDuckDB, FeedTarget
@@ -68,13 +72,15 @@ from lib.analytics_config import AnalyticsConfig, CentralDuckDB, FeedTarget
 def get_analytics_config():
     return AnalyticsConfig(
         staging=FeedTarget(
-            project="organization/project",
             server_url="https://eqp.hampe.nu/ingest",
         ),
         central=CentralDuckDB(),  # Not used by a Feed training client.
         export_interval_seconds=2,
     )
 ```
+
+Pass `project="organization/project"` to `FeedTarget` only when this HLML
+environment should override the Feed account's saved default.
 
 The recurring exporter sends timestamp-safe chunks, waits for acknowledged
 Feed delivery, and only then advances its independent local cursors. Run

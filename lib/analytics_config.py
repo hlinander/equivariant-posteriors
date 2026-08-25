@@ -74,7 +74,7 @@ class FeedTarget:
     """Publish local analytics to a project-scoped Feed endpoint."""
 
     type: Literal["feed"] = "feed"
-    project: str = ""
+    project: Optional[str] = None
     server_url: Optional[str] = None
     chunk_size: int = 1000
     enqueue_timeout_seconds: float = 30.0

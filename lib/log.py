@@ -23,6 +23,11 @@ def log(tag: str, message: str):
     _logger.info("[%s] %s", tag, message)
 
 
+def log_error(tag: str, message: str):
+    """Log an error even when the default WARNING threshold is active."""
+    _logger.error("[%s] %s", tag, message)
+
+
 def log_next_in(tag: str, message: str, next_seconds: float):
     """Log a message with countdown to next event at INFO level."""
     _logger.info("[%s] %s (next in %.0fs)", tag, message, next_seconds)

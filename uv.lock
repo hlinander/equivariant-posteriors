@@ -1148,7 +1148,7 @@ wheels = [
 [[package]]
 name = "feed-python"
 version = "0.1.0"
-source = { git = "https://github.com/linstromcloud/feed-python.git#3a08701092f010cfeb325f773355cf5101a3ad78" }
+source = { git = "https://github.com/linstromcloud/feed-python.git#42fb2bc3c31f5b3d29ee342ab2f80e37d6cdb40d" }
 dependencies = [
     { name = "requests" },
 ]
