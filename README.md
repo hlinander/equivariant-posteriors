@@ -1,6 +1,7 @@
-[![CI](https://github.com/hlinander/equivariant-posteriors/actions/workflows/main.yml/badge.svg)](https://github.com/hlinander/equivariant-posteriors/actions/workflows/main.yml)
+[![CI](https://github.com/hlinander/hlml/actions/workflows/main.yml/badge.svg)](https://github.com/hlinander/hlml/actions/workflows/main.yml)
 
-# Equivariant posteriors
+# HLML
+
 Train and evaluate PyTorch models with reproducibility in mind.
 
 - Computational environment reproducible through Nix flake.
