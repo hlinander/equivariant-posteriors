@@ -17,6 +17,9 @@ from lib.log import log, log_next_in
 from lib.train_dataclasses import TrainRun
 
 
+_CURSOR_EPOCH_COLUMN = "__feed_cursor_epoch"
+
+
 class FeedExportError(RuntimeError):
     """The exporter could not establish acknowledged delivery."""
 
@@ -178,7 +181,8 @@ class FeedExporter:
         with self._db_lock:
             last_synced = self._last_synced(spec.name)
             base_sql = f"""
-                SELECT * FROM {spec.name}
+                SELECT *, EPOCH(timestamp) AS {_CURSOR_EPOCH_COLUMN}
+                FROM {spec.name}
                 WHERE {spec.filter_column} = ?
                   AND EPOCH(timestamp) > ?
                   AND EPOCH(timestamp) <= ?
@@ -192,8 +196,11 @@ class FeedExporter:
             if not rows:
                 return [], columns, None
 
-            timestamp_index = columns.index("timestamp")
-            boundary = max(_timestamp(row[timestamp_index]) for row in rows)
+            cursor_index = columns.index(_CURSOR_EPOCH_COLUMN)
+            # Keep the watermark in DuckDB's numeric domain. Converting the
+            # TIMESTAMPTZ to a Python datetime and back can round it slightly
+            # below EPOCH(timestamp), causing the boundary row to repeat forever.
+            boundary = max(float(row[cursor_index]) for row in rows)
             if len(rows) == self.target.chunk_size:
                 # Include every row tied at the boundary timestamp. Advancing a
                 # timestamp-only cursor after a partial tie would otherwise lose rows.
@@ -203,6 +210,10 @@ class FeedExporter:
                 )
                 columns = [column[0] for column in complete_chunk.description]
                 rows = complete_chunk.fetchall()
+
+            cursor_index = columns.index(_CURSOR_EPOCH_COLUMN)
+            columns.pop(cursor_index)
+            rows = [row[:cursor_index] + row[cursor_index + 1 :] for row in rows]
             return rows, columns, boundary
 
     def _emit_row(self, table_name: str, row: dict) -> None:

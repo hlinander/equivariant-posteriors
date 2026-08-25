@@ -224,3 +224,42 @@ def test_chunk_boundary_keeps_all_rows_with_the_same_timestamp(local_duck):
     assert len(run.events) == 3
     assert exporter.export_pending() == 0
     assert len(run.events) == 3
+
+
+def test_cursor_uses_duckdb_epoch_without_timestamp_rounding(local_duck):
+    train_run, model_id = _local_run()
+    duck.insert_checkpoint(model_id, 0, None)
+    duck.CONN.execute(
+        """
+        UPDATE checkpoints
+        SET timestamp = TIMESTAMPTZ '2026-08-24 18:03:15.755606+00'
+        WHERE model_id = ?
+        """,
+        (model_id,),
+    )
+
+    exporter = FeedExporter(
+        train_run,
+        FeedTarget(project="org/project"),
+        duck.CONN,
+        run=_FakeRun(),
+    )
+    spec = next(spec for spec in exporter._table_specs() if spec.name == "checkpoints")
+
+    rows, columns, boundary = exporter._next_chunk(spec, float("inf"))
+    assert len(rows) == 1
+    assert "__feed_cursor_epoch" not in columns
+    python_epoch = rows[0][columns.index("timestamp")].timestamp()
+    assert boundary > python_epoch
+
+    duck.CONN.execute(
+        """
+        INSERT INTO sync_state (table_name, last_synced_timestamp)
+        VALUES (?, ?)
+        """,
+        (exporter._sync_key(spec.name), boundary),
+    )
+
+    rows, _, boundary = exporter._next_chunk(spec, float("inf"))
+    assert rows == []
+    assert boundary is None
